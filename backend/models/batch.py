@@ -17,4 +17,5 @@ class Batch(Base):
     closing_count = Column(Integer)
     table = Column(Integer, default=0)
     jumbo = Column(Integer, default=0)
-    cr = Column(Integer, default=0) 
+    cr = Column(Integer, default=0)
+    daily_batches = relationship("DailyBatch", back_populates="batch") 

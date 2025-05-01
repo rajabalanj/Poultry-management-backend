@@ -64,3 +64,4 @@ def delete_batch(db: Session, batch_id: int, changed_by: str = None):
         db.commit()
         return True
     return False 
+
