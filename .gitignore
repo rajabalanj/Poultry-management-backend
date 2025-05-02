@@ -1,0 +1,27 @@
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment files
+.env
+*.env
+
+# Logs and temporary files
+*.log
+logs/
+
+# IDE/editor settings
+.vscode/
+.idea/
+
+# Node.js-related files
+node_modules/
+dist/
+
+# Docker-related files
+*.dockerignore
+Dockerfile
+
+# Alembic migration cache
+alembic/versions/__pycache__/
