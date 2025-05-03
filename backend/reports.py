@@ -90,7 +90,7 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
         {
             "batch_id": batch.batch_id,
             "batch_no": batch.batch_no,
-            "batch_date": batch.batch_date,
+            "batch_date": batch.batch_date.strftime("%d-%m-%Y"),
             "shed_no": batch.shed_no,
             "age": batch.age,
             "opening_count": batch.opening_count,

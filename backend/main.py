@@ -71,7 +71,7 @@ app.include_router(reports.router)
 
 
 # FASTAPI_URL = "http://localhost:8000/transfer_eod_data/"  # Adjust if needed
-EOD_TIME = dt_time(13, 45)  # Set your desired EOD time in IST
+EOD_TIME = dt_time(23, 0)  # Set your desired EOD time in IST
 
 def run_scheduler(app_state):
     while app_state["running"]:
@@ -133,8 +133,8 @@ def get_batch_report(batch_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Report file not found")
 
     return FileResponse(file_path, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", filename=f"batch_report_{batch_id}.xlsx")
-@app.get("/test")
+@app.get("/")
 async def test_route():
-    return {"message": "Test route is working!"}
+    return {"message": "Welcome to the FastAPI application!"}
 
-app.mount("/", StaticFiles(directory="dist", html=True), name="static")
+# app.mount("/", StaticFiles(directory="dist", html=True), name="static")
