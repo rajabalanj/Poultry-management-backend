@@ -1,0 +1,35 @@
+# Ignore Python cache files
+__pycache__/
+*.pyc
+*.pyo
+
+# Ignore environment files
+.env
+*.env
+
+# Ignore Alembic migration cache
+alembic/versions/__pycache__/
+
+# Ignore logs
+logs/
+
+# Ignore compiled files
+*.pyc
+*.pyo
+
+# Ignore IDE and editor settings
+.vscode/
+.idea/
+
+# # Ignore Docker-related files
+# Dockerfile
+# *.dockerignore
+
+# Ignore frontend files
+../frontend/
+
+# Ignore other unnecessary files
+*.log
+*.sqlite3
+*.db
+*.DS_Store

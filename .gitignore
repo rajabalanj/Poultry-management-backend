@@ -19,9 +19,5 @@ logs/
 node_modules/
 dist/
 
-# Docker-related files
-*.dockerignore
-Dockerfile
-
 # Alembic migration cache
 alembic/versions/__pycache__/
