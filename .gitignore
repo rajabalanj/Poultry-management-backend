@@ -21,3 +21,6 @@ dist/
 
 # Alembic migration cache
 alembic/versions/__pycache__/
+
+# frontend
+frontend/
