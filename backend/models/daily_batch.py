@@ -17,6 +17,7 @@ class DailyBatch(Base):
     mortality = Column(Integer, default=0)
     culls = Column(Integer, default=0)
     closing_count = Column(Integer)
+    HD = Column(Integer, default=0)
     table = Column(Integer, default=0)
     jumbo = Column(Integer, default=0)
     cr = Column(Integer, default=0)

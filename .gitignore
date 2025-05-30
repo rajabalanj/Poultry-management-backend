@@ -24,3 +24,6 @@ alembic/versions/__pycache__/
 
 # frontend
 frontend/
+
+# Excel files
+*.xlsx

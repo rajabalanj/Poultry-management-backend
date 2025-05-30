@@ -3,6 +3,7 @@ from sqlalchemy import func
 from models.batch import Batch
 from schemas.batch import BatchCreate
 from datetime import date
+import reports
 
 def get_batch(db: Session, batch_id: int):
     return db.query(Batch).filter(Batch.id == batch_id).first()
@@ -32,6 +33,7 @@ def create_batch(db: Session, batch: BatchCreate, changed_by: str = None):
         mortality=batch.mortality,
         culls=batch.culls,
         closing_count=batch.opening_count - (batch.mortality + batch.culls),
+        HD=batch.total_eggs / batch.closing_count if batch.closing_count > 0 else 0,
         shed_no=batch.shed_no,
         batch_no=new_batch_no,
         date=date.today()
@@ -39,6 +41,8 @@ def create_batch(db: Session, batch: BatchCreate, changed_by: str = None):
     db.add(db_batch)
     db.commit()
     db.refresh(db_batch)
+    batches = db.query(Batch).filter(Batch.date == date.today()).all()
+    reports.write_daily_report_excel(batches)
     return db_batch
 
 def update_batch(db: Session, batch_id: int, batch_data: dict, changed_by: str = None):
@@ -52,9 +56,11 @@ def update_batch(db: Session, batch_id: int, batch_data: dict, changed_by: str =
     
     # Recalculate closing count
     db_batch.closing_count = db_batch.opening_count - (db_batch.mortality + db_batch.culls)
-    
+    db_batch.HD = db_batch.total_eggs / db_batch.closing_count if db_batch.closing_count > 0 else 0
     db.commit()
     db.refresh(db_batch)
+    batches = db.query(Batch).filter(Batch.date == date.today()).all()
+    reports.write_daily_report_excel(batches)
     return db_batch
 
 def delete_batch(db: Session, batch_id: int, changed_by: str = None):
@@ -62,6 +68,8 @@ def delete_batch(db: Session, batch_id: int, changed_by: str = None):
     if db_batch:
         db.delete(db_batch)
         db.commit()
+        batches = db.query(Batch).filter(Batch.date == date.today()).all()
+        reports.write_daily_report_excel(batches)
         return True
     return False 
 

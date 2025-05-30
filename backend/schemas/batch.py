@@ -54,6 +54,10 @@ class Batch(BatchBase):
     @computed_field
     def total_eggs(self) -> int:
         return self.table + self.jumbo + self.cr
+    
+    @computed_field
+    def HD(self) -> int:
+        return self.total_eggs / self.closing_count if self.closing_count > 0 else 0
 
     class Config:
         from_attributes = True 
