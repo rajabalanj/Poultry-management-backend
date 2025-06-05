@@ -43,6 +43,29 @@ def update_opening_count(batch_id: int):
     finally:
         db.close()
 
+def update_batch_stats(batch_id: int):
+    """
+    Reset mortality, culls, table_eggs, jumbo, cr, total_eggs, and hd to zero for a given batch.
+    """
+    db = SessionLocal()
+    try:
+        db_batch = db.query(Batch).filter(Batch.id == batch_id).first()
+        if not db_batch:
+            return None
+        db_batch.mortality = 0
+        db_batch.culls = 0
+        db_batch.table = 0
+        db_batch.jumbo = 0
+        db_batch.cr = 0
+        db_batch.total_eggs = 0
+        db_batch.HD = 0
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"Error resetting batch stats at {datetime.now()}: {e}")
+    finally:
+        db.close()
+
 def run_eod_tasks():
     db = SessionLocal()
     try:
@@ -80,6 +103,7 @@ def run_eod_tasks():
             db.add(daily)
             increment_age(batch.id)
             update_opening_count(batch.id)
+            update_batch_stats(batch.id)
 
         db.commit()
         print(f"EOD tasks completed at {datetime.now()}")
