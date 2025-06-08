@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Date
+from sqlalchemy import Column, Integer, Numeric, String, Date
 from database import Base
 from datetime import date
 
@@ -7,7 +7,7 @@ class Feed(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, unique=True)
-    quantity = Column(Integer)
+    quantity = Column(Numeric(10, 3))
     unit = Column(String)  # e.g., "kg", "tons"
     createdDate = Column(Date, default=date.today)
  

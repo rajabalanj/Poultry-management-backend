@@ -5,6 +5,7 @@ from models.feed_in_composition import FeedInComposition
 from models.feed import Feed
 from schemas.composition_usage_history import CompositionUsageHistoryCreate
 from datetime import datetime
+from decimal import Decimal
 
 def use_composition(db: Session, composition_id: int, times: int, used_at: datetime):
     # Store usage history
@@ -24,7 +25,7 @@ def use_composition(db: Session, composition_id: int, times: int, used_at: datet
                 feed.quantity = feed.quantity - (fic.weight * times)
             elif feed.unit == 'ton':
                 # If feed is in tons, calculate the quantity to reduce
-                feed.quantity = feed.quantity - (fic.weight * times / 1000)  # Convert tons to kg
+                feed.quantity = feed.quantity - (Decimal(str(fic.weight)) * Decimal(str(times)) / Decimal('1000'))  # Convert tons to kg
     db.commit()
     db.refresh(usage)
     return usage
