@@ -68,7 +68,7 @@ def get_daily_report(start_date: Optional[str] = None, end_date: Optional[str] =
 def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None, db: Session = Depends(get_db)):
     """
     Get a snapshot of batches between the specified start_date and end_date with total_eggs count.
-    Optionally filter by batch_id.
+    Optionally filter by batch_id. Returns all rows for the batch_id if provided.
     """
     try:
         start_date_obj = datetime.strptime(start_date, "%Y-%m-%d").date()
@@ -102,7 +102,7 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
             "mortality": batch.mortality,
             "culls": batch.culls,
             "closing_count": batch.closing_count,
-            "table": batch.table,
+            "table_eggs": batch.table_eggs,
             "jumbo": batch.jumbo,
             "cr": batch.cr,
             "total_eggs": batch.total_eggs  # Computed property
@@ -173,7 +173,7 @@ def write_daily_report_excel(batches, report_date=None, file_path=None):
             batch.mortality,
             batch.culls,
             batch.closing_count,
-            getattr(batch, "table", 0),
+            getattr(batch, "table_eggs", 0),
             getattr(batch, "jumbo", 0),
             getattr(batch, "cr", 0),
             getattr(batch, "total", 0),
@@ -185,7 +185,7 @@ def write_daily_report_excel(batches, report_date=None, file_path=None):
         total_mort += batch.mortality
         total_culls += batch.culls
         total_closing += batch.closing_count
-        total_table += getattr(batch, "table", 0)
+        total_table += getattr(batch, "table_eggs", 0)
         total_jumbo += getattr(batch, "jumbo", 0)
         total_cr += getattr(batch, "cr", 0)
         total_total += getattr(batch, "total", 0)

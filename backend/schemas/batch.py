@@ -7,7 +7,7 @@ class BatchBase(BaseModel):
     opening_count: int
     mortality: int = 0
     culls: int = 0
-    table: int = 0
+    table_eggs: int = 0
     jumbo: int = 0
     cr: int = 0
 
@@ -31,18 +31,18 @@ class BatchBase(BaseModel):
             raise ValueError('Opening count must be greater than or equal to 0')
         return v
 
-    @validator('mortality', 'culls', 'table', 'jumbo', 'cr')
+    @validator('mortality', 'culls', 'table_eggs', 'jumbo', 'cr')
     def validate_non_negative(cls, v):
         if v < 0:
             raise ValueError('Value must be greater than or equal to 0')
         return v
 
 class BatchCreate(BatchBase):
-    shed_no: int
+    shed_no: str
 
 class Batch(BatchBase):
     id: int
-    shed_no: int
+    shed_no: str
     batch_no: str
     date: date
     closing_count: int
@@ -53,10 +53,10 @@ class Batch(BatchBase):
 
     @computed_field
     def total_eggs(self) -> int:
-        return self.table + self.jumbo + self.cr
+        return self.table_eggs + self.jumbo + self.cr
     
     @computed_field
-    def HD(self) -> int:
+    def hd(self) -> int:
         return self.total_eggs / self.closing_count if self.closing_count > 0 else 0
 
     class Config:

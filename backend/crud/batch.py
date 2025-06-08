@@ -33,7 +33,7 @@ def create_batch(db: Session, batch: BatchCreate, changed_by: str = None):
         mortality=batch.mortality,
         culls=batch.culls,
         closing_count=batch.opening_count - (batch.mortality + batch.culls),
-        HD=(batch.table + batch.jumbo + batch.cr) / (batch.opening_count - (batch.mortality + batch.culls)) if (batch.opening_count - (batch.mortality + batch.culls)) > 0 else 0,
+        hd=(batch.table_eggs + batch.jumbo + batch.cr) / (batch.opening_count - (batch.mortality + batch.culls)) if (batch.opening_count - (batch.mortality + batch.culls)) > 0 else 0,
         shed_no=batch.shed_no,
         batch_no=new_batch_no,
         date=date.today()
@@ -56,7 +56,7 @@ def update_batch(db: Session, batch_id: int, batch_data: dict, changed_by: str =
     
     # Recalculate closing count
     db_batch.closing_count = db_batch.opening_count - (db_batch.mortality + db_batch.culls)
-    db_batch.HD = (db_batch.table + db_batch.jumbo + db_batch.cr) / db_batch.closing_count if db_batch.closing_count > 0 else 0
+    db_batch.hd = (db_batch.table_eggs + db_batch.jumbo + db_batch.cr) / db_batch.closing_count if db_batch.closing_count > 0 else 0
     db.commit()
     db.refresh(db_batch)
     batches = db.query(Batch).filter(Batch.date == date.today()).all()

@@ -27,8 +27,8 @@ frontend/
 
 # Excel files
 *.xlsx
+*.csv
 schemas/__pycache__/
 models/__pycache__/
 crud/__pycache__/
 __pycache__/
-

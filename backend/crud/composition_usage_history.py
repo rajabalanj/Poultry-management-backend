@@ -19,7 +19,12 @@ def use_composition(db: Session, composition_id: int, times: int, used_at: datet
     for fic in feeds_in_comp:
         feed = db.query(Feed).filter(Feed.id == fic.feed_id).first()
         if feed:
-            feed.quantity = feed.quantity - (fic.weight * times)
+            if feed.unit == 'kg':
+                # If feed is in kg, calculate the quantity to reduce
+                feed.quantity = feed.quantity - (fic.weight * times)
+            elif feed.unit == 'ton':
+                # If feed is in tons, calculate the quantity to reduce
+                feed.quantity = feed.quantity - (fic.weight * times / 1000)  # Convert tons to kg
     db.commit()
     db.refresh(usage)
     return usage

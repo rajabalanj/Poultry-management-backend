@@ -54,11 +54,11 @@ def update_batch_stats(batch_id: int):
             return None
         db_batch.mortality = 0
         db_batch.culls = 0
-        db_batch.table = 0
+        db_batch.table_eggs = 0
         db_batch.jumbo = 0
         db_batch.cr = 0
         db_batch.total_eggs = 0
-        db_batch.HD = 0
+        db_batch.hd = 0
         db.commit()
     except Exception as e:
         db.rollback()
@@ -95,10 +95,10 @@ def run_eod_tasks():
                 mortality=batch.mortality,
                 culls=batch.culls,
                 closing_count=batch.closing_count,
-                table=batch.table,
+                table_eggs=batch.table_eggs,
                 jumbo=batch.jumbo,
                 cr=batch.cr,
-                HD=batch.HD
+                hd=batch.hd
             )
             db.add(daily)
             increment_age(batch.id)
