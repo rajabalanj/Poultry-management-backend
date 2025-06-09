@@ -22,7 +22,7 @@ def use_composition(db: Session, composition_id: int, times: int, used_at: datet
         if feed:
             if feed.unit == 'kg':
                 # If feed is in kg, calculate the quantity to reduce
-                feed.quantity = feed.quantity - (fic.weight * times)
+                feed.quantity = feed.quantity - (Decimal(str(fic.weight)) * Decimal(str(times)))
             elif feed.unit == 'ton':
                 # If feed is in tons, calculate the quantity to reduce
                 feed.quantity = feed.quantity - (Decimal(str(fic.weight)) * Decimal(str(times)) / Decimal('1000'))  # Convert tons to kg
