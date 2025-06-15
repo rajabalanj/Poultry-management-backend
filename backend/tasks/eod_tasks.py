@@ -81,26 +81,24 @@ def run_eod_tasks():
                 )
             ).first()
 
-            if exists:
-                print(f"Skipping batch {batch.id}, DailyBatch already exists.")
-                continue
-
-            daily = DailyBatch(
-                batch_id=batch.id,
-                batch_date=batch_date,
-                shed_no=batch.shed_no,
-                batch_no=batch.batch_no,
-                age=batch.age,
-                opening_count=batch.opening_count,
-                mortality=batch.mortality,
-                culls=batch.culls,
-                closing_count=batch.closing_count,
-                table_eggs=batch.table_eggs,
-                jumbo=batch.jumbo,
-                cr=batch.cr,
-                hd=batch.hd
-            )
-            db.add(daily)
+            if not exists:
+                daily = DailyBatch(
+                    batch_id=batch.id,
+                    batch_date=batch_date,
+                    shed_no=batch.shed_no,
+                    batch_no=batch.batch_no,
+                    age=batch.age,
+                    opening_count=batch.opening_count,
+                    mortality=batch.mortality,
+                    culls=batch.culls,
+                    closing_count=batch.closing_count,
+                    table_eggs=batch.table_eggs,
+                    jumbo=batch.jumbo,
+                    cr=batch.cr,
+                    hd=batch.hd
+                )
+                db.add(daily)
+            # Always run these functions, regardless of whether DailyBatch exists
             increment_age(batch.id)
             update_opening_count(batch.id)
             update_batch_stats(batch.id)
