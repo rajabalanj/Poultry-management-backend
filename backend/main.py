@@ -9,7 +9,7 @@ import io
 from schemas.feed import Feed
 from database import Base, SessionLocal, engine
 from contextlib import asynccontextmanager
-from datetime import datetime, time as dt_time
+from datetime import datetime, time as dt_time, timedelta
 import asyncio
 import reports
 from database import get_db
@@ -30,7 +30,7 @@ import crud.feed as crud_feed
 from datetime import date
 import logging
 from dateutil import parser
-from schemas.daily_batch import DailyBatchCreate
+from schemas.daily_batch import DailyBatchCreate, DailyBatchUpdate
 import crud.daily_batch as crud_daily_batch
 import pandas as pd
 from models.batch import Batch
@@ -109,9 +109,57 @@ def read_batches(skip: int = 0, limit: int = 100, db: Session = Depends(get_db))
 
 @app.get("/batches/{batch_id}", response_model=BatchSchema)
 def read_batch(batch_id: int, db: Session = Depends(get_db)):
+    logger.info("Fetching batch with batch_id=%d", batch_id)
     db_batch = crud_batch.get_batch(db, batch_id=batch_id)
     if db_batch is None:
+        logger.warning("Batch with batch_id=%d not found", batch_id)
         raise HTTPException(status_code=404, detail="Batch not found")
+    logger.info("Fetched batch: %s", db_batch)
+    return db_batch
+
+@app.get("/batches/{batch_id}/fallback", response_model=BatchSchema)
+def read_batch_fallback(batch_id: int, db: Session = Depends(get_db)):
+    logger.info("Fetching batch with batch_id=%d", batch_id)
+    db_batch = crud_batch.get_batch(db, batch_id=batch_id)
+    if db_batch is None:
+        logger.warning("Batch with batch_id=%d not found", batch_id)
+        raise HTTPException(status_code=404, detail="Batch not found")
+    logger.info("Fetched batch: %s", db_batch)
+
+    # If total_eggs is zero, look for the most recent daily_batch with total_eggs > 0
+    if (db_batch.table_eggs + db_batch.jumbo + db_batch.cr) == 0 and db_batch.closing_count == db_batch.opening_count:
+        logger.info("No eggs found and no mortality and culls for batch_id=%d, looking for daily_batch table in batch %d, searching daily_batch table...", batch_id)
+        from models.daily_batch import DailyBatch as DailyBatchModel
+        daily_batches = (
+            db.query(DailyBatchModel)
+            .filter(DailyBatchModel.batch_id == batch_id)
+            .order_by(DailyBatchModel.batch_date.desc())
+            .all()
+        )
+        for daily in daily_batches:
+            total_eggs = (daily.table_eggs or 0) + (daily.jumbo or 0) + (daily.cr or 0)
+            if total_eggs > 0 or daily.closing_count != daily.opening_count:
+                logger.info("Found daily_batch with eggs or mortality/culls for batch_id=%d on %s", batch_id, daily.batch_date)
+                # Return a BatchSchema instance with daily_batch data
+                return BatchSchema(
+                    id=daily.batch_id,
+                    shed_no=daily.shed_no,
+                    batch_no=daily.batch_no,
+                    date=daily.batch_date,
+                    age=daily.age,
+                    opening_count=daily.opening_count,
+                    mortality=daily.mortality,
+                    culls=daily.culls,
+                    closing_count=daily.closing_count,
+                    table_eggs=daily.table_eggs,
+                    jumbo=daily.jumbo,
+                    cr=daily.cr,
+                    hd=getattr(daily, "hd", None),
+                    is_chick_batch=getattr(daily, "is_chick_batch", None),
+                )
+        logger.info("No daily_batch with eggs found for batch_id=%d", batch_id)
+
+    # Return the batch result if total_eggs is not zero or no daily_batch found
     return db_batch
 
 @app.patch("/batches/{batch_id}", response_model=BatchSchema)

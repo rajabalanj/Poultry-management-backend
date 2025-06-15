@@ -7,7 +7,7 @@ from typing import Optional
 from models.daily_batch import DailyBatch as DailyBatchORM
 
 def get_batch(db: Session, batch_id: int, date: date):
-    return db.query(DailyBatch).filter(DailyBatch.id == batch_id).first()
+    return db.query(DailyBatch).filter(DailyBatch.batch_id == batch_id, DailyBatch.batch_date == date).first()
 
 def get_all_batches(db: Session, skip: int = 0, limit: int = 100):
     return db.query(DailyBatch).offset(skip).limit(limit).all()

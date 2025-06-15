@@ -18,8 +18,6 @@ class DailyBatchBase(BaseModel):
     batch_id: int
     is_chick_batch: bool = False
 
-    
-
     @validator('age')
     def validate_age_format(cls, v):
         if not re.match(r'^\d+\.\d+$', v):
@@ -43,15 +41,8 @@ class DailyBatchBase(BaseModel):
             raise ValueError('Value must be greater than or equal to 0')
         return v
 
-class DailyBatchCreate(DailyBatchBase):
-    # This class is fine as is if it serves as a distinct type for creation.
-    # If it's always identical to DailyBatchBase, you might reconsider its necessity.
-    pass
-
-
-
     @computed_field
-    def closing_count(self) -> int: # Renamed from calculated_closing_count
+    def closing_count(self) -> int:
         return self.opening_count - (self.mortality + self.culls)
 
     @computed_field
@@ -59,9 +50,17 @@ class DailyBatchCreate(DailyBatchBase):
         return self.table_eggs + self.jumbo + self.cr
 
     @computed_field
-    def hd(self) -> float: # Renamed from calculated_HD
-        closing = self.closing_count # Use the computed closing_count here
+    def hd(self) -> float:
+        closing = self.closing_count
         return self.total_eggs / closing if closing > 0 else 0
+
+class DailyBatchCreate(DailyBatchBase):
+    # This class is fine as is if it serves as a distinct type for creation.
+    # If it's always identical to DailyBatchBase, you might reconsider its necessity.
+    pass
+
+class DailyBatchUpdate(DailyBatchBase):
+    batch_id: int
 
     class Config:
         from_attributes = True

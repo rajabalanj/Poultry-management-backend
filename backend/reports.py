@@ -79,7 +79,7 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
     if start_date_obj > end_date_obj:
         raise HTTPException(status_code=400, detail="Start date cannot be after the end date")
 
-    # Query DailyBatch for the specified date range
+    # Query DailyBatch for the specified date range, ordered by batch_id and batch_date
     query = db.query(DailyBatch).filter(
         DailyBatch.batch_date >= start_date_obj,
         DailyBatch.batch_date <= end_date_obj
@@ -88,6 +88,7 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
     if batch_id is not None:
         query = query.filter(DailyBatch.batch_id == batch_id)
 
+    query = query.order_by(DailyBatch.batch_id.asc(), DailyBatch.batch_date.asc())
     daily_batches = query.all()
 
     # Serialize the data, including total_eggs
