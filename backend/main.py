@@ -107,6 +107,53 @@ def read_batches(skip: int = 0, limit: int = 100, db: Session = Depends(get_db))
     logger.info("Fetched %d batches", len(batches))
     return batches
 
+@app.get("/batches/fallback/", response_model=List[BatchSchema])
+def read_batches_fallback(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    logger.info("Fetching batches with fallback logic, skip=%d, limit=%d", skip, limit)
+    batches = crud_batch.get_all_batches(db, skip=skip, limit=limit)
+    from models.daily_batch import DailyBatch as DailyBatchModel
+
+    result = []
+    for batch in batches:
+        total_eggs = (batch.table_eggs or 0) + (batch.jumbo or 0) + (batch.cr or 0)
+        if total_eggs == 0 and batch.closing_count == batch.opening_count:
+            # Look for the most recent daily_batch with eggs or mortality/culls
+            daily_batches = (
+                db.query(DailyBatchModel)
+                .filter(DailyBatchModel.batch_id == batch.id)
+                .order_by(DailyBatchModel.batch_date.desc())
+                .all()
+            )
+            found = False
+            for daily in daily_batches:
+                daily_total_eggs = (daily.table_eggs or 0) + (daily.jumbo or 0) + (daily.cr or 0)
+                if daily_total_eggs > 0 or daily.closing_count != daily.opening_count:
+                    logger.info("Fallback: Found daily_batch for batch_id=%d on %s", batch.id, daily.batch_date)
+                    result.append(BatchSchema(
+                        id=daily.batch_id,
+                        shed_no=daily.shed_no,
+                        batch_no=daily.batch_no,
+                        date=daily.batch_date,
+                        age=daily.age,
+                        opening_count=daily.opening_count,
+                        mortality=daily.mortality,
+                        culls=daily.culls,
+                        closing_count=daily.closing_count,
+                        table_eggs=daily.table_eggs,
+                        jumbo=daily.jumbo,
+                        cr=daily.cr,
+                        hd=getattr(daily, "hd", None),
+                        is_chick_batch=getattr(daily, "is_chick_batch", None),
+                    ))
+                    found = True
+                    break
+            if not found:
+                result.append(batch)
+        else:
+            result.append(batch)
+    logger.info("Fetched %d batches with fallback logic", len(result))
+    return result
+
 @app.get("/batches/{batch_id}", response_model=BatchSchema)
 def read_batch(batch_id: int, db: Session = Depends(get_db)):
     logger.info("Fetching batch with batch_id=%d", batch_id)
