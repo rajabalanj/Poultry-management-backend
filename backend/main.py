@@ -549,3 +549,114 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
     except Exception as e:
         logger.exception(f"Unhandled error during Excel upload: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to process file: {e}")
+    
+@app.patch("/daily-batch/{batch_id}/{batch_date}", response_model=DailyBatchUpdate)
+def update_daily_batch(
+    batch_id: int,
+    batch_date: str,
+    payload: dict,
+    db: Session = Depends(get_db),
+    x_user_id: Optional[str] = Header(None)
+):
+    """Update a daily batch row by batch_id and batch_date. Applies propagation logic for age, counts."""
+    from models.daily_batch import DailyBatch as DailyBatchModel
+    from sqlalchemy import and_
+    import dateutil.parser
+
+    # Parse date string
+    try:
+        batch_date_obj = dateutil.parser.parse(batch_date).date()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid batch_date format")
+
+    # Fetch the current row
+    daily_batch = db.query(DailyBatchModel).filter(
+        and_(
+            DailyBatchModel.batch_id == batch_id,
+            DailyBatchModel.batch_date == batch_date_obj
+        )
+    ).first()
+
+    if not daily_batch:
+        raise HTTPException(status_code=404, detail="Daily batch not found")
+
+    # Update shed_no for all rows in batch if present
+    if "shed_no" in payload:
+        new_shed_no = payload["shed_no"]
+        db.query(DailyBatchModel).filter(
+            DailyBatchModel.batch_id == batch_id
+        ).update({DailyBatchModel.shed_no: new_shed_no})
+        daily_batch.shed_no = new_shed_no
+
+    # Propagate age update if present
+    if "age" in payload:
+        try:
+            new_age = float(payload["age"])
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid age value")
+
+        daily_batch.age = str(round(new_age, 1))
+
+        subsequent_rows = db.query(DailyBatchModel).filter(
+            DailyBatchModel.batch_id == batch_id,
+            DailyBatchModel.batch_date > daily_batch.batch_date
+        ).order_by(DailyBatchModel.batch_date.asc()).all()
+
+        prev_age = new_age
+        for row in subsequent_rows:
+            decimal_part = round(prev_age % 1, 1)
+            prev_age = round(prev_age + (0.4 if decimal_part == 0.7 else 0.1), 1)
+            row.age = str(prev_age)
+
+    # Propagate mortality/culls change if either is present
+    if "mortality" in payload or "culls" in payload:
+        if "mortality" in payload:
+            daily_batch.mortality = payload["mortality"]
+        if "culls" in payload:
+            daily_batch.culls = payload["culls"]
+        daily_batch.closing_count = daily_batch.opening_count - (daily_batch.mortality + daily_batch.culls)
+
+        # Propagate to subsequent rows
+        subsequent_rows = db.query(DailyBatchModel).filter(
+            DailyBatchModel.batch_id == batch_id,
+            DailyBatchModel.batch_date > daily_batch.batch_date
+        ).order_by(DailyBatchModel.batch_date.asc()).all()
+
+        prev_closing = daily_batch.closing_count
+        for row in subsequent_rows:
+            row.opening_count = prev_closing
+            row.closing_count = row.opening_count - (row.mortality + row.culls)
+            prev_closing = row.closing_count
+
+    # Propagate opening_count change if present
+    if "opening_count" in payload:
+        daily_batch.opening_count = payload["opening_count"]
+        daily_batch.closing_count = daily_batch.opening_count - (daily_batch.mortality + daily_batch.culls)
+
+        subsequent_rows = db.query(DailyBatchModel).filter(
+            DailyBatchModel.batch_id == batch_id,
+            DailyBatchModel.batch_date > daily_batch.batch_date
+        ).order_by(DailyBatchModel.batch_date.asc()).all()
+
+        prev_closing = daily_batch.closing_count
+        for row in subsequent_rows:
+            row.opening_count = prev_closing
+            row.closing_count = row.opening_count - (row.mortality + row.culls)
+            prev_closing = row.closing_count
+
+    # Update simple fields (no propagation)
+    for key in ("table_eggs", "cr", "jumbo"):
+        if key in payload:
+            setattr(daily_batch, key, payload[key])
+
+    # Update other allowed fields dynamically (excluding ones already handled)
+    excluded_fields = {"shed_no", "age", "mortality", "culls", "opening_count", "table_eggs", "cr", "jumbo"}
+    for key, value in payload.items():
+        if key not in excluded_fields and hasattr(daily_batch, key):
+            setattr(daily_batch, key, value)
+
+    db.commit()
+    db.refresh(daily_batch)
+    return daily_batch
+
+    
