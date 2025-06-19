@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from typing import Dict, List, Optional
+import auth
 from scheduler import scheduler  # Import the configured scheduler
 import time
 import io
@@ -34,6 +35,8 @@ from schemas.daily_batch import DailyBatchCreate, DailyBatchUpdate
 import crud.daily_batch as crud_daily_batch
 import pandas as pd
 from models.batch import Batch
+from schemas.app_config import AppConfigCreate, AppConfigUpdate, AppConfigOut
+from crud import app_config as crud_app_config
 
 # --- Logging Configuration (Add this section) ---
 LOG_DIR = "logs"
@@ -79,10 +82,18 @@ app = FastAPI(lifespan=lifespan)
 #app.mount("/", StaticFiles(directory="dist", html=True), name="static")
 
 
+allowed_origins_str = os.getenv(
+    "CORS_ALLOWED_ORIGINS",
+    "http://localhost:5173,http://127.0.0.1:5173,http://51.21.190.170,https://51.21.190.170"
+)
+
+# Split the string into a list, stripping any whitespace
+allowed_origins = [origin.strip() for origin in allowed_origins_str.split(',')]
+
 # Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Vite dev server
+    allow_origins=allowed_origins,  # This will now include your production IP
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -91,6 +102,7 @@ app.add_middleware(
 
 #app.mount("/", StaticFiles(directory="dist", html=True), name="static")
 app.include_router(reports.router)
+app.include_router(auth.router)
 
 @app.post("/batches/", response_model=BatchSchema)
 def create_batch(
@@ -398,7 +410,9 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
                 row = df.iloc[row_idx]
 
                 # Skip empty rows or rows where BATCH (col 0) is 'TOTAL' or NaN
-                if pd.isna(row[0]) or str(row[0]).strip().upper() == 'TOTAL':
+                try:
+                    batch_id_excel = int(row[0])
+                except (ValueError, TypeError):
                     continue
                 # Skip rows with missing SHED (col 1), as it's critical for shed_no mapping
                 if pd.isna(row[1]):
@@ -479,7 +493,9 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
             for row_idx in range(data_start, data_end):
                 row = df.iloc[row_idx]
 
-                if pd.isna(row[0]) or str(row[0]).strip().upper() == 'TOTAL':
+                try:
+                    batch_id_excel = int(row[0])
+                except (ValueError, TypeError):
                     continue
                 if pd.isna(row[0]) or pd.isna(row[1]) or pd.isna(row[2]) or pd.isna(row[3]):
                     logger.warning(f"Skipping row {row_idx} (Date: {report_date}) due to missing essential data: {row.tolist()}")
@@ -658,5 +674,25 @@ def update_daily_batch(
     db.commit()
     db.refresh(daily_batch)
     return daily_batch
+
+@app.post("/configurations/", response_model=AppConfigOut)
+def create_config(config: AppConfigCreate, db: Session = Depends(get_db)):
+    return crud_app_config.create_config(db, config)
+
+@app.get("/configurations/", response_model=AppConfigOut)
+def get_config(db: Session = Depends(get_db)):
+    config = crud_app_config.get_config(db)
+    if not config:
+        raise HTTPException(status_code=404, detail="No configuration found")
+    return config
+
+@app.patch("/configurations/{config_id}/", response_model=AppConfigOut)
+def update_config(config_id: int, config: AppConfigUpdate, db: Session = Depends(get_db)):
+    updated = crud_app_config.update_config(db, config_id, config)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Configuration not found")
+    return updated
+
+
 
     
