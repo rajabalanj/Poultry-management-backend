@@ -2,17 +2,14 @@ from pydantic import BaseModel
 from typing import Optional
 
 class AppConfigBase(BaseModel):
-    lowKgThreshold: float
-    lowTonThreshold: float
-    # Add more config fields as needed
+    name: str
+    value: str
 
 class AppConfigCreate(AppConfigBase):
     pass
 
 class AppConfigUpdate(BaseModel):
-    lowKgThreshold: Optional[float] = None
-    lowTonThreshold: Optional[float] = None
-    # Add more config fields as needed
+    value: Optional[str] = None
 
 class AppConfigOut(AppConfigBase):
     id: int
