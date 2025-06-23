@@ -601,15 +601,69 @@ def get_daily_batches(
     db: Session = Depends(get_db)
 ):
     """
-    Fetch all daily_batch rows for a given batch_date.
+    Fetch all daily_batch rows for a given batch_date. If none exist, generate them and return.
     """
     from models.daily_batch import DailyBatch as DailyBatchModel
+    from models.batch import Batch as BatchModel
+    from utils import calculate_age_progression
+    
+    # Try to fetch existing daily_batch rows for the date
     daily_batches = db.query(DailyBatchModel).filter(DailyBatchModel.batch_date == batch_date).all()
-    result = []
-    for daily in daily_batches:
-        d = daily.__dict__.copy()
+    if daily_batches:
+        result = []
+        for daily in daily_batches:
+            d = daily.__dict__.copy()
+            d.pop('_sa_instance_state', None)
+            result.append(d)
+        return result
+    
+    # If not found, generate them (same logic as /daily-batch/generate/)
+    today = date.today()
+    created = []
+    batches = db.query(BatchModel).all()
+    for batch in batches:
+        # Find the most recent previous daily_batch for this batch
+        prev_daily = db.query(DailyBatchModel).filter(
+            DailyBatchModel.batch_id == batch.id,
+            DailyBatchModel.batch_date < batch_date
+        ).order_by(DailyBatchModel.batch_date.desc()).first()
+
+        if prev_daily:
+            opening_count = prev_daily.closing_count  # hybrid property
+            try:
+                prev_age = float(prev_daily.age)
+            except Exception:
+                prev_age = 0.0
+            days_diff = (batch_date - prev_daily.batch_date).days
+            age = calculate_age_progression(prev_age, days_diff)
+        else:
+            opening_count = batch.opening_count
+            try:
+                age = float(batch.age)
+            except Exception:
+                age = 0.0
+
+        db_daily = DailyBatchModel(
+            batch_id=batch.id,
+            shed_no=batch.shed_no,
+            batch_no=batch.batch_no,
+            upload_date=today,
+            batch_date=batch_date,
+            age=str(round(age, 1)),
+            opening_count=opening_count,
+            mortality=0,
+            culls=0,
+            table_eggs=0,
+            jumbo=0,
+            cr=0,
+            is_chick_batch=getattr(batch, "is_chick_batch", False)
+        )
+        db.add(db_daily)
+        db.commit()
+        db.refresh(db_daily)
+        d = db_daily.__dict__.copy()
         d.pop('_sa_instance_state', None)
-        result.append(d)
-    return result
+        created.append(d)
+    return created
 
 
