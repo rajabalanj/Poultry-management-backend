@@ -7,7 +7,7 @@ class Feed(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, unique=True)
-    quantity = Column(Numeric(10, 3))
+    quantity = Column(Numeric(8, 3))
     unit = Column(String)  # e.g., "kg", "tons"
     createdDate = Column(Date, default=date.today)
  

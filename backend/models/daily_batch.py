@@ -16,8 +16,6 @@ class DailyBatch(Base):
     opening_count = Column(Integer)
     mortality = Column(Integer, default=0)
     culls = Column(Integer, default=0)
-    closing_count = Column(Integer)
-    hd = Column('hd', Numeric(11, 9), default=0)
     table_eggs = Column(Integer, default=0)
     jumbo = Column(Integer, default=0)
     cr = Column(Integer, default=0)
@@ -26,3 +24,11 @@ class DailyBatch(Base):
     @hybrid_property
     def total_eggs(self):
         return self.table_eggs + self.jumbo + self.cr
+    
+    @hybrid_property
+    def closing_count(self):
+        return self.opening_count - (self.mortality + self.culls)
+    
+    @hybrid_property
+    def hd(self):
+        return self.total_eggs / self.closing_count if self.closing_count > 0 else 0

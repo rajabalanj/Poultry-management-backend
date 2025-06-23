@@ -4,7 +4,6 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 from typing import Dict, List, Optional
 import auth
-from scheduler import scheduler  # Import the configured scheduler
 import time
 import io
 from schemas.feed import Feed
@@ -37,6 +36,7 @@ import pandas as pd
 from models.batch import Batch
 from schemas.app_config import AppConfigCreate, AppConfigUpdate, AppConfigOut
 from crud import app_config as crud_app_config
+from typing import List, Optional
 
 # --- Logging Configuration (Add this section) ---
 LOG_DIR = "logs"
@@ -70,14 +70,8 @@ logger.info("Application starting up...")
 # Create database tables
 Base.metadata.create_all(bind=engine)
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    scheduler.start()
-    print("APScheduler started")
-    yield
-    scheduler.shutdown()
-    print("APScheduler shutdown")
-app = FastAPI(lifespan=lifespan)
+
+app = FastAPI()
 
 #app.mount("/", StaticFiles(directory="dist", html=True), name="static")
 
@@ -112,17 +106,17 @@ def create_batch(
 ):
     return crud_batch.create_batch(db=db, batch=batch, changed_by=x_user_id)
 
-@app.get("/batches/", response_model=List[BatchSchema])
-def read_batches(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    logger.info("Fetching batches with skip=%d and limit=%d", skip, limit)
-    batches = crud_batch.get_all_batches(db, skip=skip, limit=limit)
+@app.get("/batches/")
+def read_batches(batch_date: date, skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    logger.info("Fetching batches with skip=%d, limit=%d, batch_date=%s", skip, limit, batch_date)
+    batches = crud_batch.get_all_batches(db, skip=skip, limit=limit, batch_date=batch_date)
     logger.info("Fetched %d batches", len(batches))
     return batches
 
 @app.get("/batches/fallback/", response_model=List[BatchSchema])
 def read_batches_fallback(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     logger.info("Fetching batches with fallback logic, skip=%d, limit=%d", skip, limit)
-    batches = crud_batch.get_all_batches(db, skip=skip, limit=limit)
+    batches = crud_batch.get_all_batches(db, skip=skip, limit=limit, batch_date=date.today())
     from models.daily_batch import DailyBatch as DailyBatchModel
 
     result = []
@@ -167,9 +161,9 @@ def read_batches_fallback(skip: int = 0, limit: int = 100, db: Session = Depends
     return result
 
 @app.get("/batches/{batch_id}", response_model=BatchSchema)
-def read_batch(batch_id: int, db: Session = Depends(get_db)):
+def read_batch(batch_id: int, batch_date: date, db: Session = Depends(get_db)):
     logger.info("Fetching batch with batch_id=%d", batch_id)
-    db_batch = crud_batch.get_batch(db, batch_id=batch_id)
+    db_batch = crud_batch.get_batch(db, batch_id=batch_id, batch_date=batch_date)
     if db_batch is None:
         logger.warning("Batch with batch_id=%d not found", batch_id)
         raise HTTPException(status_code=404, detail="Batch not found")
@@ -383,104 +377,20 @@ def patch_composition(composition_id: int, composition: CompositionCreate, db: S
 
 @app.post("/daily-batch/upload-excel/")
 def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    """Upload and process an Excel file for daily batch data."""
+    """Upload and process an Excel file for daily batch data (only daily_batch, no batch insert)."""
     try:
         contents = file.file.read()
-        # header=None because your Excel has custom header rows that need parsing
         df = pd.read_excel(io.BytesIO(contents), header=None)
 
-        # --- Phase 1: Identify unique sheds and their last-seen data for 'batch' table insertion/update ---
-        shed_nos = set()
-        # Store the last encountered pandas Series (row) for each shed_no
-        shed_no_to_last_row: Dict[str, pd.Series] = {}
+        # Get all shed_nos present in batch table
+        all_batches = db.query(Batch).all()
+        valid_shed_nos = {b.shed_no for b in all_batches}
 
         date_indices = df.index[df[0] == 'DATE'].tolist()
         if not date_indices:
             raise HTTPException(status_code=400, detail="No 'DATE' rows found in the Excel file.")
 
-        for i, date_idx in enumerate(date_indices):
-            data_start = date_idx + 2
-            if i + 1 < len(date_indices):
-                data_end = date_indices[i + 1]
-            else:
-                total_rows = df.index[(df[0] == 'TOTAL') & (df.index > data_start)].tolist()
-                data_end = total_rows[0] if total_rows else len(df)
-
-            for row_idx in range(data_start, data_end):
-                row = df.iloc[row_idx]
-
-                # Skip empty rows or rows where BATCH (col 0) is 'TOTAL' or NaN
-                try:
-                    batch_id_excel = int(row[0])
-                except (ValueError, TypeError):
-                    continue
-                # Skip rows with missing SHED (col 1), as it's critical for shed_no mapping
-                if pd.isna(row[1]):
-                    logger.warning(f"Skipping row {row_idx} due to missing shed_no: {row.tolist()}")
-                    continue
-
-                shed_no = str(row[1]).strip()
-                shed_nos.add(shed_no)
-                shed_no_to_last_row[shed_no] = row # Update with the last seen row for this shed_no
-
-        # Fetch all existing shed_no from the 'batch' table
-        existing_batches_orms = db.query(Batch).filter(Batch.shed_no.in_(list(shed_nos))).all()
-        existing_shed_nos = {b.shed_no for b in existing_batches_orms}
-
-        # Insert missing shed_no into 'batch' table using the last occurring row for each
-        batches_to_add: List[Batch] = []
-        for shed_no in shed_nos - existing_shed_nos:
-            row = shed_no_to_last_row[shed_no] # Get the last row for this new shed_no
-
-            # Safely extract and convert values for 'Batch' table
-            opening_count_val = int(row[3]) if pd.notna(row[3]) else 0
-            mortality_val = int(row[4]) if pd.notna(row[4]) else 0
-            culls_val = int(row[5]) if pd.notna(row[5]) else 0
-            table_eggs_val = int(row[7]) if pd.notna(row[7]) else 0
-            jumbo_val = int(row[8]) if pd.notna(row[8]) else 0
-            cr_val = int(row[9]) if pd.notna(row[9]) else 0
-            report_date = pd.to_datetime(df.iloc[date_idx, 1], format='%m-%d-%Y').date()
-
-            calculated_closing_count_batch = opening_count_val - (mortality_val + culls_val)
-            total_eggs_produced_batch = table_eggs_val + jumbo_val + cr_val
-
-            hd_calculated_batch = 0.0
-            if calculated_closing_count_batch > 0:
-                hd_calculated_batch = float(total_eggs_produced_batch) / calculated_closing_count_batch
-
-            is_chick_batch_calculated_batch = (total_eggs_produced_batch == 0)
-            batch_id_excel = int(row[0])
-
-
-            # Create an instance of your Batch ORM model (assuming Batch is your ORM model)
-            new_batch = Batch(
-                shed_no=shed_no,
-                batch_no=f"B-{batch_id_excel:04d}",
-                date=report_date,  # Use the date from the Excel, not today's date
-                age=str(row[2]) if pd.notna(row[2]) else '',
-                opening_count=opening_count_val,
-                mortality=mortality_val,
-                culls=culls_val,
-                closing_count=calculated_closing_count_batch,
-                table_eggs=table_eggs_val,
-                jumbo=jumbo_val,
-                cr=cr_val,
-                hd=hd_calculated_batch,
-                is_chick_batch=is_chick_batch_calculated_batch,
-            )
-            batches_to_add.append(new_batch)
-
-        if batches_to_add:
-            db.add_all(batches_to_add)
-            db.commit()
-
-        # Build shed_no to batch_id mapping (ensure all shed_no are present after potential inserts)
-        batch_map = {b.shed_no: b.id for b in db.query(Batch).filter(Batch.shed_no.in_(list(shed_nos))).all()}
-
-        # --- Phase 2: Process all daily batch rows and insert into 'daily_batch' table ---
-        # We will now iterate and call create_daily_batch for each record
         processed_records_count = 0
-
         for i, date_idx in enumerate(date_indices):
             report_date = pd.to_datetime(df.iloc[date_idx, 1], format='%m-%d-%Y').date()
             data_start = date_idx + 2
@@ -492,7 +402,6 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
 
             for row_idx in range(data_start, data_end):
                 row = df.iloc[row_idx]
-
                 try:
                     batch_id_excel = int(row[0])
                 except (ValueError, TypeError):
@@ -500,66 +409,48 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
                 if pd.isna(row[0]) or pd.isna(row[1]) or pd.isna(row[2]) or pd.isna(row[3]):
                     logger.warning(f"Skipping row {row_idx} (Date: {report_date}) due to missing essential data: {row.tolist()}")
                     continue
-
-                try:
-                    batch_id_excel = int(row[0])
-                    shed_no_excel = str(row[1]).strip()
-                    age_excel = str(row[2]) if pd.notna(row[2]) else ''
-                    opening_count_excel = int(row[3]) if pd.notna(row[3]) else 0
-                    mortality_excel = int(row[4]) if pd.notna(row[4]) else 0
-                    culls_excel = int(row[5]) if pd.notna(row[5]) else 0
-                    table_eggs_excel = int(row[7]) if pd.notna(row[7]) else 0
-                    jumbo_excel = int(row[8]) if pd.notna(row[8]) else 0
-                    cr_excel = int(row[9]) if pd.notna(row[9]) else 0
-
-                    # Always fetch the batch_id from the database for the current shed_no
-                    batch_obj = db.query(Batch).filter(Batch.shed_no == shed_no_excel).first()
-                    batch_id_for_daily_batch = batch_obj.id if batch_obj else None
-                    if not batch_id_for_daily_batch:
-                        logger.error(f"No batch_id found for shed_no '{shed_no_excel}'. Skipping daily_batch row {row_idx}.")
-                        continue
-
-                    closing_count_calculated = opening_count_excel - (mortality_excel + culls_excel)
-                    
-                    hd_calculated = 0.0
-                    total_eggs_produced_daily = table_eggs_excel + jumbo_excel + cr_excel
-                    if closing_count_calculated > 0:
-                        hd_calculated = float(total_eggs_produced_daily) / closing_count_calculated
-                    
-                    is_chick_batch_calculated = (total_eggs_produced_daily == 0)
-
-                    # Create an instance of your Pydantic DailyBatchCreate model
-                    daily_batch_instance = DailyBatchCreate(
-                        batch_id=batch_id_for_daily_batch,
-                        shed_no=shed_no_excel,
-                        batch_no=f"B-{batch_id_excel:04d}",
-                        upload_date=date.today(),
-                        batch_date=report_date,
-                        age=age_excel,
-                        opening_count=opening_count_excel,
-                        mortality=mortality_excel,
-                        culls=culls_excel,
-                        closing_count=closing_count_calculated,
-                        table_eggs=table_eggs_excel,
-                        jumbo=jumbo_excel,
-                        cr=cr_excel,
-                        hd=hd_calculated,
-                        is_chick_batch=is_chick_batch_calculated
-                    )
-                    
-                    # --- CALLING YOUR EXISTING create_daily_batch FUNCTION ---
-                    crud_daily_batch.create_daily_batch(db=db, daily_batch_data=daily_batch_instance)
-                    processed_records_count += 1
-
-                except ValueError as ve:
-                    logger.error(f"Data conversion error in row {row_idx} (Date: {report_date}): {ve}. Row data: {row.tolist()}")
+                shed_no_excel = str(row[1]).strip()
+                if shed_no_excel not in valid_shed_nos:
+                    logger.warning(f"Skipping row {row_idx} (Date: {report_date}) due to shed_no not in batch table: {shed_no_excel}")
                     continue
-                except Exception as e:
-                    logger.error(f"Unexpected error processing row {row_idx} (Date: {report_date}): {e}. Row data: {row.tolist()}")
+                batch_obj = db.query(Batch).filter(Batch.shed_no == shed_no_excel).first()
+                batch_id_for_daily_batch = batch_obj.id if batch_obj else None
+                if not batch_id_for_daily_batch:
+                    logger.error(f"No batch_id found for shed_no '{shed_no_excel}'. Skipping daily_batch row {row_idx}.")
                     continue
-
+                age_excel = str(row[2]) if pd.notna(row[2]) else ''
+                opening_count_excel = int(row[3]) if pd.notna(row[3]) else 0
+                mortality_excel = int(row[4]) if pd.notna(row[4]) else 0
+                culls_excel = int(row[5]) if pd.notna(row[5]) else 0
+                table_eggs_excel = int(row[7]) if pd.notna(row[7]) else 0
+                jumbo_excel = int(row[8]) if pd.notna(row[8]) else 0
+                cr_excel = int(row[9]) if pd.notna(row[9]) else 0
+                closing_count_calculated = opening_count_excel - (mortality_excel + culls_excel)
+                hd_calculated = 0.0
+                total_eggs_produced_daily = table_eggs_excel + jumbo_excel + cr_excel
+                if closing_count_calculated > 0:
+                    hd_calculated = float(total_eggs_produced_daily) / closing_count_calculated
+                is_chick_batch_calculated = (total_eggs_produced_daily == 0)
+                daily_batch_instance = DailyBatchCreate(
+                    batch_id=batch_id_for_daily_batch,
+                    shed_no=shed_no_excel,
+                    batch_no=f"B-{batch_id_excel:04d}",
+                    upload_date=date.today(),
+                    batch_date=report_date,
+                    age=age_excel,
+                    opening_count=opening_count_excel,
+                    mortality=mortality_excel,
+                    culls=culls_excel,
+                    closing_count=closing_count_calculated,
+                    table_eggs=table_eggs_excel,
+                    jumbo=jumbo_excel,
+                    cr=cr_excel,
+                    hd=hd_calculated,
+                    is_chick_batch=is_chick_batch_calculated
+                )
+                crud_daily_batch.create_daily_batch(db=db, daily_batch_data=daily_batch_instance)
+                processed_records_count += 1
         return {"message": f"File '{file.filename}' processed and {processed_records_count} daily batch records inserted."}
-
     except HTTPException as he:
         raise he
     except Exception as e:
@@ -607,6 +498,7 @@ def update_daily_batch(
     # Propagate age update if present
     if "age" in payload:
         try:
+            from utils import calculate_age_progression  # Adjust import as needed
             new_age = float(payload["age"])
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid age value")
@@ -618,11 +510,15 @@ def update_daily_batch(
             DailyBatchModel.batch_date > daily_batch.batch_date
         ).order_by(DailyBatchModel.batch_date.asc()).all()
 
+        prev_date = daily_batch.batch_date
         prev_age = new_age
+
         for row in subsequent_rows:
-            decimal_part = round(prev_age % 1, 1)
-            prev_age = round(prev_age + (0.4 if decimal_part == 0.7 else 0.1), 1)
+            days_diff = (row.batch_date - prev_date).days
+            prev_age = calculate_age_progression(prev_age, days_diff)
             row.age = str(prev_age)
+            prev_date = row.batch_date
+
 
     # Propagate mortality/culls change if either is present
     if "mortality" in payload or "culls" in payload:
@@ -630,7 +526,7 @@ def update_daily_batch(
             daily_batch.mortality = payload["mortality"]
         if "culls" in payload:
             daily_batch.culls = payload["culls"]
-        daily_batch.closing_count = daily_batch.opening_count - (daily_batch.mortality + daily_batch.culls)
+        # Do NOT assign to closing_count (hybrid property)
 
         # Propagate to subsequent rows
         subsequent_rows = db.query(DailyBatchModel).filter(
@@ -638,27 +534,29 @@ def update_daily_batch(
             DailyBatchModel.batch_date > daily_batch.batch_date
         ).order_by(DailyBatchModel.batch_date.asc()).all()
 
-        prev_closing = daily_batch.closing_count
+        prev_closing = daily_batch.opening_count - (daily_batch.mortality + daily_batch.culls)
         for row in subsequent_rows:
             row.opening_count = prev_closing
-            row.closing_count = row.opening_count - (row.mortality + row.culls)
-            prev_closing = row.closing_count
+            row_closing = row.opening_count - (row.mortality + row.culls)
+            prev_closing = row_closing
+            # Do NOT assign to row.closing_count
 
     # Propagate opening_count change if present
     if "opening_count" in payload:
         daily_batch.opening_count = payload["opening_count"]
-        daily_batch.closing_count = daily_batch.opening_count - (daily_batch.mortality + daily_batch.culls)
+        # Do NOT assign to closing_count (hybrid property)
 
         subsequent_rows = db.query(DailyBatchModel).filter(
             DailyBatchModel.batch_id == batch_id,
             DailyBatchModel.batch_date > daily_batch.batch_date
         ).order_by(DailyBatchModel.batch_date.asc()).all()
 
-        prev_closing = daily_batch.closing_count
+        prev_closing = daily_batch.opening_count - (daily_batch.mortality + daily_batch.culls)
         for row in subsequent_rows:
             row.opening_count = prev_closing
-            row.closing_count = row.opening_count - (row.mortality + row.culls)
-            prev_closing = row.closing_count
+            row_closing = row.opening_count - (row.mortality + row.culls)
+            prev_closing = row_closing
+            # Do NOT assign to row.closing_count
 
     # Update simple fields (no propagation)
     for key in ("table_eggs", "cr", "jumbo"):
@@ -666,7 +564,7 @@ def update_daily_batch(
             setattr(daily_batch, key, payload[key])
 
     # Update other allowed fields dynamically (excluding ones already handled)
-    excluded_fields = {"shed_no", "age", "mortality", "culls", "opening_count", "table_eggs", "cr", "jumbo"}
+    excluded_fields = {"shed_no", "age", "mortality", "culls", "opening_count", "table_eggs", "cr", "jumbo", "closing_count", "total_eggs", "hd"}
     for key, value in payload.items():
         if key not in excluded_fields and hasattr(daily_batch, key):
             setattr(daily_batch, key, value)
@@ -679,20 +577,39 @@ def update_daily_batch(
 def create_config(config: AppConfigCreate, db: Session = Depends(get_db)):
     return crud_app_config.create_config(db, config)
 
-@app.get("/configurations/", response_model=AppConfigOut)
-def get_config(db: Session = Depends(get_db)):
-    config = crud_app_config.get_config(db)
-    if not config:
-        raise HTTPException(status_code=404, detail="No configuration found")
-    return config
 
-@app.patch("/configurations/{config_id}/", response_model=AppConfigOut)
-def update_config(config_id: int, config: AppConfigUpdate, db: Session = Depends(get_db)):
-    updated = crud_app_config.update_config(db, config_id, config)
+@app.get("/configurations/", response_model=List[AppConfigOut])
+def get_configs(name: Optional[str] = None, db: Session = Depends(get_db)):
+    configs = crud_app_config.get_config(db, name)
+    # Always return a list, even if empty
+    return [configs] if name and configs else configs or []
+
+@app.patch("/configurations/{name}/", response_model=AppConfigOut)
+def update_config(name: str, config: AppConfigUpdate, db: Session = Depends(get_db)):
+    updated = crud_app_config.update_config_by_name(db, name, config)
     if not updated:
         raise HTTPException(status_code=404, detail="Configuration not found")
     return updated
 
 
+from typing import List
+from fastapi import Query
 
-    
+@app.get("/daily-batch/", response_model=List[dict])
+def get_daily_batches(
+    batch_date: date = Query(..., description="Date for which to fetch daily batches"),
+    db: Session = Depends(get_db)
+):
+    """
+    Fetch all daily_batch rows for a given batch_date.
+    """
+    from models.daily_batch import DailyBatch as DailyBatchModel
+    daily_batches = db.query(DailyBatchModel).filter(DailyBatchModel.batch_date == batch_date).all()
+    result = []
+    for daily in daily_batches:
+        d = daily.__dict__.copy()
+        d.pop('_sa_instance_state', None)
+        result.append(d)
+    return result
+
+

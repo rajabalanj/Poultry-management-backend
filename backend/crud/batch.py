@@ -1,67 +1,92 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, and_
 from models.batch import Batch
 from schemas.batch import BatchCreate
 from datetime import date
 import reports
+from models.daily_batch import DailyBatch
 
-def get_batch(db: Session, batch_id: int):
-    return db.query(Batch).filter(Batch.id == batch_id).first()
+def get_batch(db: Session, batch_id: int, batch_date: date):
+        return db.query(DailyBatch).filter(and_(DailyBatch.batch_id == batch_id, DailyBatch.batch_date == batch_date)).first()
 
-def get_all_batches(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(Batch).offset(skip).limit(limit).all()
-
-def get_next_batch_number(db: Session) -> str:
-    # Get the highest batch number
-    last_batch = db.query(Batch).order_by(Batch.batch_no.desc()).first()
-    if last_batch and last_batch.batch_no:
-        try:
-            last_num = int(last_batch.batch_no.split('-')[1])
-            return f"B-{str(last_num + 1).zfill(4)}"
-        except (IndexError, ValueError):
-            return "B-0001"
-    return "B-0001"
+def get_all_batches(db: Session, batch_date: date, skip: int = 0, limit: int = 100,):
+    query = db.query(DailyBatch).filter(DailyBatch.batch_date == batch_date)
+    daily_batches = query.offset(skip).limit(limit).all()
+    for daily in daily_batches:
+        # Convert batch_no like 'B-0001' to integer 1
+        if daily.batch_no and str(daily.batch_no).startswith('B-'):
+            daily.batch_no = int(daily.batch_no.split('-')[1].lstrip('0') or '0')
+    return daily_batches
 
 def create_batch(db: Session, batch: BatchCreate, changed_by: str = None):
-    # Get the next batch number
-    new_batch_no = get_next_batch_number(db)
-
     # Create new batch with calculated closing count
     db_batch = Batch(
         age=batch.age,
+        batch_no =  batch.batch_no,
         opening_count=batch.opening_count,
-        mortality=batch.mortality,
-        culls=batch.culls,
-        closing_count=batch.opening_count - (batch.mortality + batch.culls),
-        hd=(batch.table_eggs + batch.jumbo + batch.cr) / (batch.opening_count - (batch.mortality + batch.culls)) if (batch.opening_count - (batch.mortality + batch.culls)) > 0 else 0,
         shed_no=batch.shed_no,
-        batch_no=new_batch_no,
-        date=date.today()
+        date= batch.date,
+        is_chick_batch=getattr(batch, 'is_chick_batch', False),
     )
     db.add(db_batch)
     db.commit()
     db.refresh(db_batch)
-    batches = db.query(Batch).filter(Batch.date == date.today()).all()
-    reports.write_daily_report_excel(batches)
-    return db_batch
 
-def update_batch(db: Session, batch_id: int, batch_data: dict, changed_by: str = None):
-    db_batch = db.query(Batch).filter(Batch.id == batch_id).first()
-    if not db_batch:
-        return None
-
-    # Update the provided fields
-    for key, value in batch_data.items():
-        setattr(db_batch, key, value)
-    
-    # Recalculate closing count
-    db_batch.closing_count = db_batch.opening_count - (db_batch.mortality + db_batch.culls)
-    db_batch.hd = (db_batch.table_eggs + db_batch.jumbo + db_batch.cr) / db_batch.closing_count if db_batch.closing_count > 0 else 0
+    # Create a copy in daily_batch table
+    db_daily_batch = DailyBatch(
+        batch_id=db_batch.id,
+        batch_no=db_batch.batch_no,
+        shed_no=db_batch.shed_no,
+        batch_date=db_batch.date,
+        upload_date=db_batch.date,
+        age=db_batch.age,
+        opening_count=db_batch.opening_count,
+        mortality=0,
+        culls=0,
+        table_eggs=0,
+        jumbo=0,
+        cr=0,
+        is_chick_batch=getattr(batch, 'is_chick_batch', False)
+    )
+    db.add(db_daily_batch)
     db.commit()
-    db.refresh(db_batch)
-    batches = db.query(Batch).filter(Batch.date == date.today()).all()
-    reports.write_daily_report_excel(batches)
+    db.refresh(db_daily_batch)
     return db_batch
+
+def update_batch(db: Session, batch_id: int, batch_date: date, batch_data: dict, changed_by: str = None):
+    # Find today's daily_batch row for this batch_id
+
+    db_daily_batch = db.query(DailyBatch).filter(DailyBatch.batch_id == batch_id, DailyBatch.batch_date == batch_date).first()
+    if db_daily_batch:
+        # Update fields
+        for key, value in batch_data.items():
+            if hasattr(db_daily_batch, key):
+                setattr(db_daily_batch, key, value)
+        # Recalculate closing_count and hd
+        db_daily_batch.closing_count = int(db_daily_batch.opening_count) - (int(db_daily_batch.mortality) + int(db_daily_batch.culls))
+        db_daily_batch.hd = (int(db_daily_batch.table_eggs) + int(db_daily_batch.jumbo) + int(db_daily_batch.cr)) / db_daily_batch.closing_count if db_daily_batch.closing_count > 0 else 0
+    else:
+        db_daily_batch = DailyBatch(
+            batch_id=batch_id,
+            batch_no=batch_data.get('batch_no', None),
+            shed_no=batch_data.get('shed_no', None),
+            batch_date=batch_date,
+            upload_date=date.today(),
+            age=batch_data.get('age', None),
+            opening_count=batch_data.get('opening_count', 0),
+            mortality=batch_data.get('mortality', 0),
+            culls=batch_data.get('culls', 0),
+            closing_count=batch_data.get('opening_count', 0) - (batch_data.get('mortality', 0) + batch_data.get('culls', 0)),
+            table_eggs=batch_data.get('table_eggs', 0),
+            jumbo=batch_data.get('jumbo', 0),
+            cr=batch_data.get('cr', 0),
+            hd=(batch_data.get('table_eggs', 0) + batch_data.get('jumbo', 0) + batch_data.get('cr', 0)) / (batch_data.get('opening_count', 0) - (batch_data.get('mortality', 0) + batch_data.get('culls', 0))) if (batch_data.get('opening_count', 0) - (batch_data.get('mortality', 0) + batch_data.get('culls', 0))) > 0 else 0,
+            is_chick_batch=batch_data.get('is_chick_batch', False)
+        )
+        db.add(db_daily_batch)
+    db.commit()
+    db.refresh(db_daily_batch)
+    return db_daily_batch
 
 def delete_batch(db: Session, batch_id: int, changed_by: str = None):
     db_batch = db.query(Batch).filter(Batch.id == batch_id).first()
