@@ -20,6 +20,7 @@ class DailyBatch(Base):
     jumbo = Column(Integer, default=0)
     cr = Column(Integer, default=0)
     is_chick_batch = Column(Boolean, default=False)
+    notes = Column(String, nullable=True)
 
     @hybrid_property
     def total_eggs(self):

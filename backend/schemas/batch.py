@@ -1,3 +1,4 @@
+from typing import Optional
 from pydantic import BaseModel, validator, computed_field
 from datetime import date
 import re
@@ -9,6 +10,8 @@ class BatchBase(BaseModel):
     shed_no: str
     date: date
     is_chick_batch: bool = False
+    standard_hen_day_percentage: Optional[float] = 0.0
+
 
     @validator('opening_count')
     def validate_opening_count(cls, v):

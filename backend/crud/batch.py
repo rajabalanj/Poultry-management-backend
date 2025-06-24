@@ -27,6 +27,7 @@ def create_batch(db: Session, batch: BatchCreate, changed_by: str = None):
         shed_no=batch.shed_no,
         date= batch.date,
         is_chick_batch=getattr(batch, 'is_chick_batch', False),
+        standard_hen_day_percentage=batch.standard_hen_day_percentage if hasattr(batch, 'standard_hen_day_percentage') else 0.0
     )
     db.add(db_batch)
     db.commit()
@@ -63,8 +64,8 @@ def update_batch(db: Session, batch_id: int, batch_date: date, batch_data: dict,
             if hasattr(db_daily_batch, key):
                 setattr(db_daily_batch, key, value)
         # Recalculate closing_count and hd
-        db_daily_batch.closing_count = int(db_daily_batch.opening_count) - (int(db_daily_batch.mortality) + int(db_daily_batch.culls))
-        db_daily_batch.hd = (int(db_daily_batch.table_eggs) + int(db_daily_batch.jumbo) + int(db_daily_batch.cr)) / db_daily_batch.closing_count if db_daily_batch.closing_count > 0 else 0
+        # db_daily_batch.closing_count = int(db_daily_batch.opening_count) - (int(db_daily_batch.mortality) + int(db_daily_batch.culls))
+        # db_daily_batch.hd = (int(db_daily_batch.table_eggs) + int(db_daily_batch.jumbo) + int(db_daily_batch.cr)) / db_daily_batch.closing_count if db_daily_batch.closing_count > 0 else 0
     else:
         db_daily_batch = DailyBatch(
             batch_id=batch_id,

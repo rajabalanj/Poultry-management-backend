@@ -37,6 +37,7 @@ from models.batch import Batch
 from schemas.app_config import AppConfigCreate, AppConfigUpdate, AppConfigOut
 from crud import app_config as crud_app_config
 from typing import List, Optional
+from models.daily_batch import DailyBatch as DailyBatchModel
 
 # --- Logging Configuration (Add this section) ---
 LOG_DIR = "logs"
@@ -222,18 +223,123 @@ def update_batch(
     db: Session = Depends(get_db),
     x_user_id: Optional[str] = Header(None)
 ):
-    """
-    Update a batch in the batch table by batch_id with the given values.
-    """
+    from utils import calculate_age_progression
     db_batch = db.query(Batch).filter(Batch.id == batch_id).first()
     if db_batch is None:
         raise HTTPException(status_code=404, detail="Batch not found")
+
+    changes = {}
+    old_date = db_batch.date
+    new_date = batch_data.get("date")
+    date_changed_and_increased = False
+    if new_date:
+        # Convert to date if string
+        if isinstance(new_date, str):
+            from dateutil import parser
+            new_date = parser.parse(new_date).date()
+        if new_date > old_date:
+            date_changed_and_increased = True
+
     for key, value in batch_data.items():
         if hasattr(db_batch, key):
-            setattr(db_batch, key, value)
-    db.commit()
-    db.refresh(db_batch)
-    return db_batch
+            old_value = getattr(db_batch, key)
+            if old_value != value:
+                changes[key] = {"old": old_value, "new": value}
+                setattr(db_batch, key, value)
+
+    if changes:
+        # If date increased, delete old daily_batch entries and create one for new_date if not present
+        if date_changed_and_increased:
+            db.query(DailyBatchModel).filter(
+                DailyBatchModel.batch_id == batch_id,
+                DailyBatchModel.batch_date < new_date
+            ).delete(synchronize_session=False)
+            db.commit()
+            exists = db.query(DailyBatchModel).filter(
+                DailyBatchModel.batch_id == batch_id,
+                DailyBatchModel.batch_date == new_date
+            ).first()
+            if not exists:
+                db_daily = DailyBatchModel(
+                    batch_id=batch_id,
+                    shed_no=db_batch.shed_no,
+                    batch_no=db_batch.batch_no,
+                    upload_date=new_date,
+                    batch_date=new_date,
+                    age=db_batch.age,
+                    opening_count=db_batch.opening_count,
+                    mortality=0,
+                    culls=0,
+                    table_eggs=0,
+                    jumbo=0,
+                    cr=0,
+                    is_chick_batch=db_batch.is_chick_batch
+                )
+                db.add(db_daily)
+                db.commit()
+        # Example: update daily_batch if certain fields changed
+        if "shed_no" in changes or "batch_no" in changes:
+            related_batches = db.query(DailyBatchModel).filter(DailyBatchModel.batch_id == batch_id).all()
+            for rel in related_batches:
+                if "shed_no" in changes:
+                    rel.shed_no = changes["shed_no"]["new"]
+                if "batch_no" in changes:
+                    rel.batch_no = changes["batch_no"]["new"]
+        # Age update logic for daily_batch
+        if "age" in batch_data and new_date:
+            target_row = db.query(DailyBatchModel).filter(
+                DailyBatchModel.batch_id == batch_id,
+                DailyBatchModel.batch_date == new_date
+            ).first()
+            if target_row:
+                try:
+                    new_age = float(batch_data["age"])
+                except Exception:
+                    new_age = 0.0
+                target_row.age = str(round(new_age, 1))
+                subsequent_rows = db.query(DailyBatchModel).filter(
+                    DailyBatchModel.batch_id == batch_id,
+                    DailyBatchModel.batch_date > new_date
+                ).order_by(DailyBatchModel.batch_date.asc()).all()
+                prev_date = new_date
+                prev_age = new_age
+                for row in subsequent_rows:
+                    days_diff = (row.batch_date - prev_date).days
+                    prev_age = calculate_age_progression(prev_age, days_diff)
+                    row.age = str(round(prev_age, 1))
+                    prev_date = row.batch_date
+        # Opening count update logic for daily_batch
+        if "opening_count" in batch_data and new_date:
+            # Update opening_count for the given batch_id and batch_date
+            target_row = db.query(DailyBatchModel).filter(
+                DailyBatchModel.batch_id == batch_id,
+                DailyBatchModel.batch_date == new_date
+            ).first()
+            if target_row:
+                target_row.opening_count = batch_data["opening_count"]
+                # Fetch all daily_batch rows for this batch_id ordered by batch_date
+                all_rows = db.query(DailyBatchModel).filter(
+                    DailyBatchModel.batch_id == batch_id
+                ).order_by(DailyBatchModel.batch_date.asc()).all()
+                # Find the index of the updated row
+                idx = next((i for i, row in enumerate(all_rows) if row.batch_date == new_date), None)
+                if idx is not None:
+                    prev_row = all_rows[idx]
+                    for next_row in all_rows[idx+1:]:
+                        next_row.opening_count = prev_row.closing_count  # closing_count is a hybrid property
+                        prev_row = next_row
+        # Optional: insert change logs into audit table here
+        # insert_audit_logs(batch_id, changes, x_user_id)
+        db.commit()
+        db.refresh(db_batch)
+
+    return {
+        "message": "Batch updated" if changes else "No changes detected",
+        "updated_fields": list(changes.keys()),
+        "data": db_batch
+    }
+
+
 
 @app.delete("/batches/{batch_id}")
 def delete_batch(
@@ -622,6 +728,9 @@ def get_daily_batches(
         result = []
         for daily in daily_batches:
             d = daily.__dict__.copy()
+            d['closing_count'] = daily.closing_count  # access the hybrid property
+            d['hd'] = daily.hd
+            d['total_eggs'] = daily.total_eggs
             d.pop('_sa_instance_state', None)
             result.append(d)
         return result
@@ -682,6 +791,9 @@ def get_daily_batches(
         db.commit()
         db.refresh(db_daily)
         d = db_daily.__dict__.copy()
+        d['closing_count'] = db_daily.closing_count  # access the hybrid property
+        d['hd'] = db_daily.hd
+        d['total_eggs'] = db_daily.total_eggs
         d.pop('_sa_instance_state', None)
         created.append(d)
     return created

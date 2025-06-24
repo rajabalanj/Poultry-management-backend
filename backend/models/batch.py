@@ -13,4 +13,5 @@ class Batch(Base):
     age = Column(String)  # Format: "week.day" (e.g., "1.1" for 8 days)
     opening_count = Column(Integer)
     is_chick_batch = Column(Boolean, default=False)
-    daily_batches = relationship("DailyBatch", back_populates="batch") 
+    daily_batches = relationship("DailyBatch", back_populates="batch")
+    standard_hen_day_percentage = Column(Numeric(5, 2), default=0.0, nullable=True)  # Percentage of hen days 

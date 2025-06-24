@@ -57,10 +57,12 @@ class DailyBatchBase(BaseModel):
 class DailyBatchCreate(DailyBatchBase):
     # This class is fine as is if it serves as a distinct type for creation.
     # If it's always identical to DailyBatchBase, you might reconsider its necessity.
+    notes: Optional[str] = None
     pass
 
 class DailyBatchUpdate(DailyBatchBase):
     batch_id: int
+    notes: Optional[str] = None
 
     class Config:
         from_attributes = True
