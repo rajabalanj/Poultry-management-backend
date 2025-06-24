@@ -161,9 +161,9 @@ def read_batches_fallback(skip: int = 0, limit: int = 100, db: Session = Depends
     return result
 
 @app.get("/batches/{batch_id}", response_model=BatchSchema)
-def read_batch(batch_id: int, batch_date: date, db: Session = Depends(get_db)):
+def read_batch(batch_id: int, db: Session = Depends(get_db)):
     logger.info("Fetching batch with batch_id=%d", batch_id)
-    db_batch = crud_batch.get_batch(db, batch_id=batch_id, batch_date=batch_date)
+    db_batch = db.query(Batch).filter(Batch.id == batch_id).first()
     if db_batch is None:
         logger.warning("Batch with batch_id=%d not found", batch_id)
         raise HTTPException(status_code=404, detail="Batch not found")
@@ -217,14 +217,22 @@ def read_batch_fallback(batch_id: int, db: Session = Depends(get_db)):
 
 @app.patch("/batches/{batch_id}", response_model=BatchSchema)
 def update_batch(
-    batch_id: int, 
-    batch_data: dict, 
+    batch_id: int,
+    batch_data: dict,
     db: Session = Depends(get_db),
     x_user_id: Optional[str] = Header(None)
 ):
-    db_batch = crud_batch.update_batch(db, batch_id=batch_id, batch_data=batch_data, changed_by=x_user_id)
+    """
+    Update a batch in the batch table by batch_id with the given values.
+    """
+    db_batch = db.query(Batch).filter(Batch.id == batch_id).first()
     if db_batch is None:
         raise HTTPException(status_code=404, detail="Batch not found")
+    for key, value in batch_data.items():
+        if hasattr(db_batch, key):
+            setattr(db_batch, key, value)
+    db.commit()
+    db.refresh(db_batch)
     return db_batch
 
 @app.delete("/batches/{batch_id}")
@@ -602,6 +610,7 @@ def get_daily_batches(
 ):
     """
     Fetch all daily_batch rows for a given batch_date. If none exist, generate them and return.
+    If batch_date is before a batch's start date, return a message for that batch.
     """
     from models.daily_batch import DailyBatch as DailyBatchModel
     from models.batch import Batch as BatchModel
@@ -622,6 +631,17 @@ def get_daily_batches(
     created = []
     batches = db.query(BatchModel).all()
     for batch in batches:
+        # If batch_date is before batch's start date, skip and add message
+        if batch_date < batch.date:
+            created.append({
+                "batch_id": batch.id,
+                "shed_no": batch.shed_no,
+                "batch_no": batch.batch_no,
+                "message": "Please modify batch start date in configuration screen to create batch for this date.",
+                "batch_start_date": batch.date.isoformat(),
+                "requested_date": batch_date.isoformat()
+            })
+            continue
         # Find the most recent previous daily_batch for this batch
         prev_daily = db.query(DailyBatchModel).filter(
             DailyBatchModel.batch_id == batch.id,
@@ -665,5 +685,17 @@ def get_daily_batches(
         d.pop('_sa_instance_state', None)
         created.append(d)
     return created
+
+@app.get("/batches/all/", response_model=List[BatchSchema])
+def get_all_batches(
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
+    """
+    Fetch all batches with pagination (no batch_date required).
+    """
+    batches = db.query(Batch).offset(skip).limit(limit).all()
+    return batches
 
 
