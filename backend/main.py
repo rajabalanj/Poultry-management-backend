@@ -333,11 +333,7 @@ def update_batch(
         db.commit()
         db.refresh(db_batch)
 
-    return {
-        "message": "Batch updated" if changes else "No changes detected",
-        "updated_fields": list(changes.keys()),
-        "data": db_batch
-    }
+    return db_batch
 
 
 
