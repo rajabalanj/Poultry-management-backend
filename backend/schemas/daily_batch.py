@@ -58,11 +58,12 @@ class DailyBatchCreate(DailyBatchBase):
     # This class is fine as is if it serves as a distinct type for creation.
     # If it's always identical to DailyBatchBase, you might reconsider its necessity.
     notes: Optional[str] = None
-    pass
+    standard_hen_day_percentage: Optional[float] = 0.0
 
 class DailyBatchUpdate(DailyBatchBase):
     batch_id: int
     notes: Optional[str] = None
+    standard_hen_day_percentage: Optional[float] = 0.0
 
     class Config:
         from_attributes = True

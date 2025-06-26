@@ -106,7 +106,9 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
             "table_eggs": batch.table_eggs,
             "jumbo": batch.jumbo,
             "cr": batch.cr,
-            "total_eggs": batch.total_eggs  # Computed property
+            "total_eggs": batch.total_eggs,  # Computed property
+            "hd": batch.hd,  # Computed property
+            "standard_hen_day_percentage": float(batch.standard_hen_day_percentage) if batch.standard_hen_day_percentage is not None else batch.standard_hen_day_percentage,
         }
         for batch in daily_batches
     ]

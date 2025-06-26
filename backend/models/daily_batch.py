@@ -21,6 +21,8 @@ class DailyBatch(Base):
     cr = Column(Integer, default=0)
     is_chick_batch = Column(Boolean, default=False)
     notes = Column(String, nullable=True)
+    standard_hen_day_percentage = Column(Numeric(5, 2), default=0.0, nullable=True)
+
 
     @hybrid_property
     def total_eggs(self):

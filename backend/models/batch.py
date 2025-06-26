@@ -14,4 +14,4 @@ class Batch(Base):
     opening_count = Column(Integer)
     is_chick_batch = Column(Boolean, default=False)
     daily_batches = relationship("DailyBatch", back_populates="batch")
-    standard_hen_day_percentage = Column(Numeric(5, 2), default=0.0, nullable=True)  # Percentage of hen days 
+    # standard_hen_day_percentage = Column(Numeric(5, 2), default=0.0, nullable=True)  # Percentage of hen days 

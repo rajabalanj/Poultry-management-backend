@@ -803,7 +803,11 @@ def get_all_batches(
     """
     Fetch all batches with pagination (no batch_date required).
     """
-    batches = db.query(Batch).offset(skip).limit(limit).all()
-    return batches
+    try:
+        batches = db.query(Batch).offset(skip).limit(limit).all()
+        return batches
+    except Exception as e:
+        logger.exception(f"Error fetching batches (skip={skip}, limit={limit}): {e}")
+        raise HTTPException(status_code=500, detail="Internal server error while fetching batches.")
 
 

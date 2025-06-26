@@ -10,7 +10,7 @@ class BatchBase(BaseModel):
     shed_no: str
     date: date
     is_chick_batch: bool = False
-    standard_hen_day_percentage: Optional[float] = 0.0
+    # standard_hen_day_percentage: Optional[float] = 0.0
 
 
     @validator('opening_count')

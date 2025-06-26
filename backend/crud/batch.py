@@ -27,7 +27,7 @@ def create_batch(db: Session, batch: BatchCreate, changed_by: str = None):
         shed_no=batch.shed_no,
         date= batch.date,
         is_chick_batch=getattr(batch, 'is_chick_batch', False),
-        standard_hen_day_percentage=batch.standard_hen_day_percentage if hasattr(batch, 'standard_hen_day_percentage') else 0.0
+        # standard_hen_day_percentage=batch.standard_hen_day_percentage if hasattr(batch, 'standard_hen_day_percentage') else 0.0
     )
     db.add(db_batch)
     db.commit()
