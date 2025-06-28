@@ -3,7 +3,7 @@ from models.egg_room_reports import EggRoomReport
 from schemas.egg_room_reports import EggRoomReportCreate, EggRoomReportUpdate
 from fastapi import HTTPException
 
-def get_report_by_date(db: Session, report_date):
+def get_report_by_date(db: Session, report_date: str):
     return db.query(EggRoomReport).filter(EggRoomReport.report_date == report_date).first()
 
 def create_report(db: Session, report: EggRoomReportCreate):
@@ -13,20 +13,20 @@ def create_report(db: Session, report: EggRoomReportCreate):
     db.refresh(db_report)
     return db_report
 
-def update_report(db: Session, report_date, report_update: EggRoomReportUpdate):
-    db_report = get_report_by_date(db, report_date)
+def update_report(db: Session, report_date: str, report: EggRoomReportUpdate):
+    db_report = db.query(EggRoomReport).filter(EggRoomReport.report_date == report_date).first()
     if not db_report:
-        raise HTTPException(status_code=404, detail="Report not found")
-    for key, value in report_update.dict(exclude_unset=True).items():
+        return None
+    for key, value in report.dict(exclude_unset=True).items():
         setattr(db_report, key, value)
     db.commit()
     db.refresh(db_report)
     return db_report
 
-def delete_report(db: Session, report_date):
-    db_report = get_report_by_date(db, report_date)
+def delete_report(db: Session, report_date: str):
+    db_report = db.query(EggRoomReport).filter(EggRoomReport.report_date == report_date).first()
     if not db_report:
-        raise HTTPException(status_code=404, detail="Report not found")
+        return None
     db.delete(db_report)
     db.commit()
-    return {"detail": "Report deleted"}
+    return {"message": "Report deleted"}
