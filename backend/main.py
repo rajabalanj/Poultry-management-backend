@@ -38,6 +38,10 @@ from schemas.app_config import AppConfigCreate, AppConfigUpdate, AppConfigOut
 from crud import app_config as crud_app_config
 from typing import List, Optional
 from models.daily_batch import DailyBatch as DailyBatchModel
+import egg_room_reports
+from crud.egg_room_reports import get_report_by_date, create_report, update_report, delete_report
+from models.egg_room_reports import EggRoomReport
+from schemas.egg_room_reports import EggRoomReportCreate, EggRoomReportUpdate, EggRoomReportResponse
 
 # --- Logging Configuration (Add this section) ---
 LOG_DIR = "logs"
@@ -98,6 +102,7 @@ app.add_middleware(
 #app.mount("/", StaticFiles(directory="dist", html=True), name="static")
 app.include_router(reports.router)
 app.include_router(auth.router)
+app.include_router(egg_room_reports.router)
 
 @app.post("/batches/", response_model=BatchSchema)
 def create_batch(
@@ -114,53 +119,6 @@ def read_batches(batch_date: date, skip: int = 0, limit: int = 100, db: Session 
     logger.info("Fetched %d batches", len(batches))
     return batches
 
-@app.get("/batches/fallback/", response_model=List[BatchSchema])
-def read_batches_fallback(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    logger.info("Fetching batches with fallback logic, skip=%d, limit=%d", skip, limit)
-    batches = crud_batch.get_all_batches(db, skip=skip, limit=limit, batch_date=date.today())
-    from models.daily_batch import DailyBatch as DailyBatchModel
-
-    result = []
-    for batch in batches:
-        total_eggs = (batch.table_eggs or 0) + (batch.jumbo or 0) + (batch.cr or 0)
-        if total_eggs == 0 and batch.closing_count == batch.opening_count:
-            # Look for the most recent daily_batch with eggs or mortality/culls
-            daily_batches = (
-                db.query(DailyBatchModel)
-                .filter(DailyBatchModel.batch_id == batch.id)
-                .order_by(DailyBatchModel.batch_date.desc())
-                .all()
-            )
-            found = False
-            for daily in daily_batches:
-                daily_total_eggs = (daily.table_eggs or 0) + (daily.jumbo or 0) + (daily.cr or 0)
-                if daily_total_eggs > 0 or daily.closing_count != daily.opening_count:
-                    logger.info("Fallback: Found daily_batch for batch_id=%d on %s", batch.id, daily.batch_date)
-                    result.append(BatchSchema(
-                        id=daily.batch_id,
-                        shed_no=daily.shed_no,
-                        batch_no=daily.batch_no,
-                        date=daily.batch_date,
-                        age=daily.age,
-                        opening_count=daily.opening_count,
-                        mortality=daily.mortality,
-                        culls=daily.culls,
-                        closing_count=daily.closing_count,
-                        table_eggs=daily.table_eggs,
-                        jumbo=daily.jumbo,
-                        cr=daily.cr,
-                        hd=getattr(daily, "hd", None),
-                        is_chick_batch=getattr(daily, "is_chick_batch", None),
-                    ))
-                    found = True
-                    break
-            if not found:
-                result.append(batch)
-        else:
-            result.append(batch)
-    logger.info("Fetched %d batches with fallback logic", len(result))
-    return result
-
 @app.get("/batches/{batch_id}", response_model=BatchSchema)
 def read_batch(batch_id: int, db: Session = Depends(get_db)):
     logger.info("Fetching batch with batch_id=%d", batch_id)
@@ -169,51 +127,6 @@ def read_batch(batch_id: int, db: Session = Depends(get_db)):
         logger.warning("Batch with batch_id=%d not found", batch_id)
         raise HTTPException(status_code=404, detail="Batch not found")
     logger.info("Fetched batch: %s", db_batch)
-    return db_batch
-
-@app.get("/batches/{batch_id}/fallback", response_model=BatchSchema)
-def read_batch_fallback(batch_id: int, db: Session = Depends(get_db)):
-    logger.info("Fetching batch with batch_id=%d", batch_id)
-    db_batch = crud_batch.get_batch(db, batch_id=batch_id)
-    if db_batch is None:
-        logger.warning("Batch with batch_id=%d not found", batch_id)
-        raise HTTPException(status_code=404, detail="Batch not found")
-    logger.info("Fetched batch: %s", db_batch)
-
-    # If total_eggs is zero, look for the most recent daily_batch with total_eggs > 0
-    if (db_batch.table_eggs + db_batch.jumbo + db_batch.cr) == 0 and db_batch.closing_count == db_batch.opening_count:
-        logger.info("No eggs found and no mortality and culls for batch_id=%d, looking for daily_batch table in batch %d, searching daily_batch table...", batch_id)
-        from models.daily_batch import DailyBatch as DailyBatchModel
-        daily_batches = (
-            db.query(DailyBatchModel)
-            .filter(DailyBatchModel.batch_id == batch_id)
-            .order_by(DailyBatchModel.batch_date.desc())
-            .all()
-        )
-        for daily in daily_batches:
-            total_eggs = (daily.table_eggs or 0) + (daily.jumbo or 0) + (daily.cr or 0)
-            if total_eggs > 0 or daily.closing_count != daily.opening_count:
-                logger.info("Found daily_batch with eggs or mortality/culls for batch_id=%d on %s", batch_id, daily.batch_date)
-                # Return a BatchSchema instance with daily_batch data
-                return BatchSchema(
-                    id=daily.batch_id,
-                    shed_no=daily.shed_no,
-                    batch_no=daily.batch_no,
-                    date=daily.batch_date,
-                    age=daily.age,
-                    opening_count=daily.opening_count,
-                    mortality=daily.mortality,
-                    culls=daily.culls,
-                    closing_count=daily.closing_count,
-                    table_eggs=daily.table_eggs,
-                    jumbo=daily.jumbo,
-                    cr=daily.cr,
-                    hd=getattr(daily, "hd", None),
-                    is_chick_batch=getattr(daily, "is_chick_batch", None),
-                )
-        logger.info("No daily_batch with eggs found for batch_id=%d", batch_id)
-
-    # Return the batch result if total_eggs is not zero or no daily_batch found
     return db_batch
 
 @app.patch("/batches/{batch_id}", response_model=BatchSchema)
@@ -348,16 +261,6 @@ def delete_batch(
         raise HTTPException(status_code=404, detail="Batch not found")
     return {"message": "Batch deleted successfully"}
 
-@app.get("/reports/batch-report")
-def get_batch_report(batch_id: int, db: Session = Depends(get_db)):
-    """Generate and return a batch report as an Excel file."""
-    # Generate the Excel report (you need to implement this function in `reports.py`)
-    file_path = reports.generate_batch_report_excel(batch_id, db)
-
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="Report file not found")
-
-    return FileResponse(file_path, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", filename=f"batch_report_{batch_id}.xlsx")
 @app.get("/")
 async def test_route():
     return {"message": "Welcome to the FastAPI application!"}
@@ -476,14 +379,6 @@ def patch_composition(composition_id: int, composition: CompositionCreate, db: S
     if db_composition is None:
         raise HTTPException(status_code=404, detail="Composition not found")
     return db_composition
-
-# @app.post("/daily-batch/", response_model=DailyBatch)
-# def create_daily_batch(
-#     daily_batch: DailyBatchCreate,
-#     db: Session = Depends(get_db),
-#     x_user_id: Optional[str] = Header(None)
-# ):
-#     return crud_daily_batch.create_daily_batch(db=db, daily_batch=daily_batch, changed_by=x_user_id)
 
 @app.post("/daily-batch/upload-excel/")
 def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends(get_db)):
