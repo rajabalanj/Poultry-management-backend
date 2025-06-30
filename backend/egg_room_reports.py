@@ -5,6 +5,7 @@ from schemas.egg_room_reports import EggRoomReportCreate, EggRoomReportUpdate, E
 from crud import egg_room_reports as egg_crud
 import logging
 import traceback
+from typing import List
 
 router = APIRouter(prefix="/egg-room-report", tags=["egg_room_reports"])
 logger = logging.getLogger("egg_room_reports")
@@ -73,4 +74,15 @@ def delete_report(report_date: str, db: Session = Depends(get_db)):
         raise
     except Exception as e:
         logger.error(f"Error deleting egg room report for {report_date}: {e}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.get("/", response_model=List[EggRoomReportResponse])
+def get_reports(start_date: str, end_date: str, db: Session = Depends(get_db)):
+    try:
+        reports = egg_crud.get_reports_by_date_range(db, start_date, end_date)
+        return reports
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching egg room reports for {start_date} to {end_date}: {e}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail="Internal server error")

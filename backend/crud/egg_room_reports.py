@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 from models.egg_room_reports import EggRoomReport
 from schemas.egg_room_reports import EggRoomReportCreate, EggRoomReportUpdate
 from fastapi import HTTPException
+from typing import List
 
 def get_report_by_date(db: Session, report_date: str):
     return db.query(EggRoomReport).filter(EggRoomReport.report_date == report_date).first()
@@ -30,3 +31,6 @@ def delete_report(db: Session, report_date: str):
     db.delete(db_report)
     db.commit()
     return {"message": "Report deleted"}
+
+def get_reports_by_date_range(db: Session, start_date: str, end_date: str) -> List[EggRoomReport]:
+    return db.query(EggRoomReport).filter(EggRoomReport.report_date >= start_date, EggRoomReport.report_date <= end_date).all()

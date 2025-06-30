@@ -3,6 +3,7 @@ from sqlalchemy import func
 from models.feed import Feed
 # from schemas.batch import BatchCreate
 from datetime import date
+from schemas.feed import Feed as FeedSchema
 
 def get_feed(db: Session, feed_id: int):
     return db.query(Feed).filter(Feed.id == feed_id).first()
@@ -16,6 +17,8 @@ def create_feed(db: Session, feed: Feed, changed_by: str = None):
         createdDate=feed.createdDate,
         quantity=feed.quantity,
         unit=feed.unit,
+        warningKgThreshold=feed.warningKgThreshold,
+        warningTonThreshold=feed.warningTonThreshold,
     )
     db.add(db_feed)
     db.commit()

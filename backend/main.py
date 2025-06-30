@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 import auth
 import time
 import io
+from schemas import bovanswhitelayerperformance
 from schemas.feed import Feed
 from database import Base, SessionLocal, engine
 from contextlib import asynccontextmanager
@@ -39,6 +40,7 @@ from crud import app_config as crud_app_config
 from typing import List, Optional
 from models.daily_batch import DailyBatch as DailyBatchModel
 import egg_room_reports
+import bovanswhitelayerperformance
 from crud.egg_room_reports import get_report_by_date, create_report, update_report, delete_report
 from models.egg_room_reports import EggRoomReport
 from schemas.egg_room_reports import EggRoomReportCreate, EggRoomReportUpdate, EggRoomReportResponse
@@ -103,6 +105,7 @@ app.add_middleware(
 app.include_router(reports.router)
 app.include_router(auth.router)
 app.include_router(egg_room_reports.router)
+app.include_router(bovanswhitelayerperformance.router)
 
 @app.post("/batches/", response_model=BatchSchema)
 def create_batch(

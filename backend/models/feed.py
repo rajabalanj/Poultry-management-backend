@@ -10,5 +10,6 @@ class Feed(Base):
     quantity = Column(Numeric(8, 3))
     unit = Column(String)  # e.g., "kg", "tons"
     createdDate = Column(Date, default=date.today)
- 
-    
+    # Add new columns for warning thresholds
+    warningKgThreshold = Column(Numeric(10, 3), nullable=True)
+    warningTonThreshold = Column(Numeric(10, 3), nullable=True)
