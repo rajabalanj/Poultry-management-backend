@@ -3,6 +3,9 @@ from sqlalchemy.orm import relationship
 from database import Base
 from datetime import date
 from sqlalchemy.ext.hybrid import hybrid_property
+from models.bovanswhitelayerperformance import BovansWhiteLayerPerformance
+from sqlalchemy.orm import object_session
+
 
 class DailyBatch(Base):
     __tablename__ = "daily_batch"
@@ -21,7 +24,6 @@ class DailyBatch(Base):
     cr = Column(Integer, default=0)
     is_chick_batch = Column(Boolean, default=False)
     notes = Column(String, nullable=True)
-    standard_hen_day_percentage = Column(Numeric(5, 2), default=0.0, nullable=True)
 
 
     @hybrid_property
@@ -35,3 +37,13 @@ class DailyBatch(Base):
     @hybrid_property
     def hd(self):
         return self.total_eggs / self.closing_count if self.closing_count > 0 else 0
+    
+    @property
+    def standard_hen_day_percentage(self):
+        session = object_session(self)
+        bovans_performance = session.query(BovansWhiteLayerPerformance).filter(
+            BovansWhiteLayerPerformance.age_weeks == int(float(self.age))
+        ).first()
+        return bovans_performance.livability_percent if bovans_performance else None
+    
+
