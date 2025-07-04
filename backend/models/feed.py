@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, Numeric, String, Date
+from sqlalchemy.orm import relationship
 from database import Base
 from datetime import date
 
@@ -13,3 +14,4 @@ class Feed(Base):
     # Add new columns for warning thresholds
     warningKgThreshold = Column(Numeric(10, 3), nullable=True)
     warningTonThreshold = Column(Numeric(10, 3), nullable=True)
+    audits = relationship("FeedAudit", back_populates="feed")

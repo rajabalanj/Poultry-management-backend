@@ -37,4 +37,4 @@ class EggRoomReportResponse(EggRoomReportBase):
     updated_at: datetime
 
     class Config:
-        orm_mode = True
+        form_attributes = True

@@ -7,7 +7,7 @@ import auth
 import time
 import io
 from schemas import bovanswhitelayerperformance
-from schemas.feed import Feed
+from schemas.feed import Feed as FeedSchema
 from database import Base, SessionLocal, engine
 from contextlib import asynccontextmanager
 from datetime import datetime, time as dt_time, timedelta
@@ -44,6 +44,11 @@ import bovanswhitelayerperformance
 from crud.egg_room_reports import get_report_by_date, create_report, update_report, delete_report
 from models.egg_room_reports import EggRoomReport
 from schemas.egg_room_reports import EggRoomReportCreate, EggRoomReportUpdate, EggRoomReportResponse
+from models.feed_audit import FeedAudit
+from models.feed import Feed
+from decimal import Decimal
+
+
 
 # --- Logging Configuration (Add this section) ---
 LOG_DIR = "logs"
@@ -284,7 +289,7 @@ def get_all_feeds(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
 
 @app.post("/feed/")
 def create_feed(
-    feed: Feed, 
+    feed: FeedSchema, 
     db: Session = Depends(get_db),
     x_user_id: Optional[str] = Header(None)
 ):
@@ -296,12 +301,38 @@ def update_feed(
     feed_id: int, 
     feed_data: dict, 
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None)
+    changed_by: str = None
 ):
     """Update an existing feed."""
-    db_feed = crud_feed.update_feed(db, feed_id=feed_id, feed_data=feed_data, changed_by=x_user_id)
-    if db_feed is None:
-        raise HTTPException(status_code=404, detail="Feed not found")
+    db_feed = db.query(Feed).filter(Feed.id == feed_id).first()
+    if not db_feed:
+        return None
+
+    old_quantity = db_feed.quantity
+    new_quantity = feed_data.get("quantity", old_quantity)
+
+    # Update the provided fields
+    for key, value in feed_data.items():
+        setattr(db_feed, key, value)
+    
+    db.commit()
+    db.refresh(db_feed)
+
+    # Audit only if quantity changed
+    if old_quantity != new_quantity:
+        new_quantity_decimal = Decimal(new_quantity)  # Convert new_quantity to Decimal
+        audit = FeedAudit(
+            feed_id=feed_id,
+            change_type="manual",
+            change_amount=new_quantity_decimal - old_quantity,
+            old_weight=old_quantity,
+            new_weight=new_quantity_decimal,
+            changed_by=changed_by,
+            note="Manual edit"
+        )
+        db.add(audit)
+        db.commit()
+
     return db_feed
 
 @app.delete("/feed/{feed_id}")
@@ -572,7 +603,7 @@ def update_daily_batch(
             setattr(daily_batch, key, payload[key])
 
     # Update other allowed fields dynamically (excluding ones already handled)
-    excluded_fields = {"shed_no", "age", "mortality", "culls", "opening_count", "table_eggs", "cr", "jumbo", "closing_count", "total_eggs", "hd"}
+    excluded_fields = {"shed_no", "age", "mortality", "culls", "opening_count", "table_eggs", "cr", "jumbo", "closing_count", "total_eggs", "hd", "standard_hen_day_percentage"}
     for key, value in payload.items():
         if key not in excluded_fields and hasattr(daily_batch, key):
             setattr(daily_batch, key, value)
@@ -708,4 +739,18 @@ def get_all_batches(
         logger.exception(f"Error fetching batches (skip={skip}, limit={limit}): {e}")
         raise HTTPException(status_code=500, detail="Internal server error while fetching batches.")
 
-
+@app.get("/feed/{feed_id}/audit/", response_model=List[dict])
+def get_feed_audit(feed_id: int, db: Session = Depends(get_db)):
+    audits = db.query(FeedAudit).filter(FeedAudit.feed_id == feed_id).order_by(FeedAudit.timestamp.desc()).all()
+    return [
+        {
+            "timestamp": a.timestamp,
+            "change_type": a.change_type,
+            "change_amount": a.change_amount,
+            "old_weight": a.old_weight,
+            "new_weight": a.new_weight,
+            "changed_by": a.changed_by,
+            "note": a.note,
+        }
+        for a in audits
+    ]
