@@ -44,6 +44,6 @@ class DailyBatch(Base):
         bovans_performance = session.query(BovansWhiteLayerPerformance).filter(
             BovansWhiteLayerPerformance.age_weeks == int(float(self.age))
         ).first()
-        return bovans_performance.livability_percent if bovans_performance else None
+        return bovans_performance.lay_percent if bovans_performance else None
     
 
