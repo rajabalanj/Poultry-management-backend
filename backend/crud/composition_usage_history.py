@@ -10,6 +10,7 @@ from models.feed_audit import FeedAudit
 from models.batch import Batch
 
 def use_composition(db: Session, composition_id: int, batch_id: int, times: int, used_at: datetime):
+    # import pdb; pdb.set_trace()
     # Store usage history
     usage = CompositionUsageHistory(
         composition_id=composition_id,
@@ -36,7 +37,7 @@ def use_composition(db: Session, composition_id: int, batch_id: int, times: int,
                 change_amount = -(Decimal(str(fic.weight)) * Decimal(str(times)) / Decimal('1000'))  # Convert tons to kg
                 new_quantity = old_quantity + change_amount
             # Update the feed quantity for the specific shed
-            db_feed = db.query(Feed).filter(Feed.id == feed.id, Feed.shed_no == shed_no).first()
+            db_feed = db.query(Feed).filter(Feed.id == feed.id).first()
             if db_feed:
                 db_feed.quantity = new_quantity
                 # Get the composition name
@@ -57,11 +58,13 @@ def use_composition(db: Session, composition_id: int, batch_id: int, times: int,
     db.refresh(usage)
     return usage
 
-def create_composition_usage_history(db: Session, composition_id: int, times: int, used_at):
+def create_composition_usage_history(db: Session, composition_id: int, times: int, used_at: datetime, batch_id: int = None):
+    # import pdb; pdb.set_trace()
     usage = CompositionUsageHistory(
         composition_id=composition_id,
         times=times,
-        used_at=used_at
+        used_at=used_at,
+        batch_id=batch_id
     )
     db.add(usage)
     db.commit()
@@ -74,12 +77,29 @@ def get_composition_usage_history(db: Session, composition_id: int = None):
     if composition_id:
         query = query.filter(CompositionUsageHistory.composition_id == composition_id)
     usage_list = query.order_by(CompositionUsageHistory.used_at.desc()).all()
-    # Attach composition name to each usage record
+
     result = []
     for usage in usage_list:
         composition = db.query(Composition).filter(Composition.id == usage.composition_id).first()
         usage_dict = usage.__dict__.copy()
+        usage_dict.pop('_sa_instance_state', None) # Remove SQLAlchemy internal state
+
         usage_dict['composition_name'] = composition.name if composition else None
-        usage_dict.pop('_sa_instance_state', None)
+
+        # Safely fetch shed_no from Batch
+        # Check if 'batch_id' exists in the usage record and if a Batch can be found
+        # This part ensures graceful handling if batch_id is missing or Batch not found.
+        if hasattr(usage, 'batch_id') and usage.batch_id is not None:
+            batch = db.query(Batch).filter(Batch.id == usage.batch_id).first()
+            if batch:
+                usage_dict['shed_no'] = batch.shed_no
+            else:
+                usage_dict['shed_no'] = None # Set to None if batch not found for a given batch_id
+        else:
+            usage_dict['shed_no'] = None # Set to None if batch_id is missing from usage record
+
+        # Remove the incorrect line that overwrites 'shed_no' with the Batch object:
+        # usage_dict['shed_no'] = shed_no # <--- REMOVE THIS LINE!
+
         result.append(usage_dict)
     return result

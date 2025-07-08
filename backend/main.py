@@ -381,10 +381,12 @@ def use_composition_endpoint(
     data: dict,
     db: Session = Depends(get_db)
 ):
+    # import pdb; pdb.set_trace()
     composition_id = data["compositionId"]
-    batch_id = data["batchId"]
+    shed_no = data["shed_no"]  # Change from batch_id to shed_no
     times = data["times"]
     used_at = data.get("usedAt")
+
     if used_at:
         try:
             used_at_dt = datetime.fromisoformat(used_at)
@@ -392,6 +394,14 @@ def use_composition_endpoint(
             used_at_dt = parser.parse(used_at)
     else:
         used_at_dt = datetime.now()
+
+    # Find the batch_id based on shed_no
+    # You'll need to implement a function like get_batch_id_by_shed_no(db, shed_no)
+    batch = db.query(BatchModel).filter(BatchModel.shed_no == shed_no, BatchModel.is_active == True).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail=f"Active batch with shed_no '{shed_no}' not found.")
+    batch_id = batch.id
+
     usage = use_composition(db, composition_id, batch_id, times, used_at_dt)
     return {"message": "Composition used and feed quantities updated", "usage_id": usage.id}
 
@@ -732,14 +742,19 @@ def get_all_batches(
     db: Session = Depends(get_db)
 ):
     """
-    Fetch all batches with pagination (no batch_date required).
+    Fetch all active batches with pagination.
     """
     try:
-        batches = db.query(BatchModel).offset(skip).limit(limit).all()
+        # Filter by the is_active hybrid property
+        batches = db.query(BatchModel).filter(BatchModel.is_active == True).offset(skip).limit(limit).all()
         return batches
     except Exception as e:
-        logger.exception(f"Error fetching batches (skip={skip}, limit={limit}): {e}")
-        raise HTTPException(status_code=500, detail="Internal server error while fetching batches.")
+        # It's good practice to log the full exception for debugging
+        # Assuming you have a logger configured
+        # import logging
+        # logger = logging.getLogger(__name__)
+        logger.exception(f"Error fetching active batches (skip={skip}, limit={limit}): {e}")
+        raise HTTPException(status_code=500, detail="Internal server error while fetching active batches.")
 
 @app.get("/feed/{feed_id}/audit/", response_model=List[dict])
 def get_feed_audit(feed_id: int, db: Session = Depends(get_db)):
