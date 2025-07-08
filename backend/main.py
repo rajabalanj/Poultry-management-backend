@@ -382,6 +382,7 @@ def use_composition_endpoint(
     db: Session = Depends(get_db)
 ):
     composition_id = data["compositionId"]
+    batch_id = data["batchId"]
     times = data["times"]
     used_at = data.get("usedAt")
     if used_at:
@@ -391,7 +392,7 @@ def use_composition_endpoint(
             used_at_dt = parser.parse(used_at)
     else:
         used_at_dt = datetime.now()
-    usage = use_composition(db, composition_id, times, used_at_dt)
+    usage = use_composition(db, composition_id, batch_id, times, used_at_dt)
     return {"message": "Composition used and feed quantities updated", "usage_id": usage.id}
 
 @app.get("/compositions/usage-history", response_model=list[CompositionUsageHistory])
