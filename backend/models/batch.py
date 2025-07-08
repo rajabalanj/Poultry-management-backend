@@ -1,5 +1,6 @@
 from sqlalchemy import Column, Integer, String, Date, ForeignKey, Boolean, Numeric
 from sqlalchemy.orm import relationship
+from sqlalchemy.ext.hybrid import hybrid_property
 from database import Base
 from datetime import date
 
@@ -14,4 +15,14 @@ class Batch(Base):
     opening_count = Column(Integer)
     is_chick_batch = Column(Boolean, default=False)
     daily_batches = relationship("DailyBatch", back_populates="batch")
+    # status = Column(String, default="active")  # Status of the batch (e.g., active, inactive, completed)
+    closing_date = Column(Date, nullable=True)
+
+    @hybrid_property
+    def is_active(self):
+        return self.closing_date is None or self.closing_date > date.today()
+
+    @is_active.expression
+    def is_active(cls):
+        return cls.closing_date.is_(None) | (cls.closing_date > date.today())
     # standard_hen_day_percentage = Column(Numeric(5, 2), default=0.0, nullable=True)  # Percentage of hen days 

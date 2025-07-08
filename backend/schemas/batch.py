@@ -9,7 +9,8 @@ class BatchBase(BaseModel):
     batch_no: str
     shed_no: str
     date: date
-    is_chick_batch: bool = False
+    is_chick_batch: Optional[bool] = False
+    is_active: Optional[bool] = True  # Indicates if the batch is currently active
     # standard_hen_day_percentage: Optional[float] = 0.0
 
 

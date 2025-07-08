@@ -10,7 +10,9 @@ def get_batch(db: Session, batch_id: int, batch_date: date):
         return db.query(DailyBatch).filter(and_(DailyBatch.batch_id == batch_id, DailyBatch.batch_date == batch_date)).first()
 
 def get_all_batches(db: Session, batch_date: date, skip: int = 0, limit: int = 100,):
-    query = db.query(DailyBatch).filter(DailyBatch.batch_date == batch_date)
+    query = db.query(DailyBatch).join(Batch).filter(
+        DailyBatch.batch_date == batch_date, Batch.is_active
+    )
     daily_batches = query.offset(skip).limit(limit).all()
     for daily in daily_batches:
         # Convert batch_no like 'B-0001' to integer 1

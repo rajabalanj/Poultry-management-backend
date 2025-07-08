@@ -13,7 +13,8 @@ import pandas as pd
 from io import BytesIO
 from fastapi.responses import StreamingResponse, JSONResponse
 from sqlalchemy import and_
-import models 
+import models
+from models.batch import Batch
 
 def get_daily_batches_by_date_range(db: Session, start_date: date, end_date: date):
     return db.query(models.DailyBatch).filter(
@@ -80,9 +81,10 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
         raise HTTPException(status_code=400, detail="Start date cannot be after the end date")
 
     # Query DailyBatch for the specified date range, ordered by batch_id and batch_date
-    query = db.query(DailyBatch).filter(
+    query = db.query(DailyBatch).join(Batch).filter(
         DailyBatch.batch_date >= start_date_obj,
-        DailyBatch.batch_date <= end_date_obj
+        DailyBatch.batch_date <= end_date_obj,
+        Batch.is_active  # Only include active batches
     )
 
     if batch_id is not None:

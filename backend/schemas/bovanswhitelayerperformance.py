@@ -1,3 +1,4 @@
+from typing import List
 from pydantic import BaseModel
 class BovansPerformanceSchema(BaseModel):
     age_weeks: int
@@ -7,6 +8,15 @@ class BovansPerformanceSchema(BaseModel):
     feed_intake_per_day_g: int
     feed_intake_cum_kg: float
     body_weight_g: int
+
+    class Config:
+        # This enables ORM mode, allowing Pydantic to read data directly from SQLAlchemy models.
+        # It handles conversion from ORM objects to Pydantic models.
+        from_attributes = True
+
+class PaginatedBovansPerformanceResponse(BaseModel):
+    data: List[BovansPerformanceSchema]
+    total_count: int
 
     class Config:
         # This enables ORM mode, allowing Pydantic to read data directly from SQLAlchemy models.

@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from models.bovanswhitelayerperformance import BovansWhiteLayerPerformance
 from database import get_db
-from schemas.bovanswhitelayerperformance import BovansPerformanceSchema
+from schemas.bovanswhitelayerperformance import BovansPerformanceSchema, PaginatedBovansPerformanceResponse
 
 
 router = APIRouter(
@@ -12,23 +12,31 @@ router = APIRouter(
 )
 
 # Endpoint to get all performance data with pagination
-@router.get("/", response_model=List[BovansPerformanceSchema])
+@router.get("/", response_model=PaginatedBovansPerformanceResponse) # <--- IMPORTANT CHANGE HERE
 async def get_all_bovans_performance(
     skip: int = Query(0, ge=0),
-    limit: int = Query(10, ge=1, le=100), # Default to 10 items per page
+    limit: int = Query(10, ge=1, le=100),
     db: Session = Depends(get_db)
 ):
     """
     Retrieves all performance data for Bovans White Layer chickens with pagination.
     """
+    # Get the total count of items first
+    total_count = db.query(BovansWhiteLayerPerformance).count()
+
+    # Get the paginated data
     performance_data = db.query(BovansWhiteLayerPerformance).offset(skip).limit(limit).all()
-    if not performance_data:
-        # It's better to return an empty list for no data on a paginated endpoint
-        # rather than a 404, unless the entire collection is truly empty.
-        # For now, keeping the 404 for consistency with existing code, but
-        # consider returning an empty list and total count for front-end pagination.
+
+    if not performance_data and total_count > 0:
+        # If no data found for the given pagination but total_count is greater than 0,
+        # it means the skip/limit parameters are out of range for the available data.
         raise HTTPException(status_code=404, detail="No performance data found for the given pagination parameters")
-    return performance_data
+    elif total_count == 0:
+        # If the entire collection is empty, return an empty list and 0 total count.
+        return PaginatedBovansPerformanceResponse(data=[], total_count=0)
+
+    # Return the paginated data and the total count
+    return PaginatedBovansPerformanceResponse(data=performance_data, total_count=total_count)
 
 # Endpoint to get performance data for a specific age
 @router.get("/{age_weeks}", response_model=BovansPerformanceSchema)

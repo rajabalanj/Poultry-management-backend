@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 import auth
 import time
 import io
-from schemas import bovanswhitelayerperformance
+# from schemas import bovanswhitelayerperformance
 from schemas.feed import Feed as FeedSchema
 from database import Base, SessionLocal, engine
 from contextlib import asynccontextmanager
@@ -22,7 +22,7 @@ import crud.composition as crud_composition
 from crud.composition_usage_history import use_composition, create_composition_usage_history, get_composition_usage_history
 from schemas.composition_usage_history import CompositionUsageHistoryCreate, CompositionUsageHistory
 from datetime import datetime
-from schemas.batch import Batch, BatchCreate
+from schemas.batch import BatchCreate
 from schemas.batch import Batch as BatchSchema
 # from schemas.batch_history import BatchHistory
 import crud.batch as crud_batch
@@ -34,7 +34,7 @@ from dateutil import parser
 from schemas.daily_batch import DailyBatchCreate, DailyBatchUpdate
 import crud.daily_batch as crud_daily_batch
 import pandas as pd
-from models.batch import Batch
+from models.batch import Batch as BatchModel
 from schemas.app_config import AppConfigCreate, AppConfigUpdate, AppConfigOut
 from crud import app_config as crud_app_config
 from typing import List, Optional
@@ -130,7 +130,7 @@ def read_batches(batch_date: date, skip: int = 0, limit: int = 100, db: Session 
 @app.get("/batches/{batch_id}", response_model=BatchSchema)
 def read_batch(batch_id: int, db: Session = Depends(get_db)):
     logger.info("Fetching batch with batch_id=%d", batch_id)
-    db_batch = db.query(Batch).filter(Batch.id == batch_id).first()
+    db_batch = db.query(BatchModel).filter(BatchModel.id == batch_id).first()
     if db_batch is None:
         logger.warning("Batch with batch_id=%d not found", batch_id)
         raise HTTPException(status_code=404, detail="Batch not found")
@@ -145,7 +145,7 @@ def update_batch(
     x_user_id: Optional[str] = Header(None)
 ):
     from utils import calculate_age_progression
-    db_batch = db.query(Batch).filter(Batch.id == batch_id).first()
+    db_batch = db.query(BatchModel).filter(BatchModel.id == batch_id).first()
     if db_batch is None:
         raise HTTPException(status_code=404, detail="Batch not found")
 
@@ -422,7 +422,7 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
         df = pd.read_excel(io.BytesIO(contents), header=None)
 
         # Get all shed_nos present in batch table
-        all_batches = db.query(Batch).all()
+        all_batches = db.query(BatchModel).all()
         valid_shed_nos = {b.shed_no for b in all_batches}
 
         date_indices = df.index[df[0] == 'DATE'].tolist()
@@ -452,7 +452,7 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
                 if shed_no_excel not in valid_shed_nos:
                     logger.warning(f"Skipping row {row_idx} (Date: {report_date}) due to shed_no not in batch table: {shed_no_excel}")
                     continue
-                batch_obj = db.query(Batch).filter(Batch.shed_no == shed_no_excel).first()
+                batch_obj = db.query(BatchModel).filter(BatchModel.shed_no == shed_no_excel).first()
                 batch_id_for_daily_batch = batch_obj.id if batch_obj else None
                 if not batch_id_for_daily_batch:
                     logger.error(f"No batch_id found for shed_no '{shed_no_excel}'. Skipping daily_batch row {row_idx}.")
@@ -644,11 +644,12 @@ def get_daily_batches(
     If batch_date is before a batch's start date, return a message for that batch.
     """
     from models.daily_batch import DailyBatch as DailyBatchModel
-    from models.batch import Batch as BatchModel
     from utils import calculate_age_progression
     
     # Try to fetch existing daily_batch rows for the date
-    daily_batches = db.query(DailyBatchModel).filter(DailyBatchModel.batch_date == batch_date).all()
+    daily_batches = db.query(DailyBatchModel).join(BatchModel).filter(
+        DailyBatchModel.batch_date == batch_date, BatchModel.is_active
+    ).all()
     if daily_batches:
         result = []
         for daily in daily_batches:
@@ -663,7 +664,7 @@ def get_daily_batches(
     # If not found, generate them (same logic as /daily-batch/generate/)
     today = date.today()
     created = []
-    batches = db.query(BatchModel).all()
+    batches = db.query(BatchModel).filter(BatchModel.is_active).all()
     for batch in batches:
         # If batch_date is before batch's start date, skip and add message
         if batch_date < batch.date:
@@ -733,7 +734,7 @@ def get_all_batches(
     Fetch all batches with pagination (no batch_date required).
     """
     try:
-        batches = db.query(Batch).offset(skip).limit(limit).all()
+        batches = db.query(BatchModel).offset(skip).limit(limit).all()
         return batches
     except Exception as e:
         logger.exception(f"Error fetching batches (skip={skip}, limit={limit}): {e}")
@@ -754,3 +755,13 @@ def get_feed_audit(feed_id: int, db: Session = Depends(get_db)):
         }
         for a in audits
     ]
+
+@app.put("/batch/{batch_id}/close")
+def close_batch(batch_id: int, db: Session = Depends(get_db)):
+    batch = db.query(BatchModel).get(batch_id)
+    if batch:
+        batch.closing_date = date.today()
+        db.commit()
+        return {"message": "Batch closed successfully"}
+    else:
+        return {"error": "Batch not found"}, 404
