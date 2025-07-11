@@ -47,6 +47,7 @@ from schemas.egg_room_reports import EggRoomReportCreate, EggRoomReportUpdate, E
 from models.feed_audit import FeedAudit
 from models.feed import Feed
 from decimal import Decimal
+import medicine
 
 
 
@@ -111,6 +112,7 @@ app.include_router(reports.router)
 app.include_router(auth.router)
 app.include_router(egg_room_reports.router)
 app.include_router(bovanswhitelayerperformance.router)
+app.include_router(medicine.router)
 
 @app.post("/batches/", response_model=BatchSchema)
 def create_batch(
@@ -309,7 +311,16 @@ def update_feed(
         return None
 
     old_quantity = db_feed.quantity
-    new_quantity = feed_data.get("quantity", old_quantity)
+    new_quantity = feed_data.get("quantity", old_quantity) 
+
+    new_quantity_decimal = None
+    if db_feed.unit == 'kg' and feed_data.get('unit') == 'ton':
+        new_quantity_decimal = new_quantity_decimal * 1000  # convert ton to kg
+    elif db_feed.unit == 'ton' and feed_data.get('unit') == 'kg':
+        new_quantity_decimal = new_quantity_decimal / 1000  # convert kg to ton
+    
+    if new_quantity_decimal is not None and old_quantity != new_quantity_decimal:
+        change_amount = new_quantity_decimal - old_quantity
 
     # Update the provided fields
     for key, value in feed_data.items():
@@ -319,12 +330,11 @@ def update_feed(
     db.refresh(db_feed)
 
     # Audit only if quantity changed
-    if old_quantity != new_quantity:
-        new_quantity_decimal = Decimal(new_quantity)  # Convert new_quantity to Decimal
+    if old_quantity != new_quantity_decimal:
         audit = FeedAudit(
             feed_id=feed_id,
             change_type="manual",
-            change_amount=new_quantity_decimal - old_quantity,
+            change_amount=change_amount,
             old_weight=old_quantity,
             new_weight=new_quantity_decimal,
             changed_by=changed_by,
