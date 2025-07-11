@@ -28,7 +28,7 @@ def get_all_medicines(skip: int = 0, limit: int = 100, db: Session = Depends(get
 
 @router.post("/")
 def create_medicine(
-    medicine: MedicineSchema, 
+    medicine: MedicineSchema,
     db: Session = Depends(get_db),
     x_user_id: Optional[str] = Header(None)
 ):
@@ -48,62 +48,65 @@ def update_medicine(
         return None
 
     old_quantity = db_medicine.quantity
-    old_unit = db_medicine.unit  # Get the old unit
+    old_unit = db_medicine.unit
+
+    # Get the new quantity and unit from the incoming data, default to old values if not provided
     new_quantity = medicine_data.get("quantity", old_quantity)
-    new_unit = medicine_data.get("unit", old_unit) # Get the new unit
+    new_unit = medicine_data.get("unit", old_unit)
 
-    # Initialize new_quantity_decimal and change_amount
-    new_quantity_decimal = Decimal(str(new_quantity)) # Convert new_quantity to Decimal
-    change_amount = Decimal('0') # Initialize to Decimal 0
+    # Convert old_quantity to grams for consistent calculation
+    old_quantity_grams = Decimal(str(old_quantity))
+    if old_unit == 'kg':
+        old_quantity_grams *= 1000
+    elif old_unit == 'ton': # Assuming 'ton' might be an old unit, convert to kg first then to gram
+        old_quantity_grams *= 1000000 # 1 ton = 1000 kg = 1,000,000 grams
 
-    # Unit conversion logic (assuming medicine_data['unit'] is the new unit)
-    if old_unit == 'kg' and new_unit == 'gram':
-        # Convert old quantity to grams for consistent comparison if unit changes
-        old_quantity_for_comparison = old_quantity * 1000
-    elif old_unit == 'gram' and new_unit == 'kg':
-        # Convert old quantity to kilograms for consistent comparison if unit changes
-        old_quantity_for_comparison = old_quantity / 1000
-    else:
-        old_quantity_for_comparison = old_quantity
+    # Convert new_quantity to grams for consistent calculation and storage
+    new_quantity_decimal = Decimal(str(new_quantity))
+    if new_unit == 'kg':
+        new_quantity_decimal *= 1000
+    elif new_unit == 'ton': # Assuming 'ton' might be an old unit, convert to kg first then to gram
+        new_quantity_decimal *= 1000000 # 1 ton = 1000 kg = 1,000,000 grams
 
-    if new_quantity_decimal is not None and old_quantity_for_comparison != new_quantity_decimal:
-        change_amount = new_quantity_decimal - Decimal(str(old_quantity_for_comparison)) # Calculate change based on converted old quantity
+    change_amount_grams = Decimal('0')
 
-    # Update the provided fields
+    # Update the provided fields first to get the latest values for audit
     for key, value in medicine_data.items():
         setattr(db_medicine, key, value)
-
+    
     db.commit()
     db.refresh(db_medicine)
 
-    # Audit only if quantity changed
-    if old_quantity_for_comparison != new_quantity_decimal:
-        audit_note = f"Old Weight: {old_quantity} {old_unit}, New Weight: {new_quantity_decimal} {new_unit}"
-        if change_amount > 0:
-            audit_note += f", Added: {change_amount} {new_unit}"
+    # Audit only if quantity changed (comparison in grams)
+    if old_quantity_grams != new_quantity_decimal:
+        change_amount_grams = new_quantity_decimal - old_quantity_grams
+        
+        # Determine a simple note
+        if change_amount_grams > 0:
+            audit_note = "Medicine quantity increased."
         else:
-            audit_note += f", Removed: {abs(change_amount)} {new_unit}"
+            audit_note = "Medicine quantity decreased."
 
         audit = MedicineAuditModel(
             medicine_id=medicine_id,
-            change_amount=change_amount,
-            old_weight=old_quantity,
-            new_weight=new_quantity_decimal,
+            change_amount=change_amount_grams, # Store in grams
+            old_weight=old_quantity_grams,     # Store in grams
+            new_weight=new_quantity_decimal,   # Store in grams
             changed_by=changed_by,
-            note=audit_note, # Include units in the note
+            note=audit_note, # Simple note
         )
         db.add(audit)
         db.commit()
 
     return db_medicine
+
 @router.get("/{medicine_id}/audit/", response_model=List[dict])
-def get_feed_audit(medicine_id: int, db: Session = Depends(get_db)):
+def get_medicine_audit(medicine_id: int, db: Session = Depends(get_db)):
     audits = db.query(MedicineAuditModel).filter(MedicineAuditModel.medicine_id == medicine_id).order_by(MedicineAuditModel.timestamp.desc()).all()
     return [
         {
             "timestamp": a.timestamp,
             "change_amount": a.change_amount,
-            
             "old_weight": a.old_weight,
             "new_weight": a.new_weight,
             "changed_by": a.changed_by,
@@ -114,12 +117,13 @@ def get_feed_audit(medicine_id: int, db: Session = Depends(get_db)):
 
 @router.delete("/{medicine_id}")
 def delete_medicine(
-    medicine_id: int, 
+    medicine_id: int,
     db: Session = Depends(get_db),
     x_user_id: Optional[str] = Header(None)
 ):
-    """Delete a specific medicine."""
-    success = crud_medicine.delete_medicine(db, medicine_id=medicine_id, changed_by=x_user_id)
-    if not success:
+    """Delete a medicine by ID."""
+    db_medicine = crud_medicine.get_medicine(db, medicine_id=medicine_id)
+    if db_medicine is None:
         raise HTTPException(status_code=404, detail="Medicine not found")
+    crud_medicine.delete_medicine(db=db, medicine_id=medicine_id)
     return {"message": "Medicine deleted successfully"}

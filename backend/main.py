@@ -1,33 +1,22 @@
-from fastapi import FastAPI, HTTPException, Depends, Header, BackgroundTasks, UploadFile, File
+from fastapi import FastAPI, HTTPException, Depends, Header, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import text
 from sqlalchemy.orm import Session
-from typing import Dict, List, Optional
+from typing import List, Optional
 import auth
-import time
 import io
-# from schemas import bovanswhitelayerperformance
-from schemas.feed import Feed as FeedSchema
-from database import Base, SessionLocal, engine
-from contextlib import asynccontextmanager
-from datetime import datetime, time as dt_time, timedelta
-import asyncio
+from database import Base, engine
+from datetime import datetime
 import reports
 from database import get_db
-from fastapi.staticfiles import StaticFiles 
-from fastapi.responses import FileResponse
 import os
 from schemas.compositon import Composition, CompositionCreate
 import crud.composition as crud_composition
-from crud.composition_usage_history import use_composition, create_composition_usage_history, get_composition_usage_history
-from schemas.composition_usage_history import CompositionUsageHistoryCreate, CompositionUsageHistory
+from crud.composition_usage_history import use_composition, get_composition_usage_history, revert_composition_usage
+from schemas.composition_usage_history import CompositionUsageHistory
 from datetime import datetime
 from schemas.batch import BatchCreate
 from schemas.batch import Batch as BatchSchema
-# from schemas.batch_history import BatchHistory
 import crud.batch as crud_batch
-import crud.feed as crud_feed
-# import crud.batch_history as crud_history
 from datetime import date
 import logging
 from dateutil import parser
@@ -41,13 +30,8 @@ from typing import List, Optional
 from models.daily_batch import DailyBatch as DailyBatchModel
 import egg_room_reports
 import bovanswhitelayerperformance
-from crud.egg_room_reports import get_report_by_date, create_report, update_report, delete_report
-from models.egg_room_reports import EggRoomReport
-from schemas.egg_room_reports import EggRoomReportCreate, EggRoomReportUpdate, EggRoomReportResponse
-from models.feed_audit import FeedAudit
-from models.feed import Feed
-from decimal import Decimal
 import medicine
+import feed
 
 
 
@@ -113,6 +97,7 @@ app.include_router(auth.router)
 app.include_router(egg_room_reports.router)
 app.include_router(bovanswhitelayerperformance.router)
 app.include_router(medicine.router)
+app.include_router(feed.router)
 
 @app.post("/batches/", response_model=BatchSchema)
 def create_batch(
@@ -275,88 +260,6 @@ def delete_batch(
 async def test_route():
     return {"message": "Welcome to the FastAPI application!"}
 
-@app.get("/feed/{feed_id}")
-def get_feed(feed_id: int, db: Session = Depends(get_db)):
-    """Get a specific feed by ID."""
-    db_feed = crud_feed.get_feed(db, feed_id=feed_id)
-    if db_feed is None:
-        raise HTTPException(status_code=404, detail="Feed not found")
-    return db_feed
-
-@app.get("/feed/all/")
-def get_all_feeds(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    """Get all feeds with pagination."""
-    feeds = crud_feed.get_all_feeds(db, skip=skip, limit=limit)
-    return feeds
-
-@app.post("/feed/")
-def create_feed(
-    feed: FeedSchema, 
-    db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None)
-):
-    """Create a new feed."""
-    return crud_feed.create_feed(db=db, feed=feed, changed_by=x_user_id)
-
-@app.patch("/feed/{feed_id}")
-def update_feed(
-    feed_id: int, 
-    feed_data: dict, 
-    db: Session = Depends(get_db),
-    changed_by: str = None
-):
-    """Update an existing feed."""
-    db_feed = db.query(Feed).filter(Feed.id == feed_id).first()
-    if not db_feed:
-        return None
-
-    old_quantity = db_feed.quantity
-    new_quantity = feed_data.get("quantity", old_quantity) 
-
-    new_quantity_decimal = None
-    if db_feed.unit == 'kg' and feed_data.get('unit') == 'ton':
-        new_quantity_decimal = new_quantity_decimal * 1000  # convert ton to kg
-    elif db_feed.unit == 'ton' and feed_data.get('unit') == 'kg':
-        new_quantity_decimal = new_quantity_decimal / 1000  # convert kg to ton
-    
-    if new_quantity_decimal is not None and old_quantity != new_quantity_decimal:
-        change_amount = new_quantity_decimal - old_quantity
-
-    # Update the provided fields
-    for key, value in feed_data.items():
-        setattr(db_feed, key, value)
-    
-    db.commit()
-    db.refresh(db_feed)
-
-    # Audit only if quantity changed
-    if old_quantity != new_quantity_decimal:
-        audit = FeedAudit(
-            feed_id=feed_id,
-            change_type="manual",
-            change_amount=change_amount,
-            old_weight=old_quantity,
-            new_weight=new_quantity_decimal,
-            changed_by=changed_by,
-            note="Manual edit"
-        )
-        db.add(audit)
-        db.commit()
-
-    return db_feed
-
-@app.delete("/feed/{feed_id}")
-def delete_feed(
-    feed_id: int, 
-    db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None)
-):
-    """Delete a specific feed."""
-    success = crud_feed.delete_feed(db, feed_id=feed_id, changed_by=x_user_id)
-    if not success:
-        raise HTTPException(status_code=404, detail="Feed not found")
-    return {"message": "Feed deleted successfully"}
-
 @app.post("/compositions/", response_model=Composition)
 def create_composition(composition: CompositionCreate, db: Session = Depends(get_db)):
     return crud_composition.create_composition(db, composition)
@@ -389,11 +292,11 @@ def delete_composition(composition_id: int, db: Session = Depends(get_db)):
 @app.post("/compositions/use-composition")
 def use_composition_endpoint(
     data: dict,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    x_user_id: Optional[str] = Header(None) # Get user ID from header
 ):
-    # import pdb; pdb.set_trace()
     composition_id = data["compositionId"]
-    shed_no = data["shed_no"]  # Change from batch_id to shed_no
+    shed_no = data["shed_no"]
     times = data["times"]
     used_at = data.get("usedAt")
 
@@ -406,14 +309,20 @@ def use_composition_endpoint(
         used_at_dt = datetime.now()
 
     # Find the batch_id based on shed_no
-    # You'll need to implement a function like get_batch_id_by_shed_no(db, shed_no)
     batch = db.query(BatchModel).filter(BatchModel.shed_no == shed_no, BatchModel.is_active == True).first()
     if not batch:
         raise HTTPException(status_code=404, detail=f"Active batch with shed_no '{shed_no}' not found.")
     batch_id = batch.id
 
-    usage = use_composition(db, composition_id, batch_id, times, used_at_dt)
-    return {"message": "Composition used and feed quantities updated", "usage_id": usage.id}
+    # Call use_composition and pass changed_by (x_user_id)
+    usage = use_composition(db, composition_id, batch_id, times, used_at_dt, changed_by=x_user_id)
+    
+    # Now, 'usage' object should have its ID populated
+    if usage and hasattr(usage, 'id'):
+        return {"message": "Composition used and feed quantities updated", "usage_id": usage.id}
+    else:
+        # This fallback is for unexpected cases, indicating an issue in use_composition
+        raise HTTPException(status_code=500, detail="Failed to retrieve usage ID after processing composition.")
 
 @app.get("/compositions/usage-history", response_model=list[CompositionUsageHistory])
 def get_all_composition_usage_history(
@@ -427,6 +336,21 @@ def get_composition_usage_history_endpoint(
     db: Session = Depends(get_db)
 ):
     return get_composition_usage_history(db, composition_id)
+
+@app.post("/compositions/revert-usage/{usage_id}")
+def revert_composition_usage_endpoint(
+    usage_id: int,
+    db: Session = Depends(get_db),
+    x_user_id: Optional[str] = Header(None) # User performing the revert
+):
+    """
+    Reverts a specific composition usage by ID.
+    Adds back the quantities to feeds and deletes the usage history record.
+    """
+    success, message = revert_composition_usage(db, usage_id, changed_by=x_user_id)
+    if not success:
+        raise HTTPException(status_code=404, detail=message)
+    return {"message": message}
 
 @app.patch("/compositions/{composition_id}", response_model=Composition)
 def patch_composition(composition_id: int, composition: CompositionCreate, db: Session = Depends(get_db)):
@@ -765,22 +689,6 @@ def get_all_batches(
         # logger = logging.getLogger(__name__)
         logger.exception(f"Error fetching active batches (skip={skip}, limit={limit}): {e}")
         raise HTTPException(status_code=500, detail="Internal server error while fetching active batches.")
-
-@app.get("/feed/{feed_id}/audit/", response_model=List[dict])
-def get_feed_audit(feed_id: int, db: Session = Depends(get_db)):
-    audits = db.query(FeedAudit).filter(FeedAudit.feed_id == feed_id).order_by(FeedAudit.timestamp.desc()).all()
-    return [
-        {
-            "timestamp": a.timestamp,
-            "change_type": a.change_type,
-            "change_amount": a.change_amount,
-            "old_weight": a.old_weight,
-            "new_weight": a.new_weight,
-            "changed_by": a.changed_by,
-            "note": a.note,
-        }
-        for a in audits
-    ]
 
 @app.put("/batch/{batch_id}/close")
 def close_batch(batch_id: int, db: Session = Depends(get_db)):
