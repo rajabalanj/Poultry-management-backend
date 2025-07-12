@@ -37,4 +37,4 @@ __pycache__/
 *.py[cod]
 *.py[cod]e
 
-/tasks
+tasks/
