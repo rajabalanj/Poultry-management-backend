@@ -36,3 +36,5 @@ backend/test/
 __pycache__/
 *.py[cod]
 *.py[cod]e
+
+/tasks
