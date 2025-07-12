@@ -2,11 +2,11 @@ from fastapi import FastAPI, HTTPException, Depends, Header, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from typing import List, Optional
-import auth
+import routers.auth as auth
 import io
 from database import Base, engine
 from datetime import datetime
-import reports
+import routers.reports as reports
 from database import get_db
 import os
 from schemas.compositon import Composition, CompositionCreate
@@ -28,10 +28,10 @@ from schemas.app_config import AppConfigCreate, AppConfigUpdate, AppConfigOut
 from crud import app_config as crud_app_config
 from typing import List, Optional
 from models.daily_batch import DailyBatch as DailyBatchModel
-import egg_room_reports
-import bovanswhitelayerperformance
-import medicine
-import feed
+import routers.egg_room_reports as egg_room_reports
+import routers.bovanswhitelayerperformance as bovanswhitelayerperformance
+import routers.medicine as medicine
+import routers.feed as feed
 
 
 

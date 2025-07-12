@@ -3,7 +3,7 @@ from sqlalchemy import func, and_
 from models.batch import Batch
 from schemas.batch import BatchCreate
 from datetime import date
-import reports
+import routers.reports as reports
 from models.daily_batch import DailyBatch
 
 def get_batch(db: Session, batch_id: int, batch_date: date):
