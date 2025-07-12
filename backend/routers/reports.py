@@ -27,44 +27,6 @@ router = APIRouter(
     tags=["reports"],
 )
 
-# @router.get("/daily-report")
-# def get_daily_report(start_date: Optional[str] = None, end_date: Optional[str] = None, db: Session = Depends(get_db)):
-#     if not start_date or not end_date:
-#         raise HTTPException(status_code=400, detail="Both start_date and end_date parameters are required")
-
-#     try:
-#         start_date_obj = datetime.strptime(start_date, "%Y-%m-%d").date()
-#         end_date_obj = datetime.strptime(end_date, "%Y-%m-%d").date()
-#     except ValueError:
-#         raise HTTPException(status_code=400, detail="Invalid date format. Please use YYYY-MM-DD for both start_date and end_date")
-
-#     if start_date_obj > end_date_obj:
-#         raise HTTPException(status_code=400, detail="Start date cannot be after the end date")
-
-#     daily_data = get_daily_batches_by_date_range(db, start_date=start_date_obj, end_date=end_date_obj)
-
-#     if not daily_data:
-#         raise HTTPException(status_code=200, detail=f"No data found between {start_date} and {end_date}")
-    
-#     report_list = [item.__dict__ for item in daily_data]
-#     for item in report_list:
-#         del item['_sa_instance_state']  # Remove SQLAlchemy internal attribute
-
-#     # Create a pandas DataFrame
-#     df = pd.DataFrame(report_list)
-
-#     # Create an in-memory Excel file
-#     excel_file = BytesIO()
-#     df.to_excel(excel_file, index=False, sheet_name='Daily Report')
-#     excel_file.seek(0)
-
-#     # Prepare the response
-#     headers = {
-#         'Content-Disposition': 'attachment; filename="daily_report.xlsx"'
-#     }
-
-#     return StreamingResponse(excel_file, media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', headers=headers)
-
 @router.get("/snapshot")
 def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None, db: Session = Depends(get_db)):
     """
