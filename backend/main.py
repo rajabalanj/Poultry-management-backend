@@ -32,6 +32,7 @@ import routers.egg_room_reports as egg_room_reports
 import routers.bovanswhitelayerperformance as bovanswhitelayerperformance
 import routers.medicine as medicine
 import routers.feed as feed
+import routers.medicine_usage_history as medicine_usage_history
 
 
 
@@ -98,6 +99,7 @@ app.include_router(egg_room_reports.router)
 app.include_router(bovanswhitelayerperformance.router)
 app.include_router(medicine.router)
 app.include_router(feed.router)
+app.include_router(medicine_usage_history.router)
 
 @app.post("/batches/", response_model=BatchSchema)
 def create_batch(

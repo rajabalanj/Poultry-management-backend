@@ -97,7 +97,7 @@ def use_medicine(
     # Create MedicineAudit record
     audit = MedicineAudit(
         medicine_id=medicine.id,
-        change_type="medicine_usage",
+        # change_type="medicine_usage",
         change_amount=change_amount_for_audit_grams, # Store in grams
         old_weight=old_quantity_for_audit_grams,     # Store in grams
         new_weight=new_quantity_for_audit_grams,   # Store in grams
