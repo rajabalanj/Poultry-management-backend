@@ -42,7 +42,7 @@ class DailyBatch(Base):
     def standard_hen_day_percentage(self):
         session = object_session(self)
         bovans_performance = session.query(BovansWhiteLayerPerformance).filter(
-            BovansWhiteLayerPerformance.age_weeks == int(float(self.age))
+            BovansWhiteLayerPerformance.age_weeks == int(float(self.age)) + 1
         ).first()
         return bovans_performance.lay_percent if bovans_performance else None
     
