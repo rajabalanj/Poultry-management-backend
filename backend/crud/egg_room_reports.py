@@ -33,4 +33,4 @@ def delete_report(db: Session, report_date: str):
     return {"message": "Report deleted"}
 
 def get_reports_by_date_range(db: Session, start_date: str, end_date: str) -> List[EggRoomReport]:
-    return db.query(EggRoomReport).filter(EggRoomReport.report_date >= start_date, EggRoomReport.report_date <= end_date).all()
+    return db.query(EggRoomReport).filter(EggRoomReport.report_date >= start_date, EggRoomReport.report_date <= end_date).order_by(EggRoomReport.report_date).all()

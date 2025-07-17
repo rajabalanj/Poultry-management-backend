@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, Depends, Header, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import routers.auth as auth
@@ -33,7 +34,7 @@ import routers.bovanswhitelayerperformance as bovanswhitelayerperformance
 import routers.medicine as medicine
 import routers.feed as feed
 import routers.medicine_usage_history as medicine_usage_history
-
+from fastapi.staticfiles import StaticFiles
 
 
 # --- Logging Configuration (Add this section) ---
@@ -100,6 +101,10 @@ app.include_router(bovanswhitelayerperformance.router)
 app.include_router(medicine.router)
 app.include_router(feed.router)
 app.include_router(medicine_usage_history.router)
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return FileResponse("static/favicon.ico")
 
 @app.post("/batches/", response_model=BatchSchema)
 def create_batch(
@@ -591,12 +596,15 @@ def get_daily_batches(
     If batch_date is before a batch's start date, return a message for that batch.
     """
     from models.daily_batch import DailyBatch as DailyBatchModel
+    from models.batch import Batch as BatchModel # Ensure BatchModel is imported
     from utils import calculate_age_progression
     
     # Try to fetch existing daily_batch rows for the date
+    # Sort by BatchModel.batch_no directly in the query
     daily_batches = db.query(DailyBatchModel).join(BatchModel).filter(
         DailyBatchModel.batch_date == batch_date, BatchModel.is_active
-    ).all()
+    ).order_by(BatchModel.batch_no).all() # Added .order_by(BatchModel.batch_no)
+
     if daily_batches:
         result = []
         for daily in daily_batches:
@@ -611,14 +619,16 @@ def get_daily_batches(
     # If not found, generate them (same logic as /daily-batch/generate/)
     today = date.today()
     created = []
-    batches = db.query(BatchModel).filter(BatchModel.is_active).all()
+    # Sort batches by batch_no before processing them
+    batches = db.query(BatchModel).filter(BatchModel.is_active).order_by(BatchModel.batch_no).all() # Added .order_by(BatchModel.batch_no)
+
     for batch in batches:
         # If batch_date is before batch's start date, skip and add message
         if batch_date < batch.date:
             created.append({
                 "batch_id": batch.id,
                 "shed_no": batch.shed_no,
-                "batch_no": batch.batch_no,
+                "batch_no": batch.batch_no, # Ensure batch_no is included for sorting later
                 "message": "Please modify batch start date in configuration screen to create batch for this date.",
                 "batch_start_date": batch.date.isoformat(),
                 "requested_date": batch_date.isoformat()
@@ -648,7 +658,7 @@ def get_daily_batches(
         db_daily = DailyBatchModel(
             batch_id=batch.id,
             shed_no=batch.shed_no,
-            batch_no=batch.batch_no,
+            batch_no=batch.batch_no, # Ensure batch_no is set for the new DailyBatchModel instance
             upload_date=today,
             batch_date=batch_date,
             age=str(round(age, 1)),
@@ -669,8 +679,11 @@ def get_daily_batches(
         d['total_eggs'] = db_daily.total_eggs
         d.pop('_sa_instance_state', None)
         created.append(d)
-    return created
+    
+    # Sort the 'created' list by 'batch_no' before returning
+    created.sort(key=lambda x: x.get('batch_no', float('inf'))) # Use .get() with a default for safety
 
+    return created
 @app.get("/batches/all/", response_model=List[BatchSchema])
 def get_all_batches(
     skip: int = 0,
@@ -682,7 +695,7 @@ def get_all_batches(
     """
     try:
         # Filter by the is_active hybrid property
-        batches = db.query(BatchModel).filter(BatchModel.is_active == True).offset(skip).limit(limit).all()
+        batches = db.query(BatchModel).filter(BatchModel.is_active == True).order_by(BatchModel.batch_no).offset(skip).limit(limit).all()
         return batches
     except Exception as e:
         # It's good practice to log the full exception for debugging
