@@ -1,13 +1,10 @@
-# File: models/egg_room_reports.py
-
 from sqlalchemy import Column, Date, Integer, DateTime, func
-from models.app_config import AppConfig
+# from models.app_config import AppConfig # REMOVE THIS IMPORT
 from database import Base
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Session
 from sqlalchemy import inspect
-from datetime import datetime # Import datetime for date conversion
-# import pdb
+from datetime import datetime, timedelta # Import timedelta for date arithmetic
 
 class EggRoomReport(Base):
     __tablename__ = "egg_room_reports"
@@ -33,40 +30,28 @@ class EggRoomReport(Base):
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
-    # Ensure the __init__ method is removed if it's still present in your file.
-    # def __init__(self, db: Session):
-    #     self.db = db
-
     @hybrid_property
     def table_opening(self):
         session = inspect(self).session
         if not session:
             return None # Object is detached from a session
 
-        egg_opening_date_config = session.query(AppConfig).filter(AppConfig.name == 'egg_opening_date').first()
-        egg_opening_date_value = egg_opening_date_config.value if egg_opening_date_config else None
-
-        if egg_opening_date_value:
-            try:
-                # Convert the string date to a datetime.date object for comparison
-                egg_opening_date_value = datetime.strptime(egg_opening_date_value, "%Y-%m-%d").date()
-            except ValueError:
-                # Handle cases where the string might not be a valid date format
-                egg_opening_date_value = None
-
-        # If an opening date is configured and the current report date is before it, return 0
-        if egg_opening_date_value and self.report_date < egg_opening_date_value:
-            return 0
+        # Calculate the previous day's date
+        previous_day = self.report_date - timedelta(days=1)
 
         # Try to get the closing balance from the previous day's report
-        previous_report = session.query(EggRoomReport).filter(EggRoomReport.report_date < self.report_date).order_by(EggRoomReport.report_date.desc()).first()
+        previous_report = session.query(EggRoomReport).filter(
+            EggRoomReport.report_date == previous_day
+        ).first()
+
         if previous_report:
-            # Recursively call table_closing on the previous report
+            # If a previous report exists, its table_closing is today's table_opening
             return previous_report.table_closing
         else:
-            # If no previous report, get the initial opening balance from app_config
-            app_config_table_opening = session.query(AppConfig).filter(AppConfig.name == 'table_opening').first()
-            return int(app_config_table_opening.value) if app_config_table_opening and app_config_table_opening.value is not None else 0
+            # If no previous report, this is the first entry, so opening is 0
+            # Or, if you need a specific initial value, you'd insert the first report
+            # with that value directly in the database.
+            return 0
 
     @hybrid_property
     def jumbo_opening(self):
@@ -74,24 +59,15 @@ class EggRoomReport(Base):
         if not session:
             return None
 
-        egg_opening_date_config = session.query(AppConfig).filter(AppConfig.name == 'egg_opening_date').first()
-        egg_opening_date_value = egg_opening_date_config.value if egg_opening_date_config else None
+        previous_day = self.report_date - timedelta(days=1)
+        previous_report = session.query(EggRoomReport).filter(
+            EggRoomReport.report_date == previous_day
+        ).first()
 
-        if egg_opening_date_value:
-            try:
-                egg_opening_date_value = datetime.strptime(egg_opening_date_value, "%Y-%m-%d").date()
-            except ValueError:
-                egg_opening_date_value = None
-
-        if egg_opening_date_value and self.report_date < egg_opening_date_value:
-            return 0
-
-        previous_report = session.query(EggRoomReport).filter(EggRoomReport.report_date < self.report_date).order_by(EggRoomReport.report_date.desc()).first()
         if previous_report:
             return previous_report.jumbo_closing
         else:
-            app_config_jumbo_opening = session.query(AppConfig).filter(AppConfig.name == 'jumbo_opening').first()
-            return int(app_config_jumbo_opening.value) if app_config_jumbo_opening and app_config_jumbo_opening.value is not None else 0
+            return 0
 
     @hybrid_property
     def grade_c_opening(self):
@@ -99,27 +75,19 @@ class EggRoomReport(Base):
         if not session:
             return None
 
-        egg_opening_date_config = session.query(AppConfig).filter(AppConfig.name == 'egg_opening_date').first()
-        egg_opening_date_value = egg_opening_date_config.value if egg_opening_date_config else None
+        previous_day = self.report_date - timedelta(days=1)
+        previous_report = session.query(EggRoomReport).filter(
+            EggRoomReport.report_date == previous_day
+        ).first()
 
-        if egg_opening_date_value:
-            try:
-                egg_opening_date_value = datetime.strptime(egg_opening_date_value, "%Y-%m-%d").date()
-            except ValueError:
-                egg_opening_date_value = None
-
-        if egg_opening_date_value and self.report_date < egg_opening_date_value:
-            return 0
-
-        previous_report = session.query(EggRoomReport).filter(EggRoomReport.report_date < self.report_date).order_by(EggRoomReport.report_date.desc()).first()
         if previous_report:
             return previous_report.grade_c_closing
         else:
-            app_config_grade_c_opening = session.query(AppConfig).filter(AppConfig.name == 'grade_c_opening').first()
-            return int(app_config_grade_c_opening.value) if app_config_grade_c_opening and app_config_grade_c_opening.value is not None else 0
+            return 0
 
     @hybrid_property
     def table_closing(self):
+        # Ensure all components are treated as integers, defaulting to 0 if None
         table_opening = self.table_opening if self.table_opening is not None else 0
         table_received = self.table_received if self.table_received is not None else 0
         table_transfer = self.table_transfer if self.table_transfer is not None else 0
