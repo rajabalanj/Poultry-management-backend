@@ -188,7 +188,6 @@ def update_batch(
                     table_eggs=0,
                     jumbo=0,
                     cr=0,
-                    is_chick_batch=db_batch.is_chick_batch
                 )
                 db.add(db_daily)
                 db.commit()
@@ -421,7 +420,6 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
                 total_eggs_produced_daily = table_eggs_excel + jumbo_excel + cr_excel
                 if closing_count_calculated > 0:
                     hd_calculated = float(total_eggs_produced_daily) / closing_count_calculated
-                is_chick_batch_calculated = (total_eggs_produced_daily == 0)
                 daily_batch_instance = DailyBatchCreate(
                     batch_id=batch_id_for_daily_batch,
                     shed_no=shed_no_excel,
@@ -437,7 +435,6 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
                     jumbo=jumbo_excel,
                     cr=cr_excel,
                     hd=hd_calculated,
-                    is_chick_batch=is_chick_batch_calculated
                 )
                 crud_daily_batch.create_daily_batch(db=db, daily_batch_data=daily_batch_instance)
                 processed_records_count += 1
@@ -668,7 +665,6 @@ def get_daily_batches(
             table_eggs=0,
             jumbo=0,
             cr=0,
-            is_chick_batch=getattr(batch, "is_chick_batch", False)
         )
         db.add(db_daily)
         db.commit()

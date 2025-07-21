@@ -16,7 +16,6 @@ class DailyBatchBase(BaseModel):
     batch_date: date
     upload_date: date
     batch_id: int
-    is_chick_batch: bool = False
 
     @validator('age')
     def validate_age_format(cls, v):
@@ -64,6 +63,7 @@ class DailyBatchUpdate(DailyBatchBase):
     batch_id: int
     notes: Optional[str] = None
     standard_hen_day_percentage: Optional[float] = 0.0
+    
 
     class Config:
         from_attributes = True

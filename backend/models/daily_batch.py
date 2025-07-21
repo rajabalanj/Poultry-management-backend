@@ -22,7 +22,6 @@ class DailyBatch(Base):
     table_eggs = Column(Integer, default=0)
     jumbo = Column(Integer, default=0)
     cr = Column(Integer, default=0)
-    is_chick_batch = Column(Boolean, default=False)
     notes = Column(String, nullable=True)
 
 
@@ -46,4 +45,13 @@ class DailyBatch(Base):
         ).first()
         return bovans_performance.lay_percent if bovans_performance else None
     
+    @hybrid_property
+    def batch_type(self):
+        if float(self.age) < 16:
+            return 'Chick'
+        elif float(self.age) <= 18:  # include 18 in this range
+            return 'Grower'
+        elif float(self.age) > 18:
+            return 'Layer'
+        
 

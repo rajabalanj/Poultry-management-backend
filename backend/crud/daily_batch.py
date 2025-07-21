@@ -46,7 +46,6 @@ def create_daily_batch(db: Session, daily_batch_data: DailyBatchCreate, changed_
         jumbo=daily_batch_data.jumbo,
         cr=daily_batch_data.cr,
         hd=daily_batch_data.hd,
-        is_chick_batch=daily_batch_data.is_chick_batch, # This should be directly from the Pydantic model
         notes=daily_batch_data.notes,
         standard_hen_day_percentage=daily_batch_data.standard_hen_day_percentage if hasattr(daily_batch_data, 'standard_hen_day_percentage') else 0.0
     )

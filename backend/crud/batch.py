@@ -28,7 +28,6 @@ def create_batch(db: Session, batch: BatchCreate, changed_by: str = None):
         opening_count=batch.opening_count,
         shed_no=batch.shed_no,
         date= batch.date,
-        is_chick_batch=getattr(batch, 'is_chick_batch', False),
         # standard_hen_day_percentage=batch.standard_hen_day_percentage if hasattr(batch, 'standard_hen_day_percentage') else 0.0
     )
     db.add(db_batch)
@@ -49,7 +48,6 @@ def create_batch(db: Session, batch: BatchCreate, changed_by: str = None):
         table_eggs=0,
         jumbo=0,
         cr=0,
-        is_chick_batch=getattr(batch, 'is_chick_batch', False)
     )
     db.add(db_daily_batch)
     db.commit()
@@ -84,7 +82,6 @@ def update_batch(db: Session, batch_id: int, batch_date: date, batch_data: dict,
             jumbo=batch_data.get('jumbo', 0),
             cr=batch_data.get('cr', 0),
             hd=(batch_data.get('table_eggs', 0) + batch_data.get('jumbo', 0) + batch_data.get('cr', 0)) / (batch_data.get('opening_count', 0) - (batch_data.get('mortality', 0) + batch_data.get('culls', 0))) if (batch_data.get('opening_count', 0) - (batch_data.get('mortality', 0) + batch_data.get('culls', 0))) > 0 else 0,
-            is_chick_batch=batch_data.get('is_chick_batch', False)
         )
         db.add(db_daily_batch)
     db.commit()
