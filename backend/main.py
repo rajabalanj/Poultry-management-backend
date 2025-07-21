@@ -34,7 +34,9 @@ import routers.bovanswhitelayerperformance as bovanswhitelayerperformance
 import routers.medicine as medicine
 import routers.feed as feed
 import routers.medicine_usage_history as medicine_usage_history
+import routers.batch as batch
 from fastapi.staticfiles import StaticFiles
+
 
 
 # --- Logging Configuration (Add this section) ---
@@ -101,166 +103,11 @@ app.include_router(bovanswhitelayerperformance.router)
 app.include_router(medicine.router)
 app.include_router(feed.router)
 app.include_router(medicine_usage_history.router)
+app.include_router(batch.router)
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
     return FileResponse("static/favicon.ico")
-
-@app.post("/batches/", response_model=BatchSchema)
-def create_batch(
-    batch: BatchCreate, 
-    db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None)
-):
-    return crud_batch.create_batch(db=db, batch=batch, changed_by=x_user_id)
-
-@app.get("/batches/")
-def read_batches(batch_date: date, skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    logger.info("Fetching batches with skip=%d, limit=%d, batch_date=%s", skip, limit, batch_date)
-    batches = crud_batch.get_all_batches(db, skip=skip, limit=limit, batch_date=batch_date)
-    logger.info("Fetched %d batches", len(batches))
-    return batches
-
-@app.get("/batches/{batch_id}", response_model=BatchSchema)
-def read_batch(batch_id: int, db: Session = Depends(get_db)):
-    logger.info("Fetching batch with batch_id=%d", batch_id)
-    db_batch = db.query(BatchModel).filter(BatchModel.id == batch_id).first()
-    if db_batch is None:
-        logger.warning("Batch with batch_id=%d not found", batch_id)
-        raise HTTPException(status_code=404, detail="Batch not found")
-    logger.info("Fetched batch: %s", db_batch)
-    return db_batch
-
-@app.patch("/batches/{batch_id}", response_model=BatchSchema)
-def update_batch(
-    batch_id: int,
-    batch_data: dict,
-    db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None)
-):
-    from utils import calculate_age_progression
-    db_batch = db.query(BatchModel).filter(BatchModel.id == batch_id).first()
-    if db_batch is None:
-        raise HTTPException(status_code=404, detail="Batch not found")
-
-    changes = {}
-    old_date = db_batch.date
-    new_date = batch_data.get("date")
-    date_changed_and_increased = False
-    if new_date:
-        # Convert to date if string
-        if isinstance(new_date, str):
-            from dateutil import parser
-            new_date = parser.parse(new_date).date()
-        if new_date > old_date:
-            date_changed_and_increased = True
-
-    for key, value in batch_data.items():
-        if hasattr(db_batch, key):
-            old_value = getattr(db_batch, key)
-            if old_value != value:
-                changes[key] = {"old": old_value, "new": value}
-                setattr(db_batch, key, value)
-
-    if changes:
-        # If date increased, delete old daily_batch entries and create one for new_date if not present
-        if date_changed_and_increased:
-            db.query(DailyBatchModel).filter(
-                DailyBatchModel.batch_id == batch_id,
-                DailyBatchModel.batch_date < new_date
-            ).delete(synchronize_session=False)
-            db.commit()
-            exists = db.query(DailyBatchModel).filter(
-                DailyBatchModel.batch_id == batch_id,
-                DailyBatchModel.batch_date == new_date
-            ).first()
-            if not exists:
-                db_daily = DailyBatchModel(
-                    batch_id=batch_id,
-                    shed_no=db_batch.shed_no,
-                    batch_no=db_batch.batch_no,
-                    upload_date=new_date,
-                    batch_date=new_date,
-                    age=db_batch.age,
-                    opening_count=db_batch.opening_count,
-                    mortality=0,
-                    culls=0,
-                    table_eggs=0,
-                    jumbo=0,
-                    cr=0,
-                )
-                db.add(db_daily)
-                db.commit()
-        # Example: update daily_batch if certain fields changed
-        if "shed_no" in changes or "batch_no" in changes:
-            related_batches = db.query(DailyBatchModel).filter(DailyBatchModel.batch_id == batch_id).all()
-            for rel in related_batches:
-                if "shed_no" in changes:
-                    rel.shed_no = changes["shed_no"]["new"]
-                if "batch_no" in changes:
-                    rel.batch_no = changes["batch_no"]["new"]
-        # Age update logic for daily_batch
-        if "age" in batch_data and new_date:
-            target_row = db.query(DailyBatchModel).filter(
-                DailyBatchModel.batch_id == batch_id,
-                DailyBatchModel.batch_date == new_date
-            ).first()
-            if target_row:
-                try:
-                    new_age = float(batch_data["age"])
-                except Exception:
-                    new_age = 0.0
-                target_row.age = str(round(new_age, 1))
-                subsequent_rows = db.query(DailyBatchModel).filter(
-                    DailyBatchModel.batch_id == batch_id,
-                    DailyBatchModel.batch_date > new_date
-                ).order_by(DailyBatchModel.batch_date.asc()).all()
-                prev_date = new_date
-                prev_age = new_age
-                for row in subsequent_rows:
-                    days_diff = (row.batch_date - prev_date).days
-                    prev_age = calculate_age_progression(prev_age, days_diff)
-                    row.age = str(round(prev_age, 1))
-                    prev_date = row.batch_date
-        # Opening count update logic for daily_batch
-        if "opening_count" in batch_data and new_date:
-            # Update opening_count for the given batch_id and batch_date
-            target_row = db.query(DailyBatchModel).filter(
-                DailyBatchModel.batch_id == batch_id,
-                DailyBatchModel.batch_date == new_date
-            ).first()
-            if target_row:
-                target_row.opening_count = batch_data["opening_count"]
-                # Fetch all daily_batch rows for this batch_id ordered by batch_date
-                all_rows = db.query(DailyBatchModel).filter(
-                    DailyBatchModel.batch_id == batch_id
-                ).order_by(DailyBatchModel.batch_date.asc()).all()
-                # Find the index of the updated row
-                idx = next((i for i, row in enumerate(all_rows) if row.batch_date == new_date), None)
-                if idx is not None:
-                    prev_row = all_rows[idx]
-                    for next_row in all_rows[idx+1:]:
-                        next_row.opening_count = prev_row.closing_count  # closing_count is a hybrid property
-                        prev_row = next_row
-        # Optional: insert change logs into audit table here
-        # insert_audit_logs(batch_id, changes, x_user_id)
-        db.commit()
-        db.refresh(db_batch)
-
-    return db_batch
-
-
-
-@app.delete("/batches/{batch_id}")
-def delete_batch(
-    batch_id: int, 
-    db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None)
-):
-    success = crud_batch.delete_batch(db, batch_id=batch_id, changed_by=x_user_id)
-    if not success:
-        raise HTTPException(status_code=404, detail="Batch not found")
-    return {"message": "Batch deleted successfully"}
 
 @app.get("/")
 async def test_route():
@@ -680,33 +527,3 @@ def get_daily_batches(
     created.sort(key=lambda x: x.get('batch_no', float('inf'))) # Use .get() with a default for safety
 
     return created
-@app.get("/batches/all/", response_model=List[BatchSchema])
-def get_all_batches(
-    skip: int = 0,
-    limit: int = 100,
-    db: Session = Depends(get_db)
-):
-    """
-    Fetch all active batches with pagination.
-    """
-    try:
-        # Filter by the is_active hybrid property
-        batches = db.query(BatchModel).filter(BatchModel.is_active == True).order_by(BatchModel.batch_no).offset(skip).limit(limit).all()
-        return batches
-    except Exception as e:
-        # It's good practice to log the full exception for debugging
-        # Assuming you have a logger configured
-        # import logging
-        # logger = logging.getLogger(__name__)
-        logger.exception(f"Error fetching active batches (skip={skip}, limit={limit}): {e}")
-        raise HTTPException(status_code=500, detail="Internal server error while fetching active batches.")
-
-@app.put("/batch/{batch_id}/close")
-def close_batch(batch_id: int, db: Session = Depends(get_db)):
-    batch = db.query(BatchModel).get(batch_id)
-    if batch:
-        batch.closing_date = date.today()
-        db.commit()
-        return {"message": "Batch closed successfully"}
-    else:
-        return {"error": "Batch not found"}, 404

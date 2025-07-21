@@ -14,7 +14,6 @@ class Batch(Base):
     age = Column(String)  # Format: "week.day" (e.g., "1.1" for 8 days)
     opening_count = Column(Integer)
     daily_batches = relationship("DailyBatch", back_populates="batch")
-    # status = Column(String, default="active")  # Status of the batch (e.g., active, inactive, completed)
     closing_date = Column(Date, nullable=True)
 
     @hybrid_property
