@@ -456,6 +456,7 @@ def get_daily_batches(
             d['closing_count'] = daily.closing_count  # access the hybrid property
             d['hd'] = daily.hd
             d['total_eggs'] = daily.total_eggs
+            d['batch_type'] = daily.batch_type
             d.pop('_sa_instance_state', None)
             result.append(d)
         return result
@@ -520,6 +521,7 @@ def get_daily_batches(
         d['closing_count'] = db_daily.closing_count  # access the hybrid property
         d['hd'] = db_daily.hd
         d['total_eggs'] = db_daily.total_eggs
+        d['batch_type'] = db_daily.batch_type
         d.pop('_sa_instance_state', None)
         created.append(d)
     

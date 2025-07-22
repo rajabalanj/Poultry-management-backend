@@ -25,6 +25,12 @@ def create_batch(
     db: Session = Depends(get_db),
     x_user_id: Optional[str] = Header(None)
 ):
+    # Application-level uniqueness check for active batches
+    existing = db.query(BatchModel).filter(
+        ((BatchModel.shed_no == batch.shed_no) | (BatchModel.batch_no == batch.batch_no)) & (BatchModel.is_active == True)
+    ).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="An active batch with the same shed_no or batch_no already exists.")
     return crud_batch.create_batch(db=db, batch=batch, changed_by=x_user_id)
 
 @router.get("/all/", response_model=List[BatchSchema])
@@ -39,7 +45,16 @@ def get_all_batches(
     try:
         # Filter by the is_active hybrid property
         batches = db.query(BatchModel).filter(BatchModel.is_active == True).order_by(BatchModel.batch_no).offset(skip).limit(limit).all()
-        return batches
+        result = []
+        for batch in batches:
+            d = batch.__dict__.copy()
+            try:
+                d['batch_type'] = batch.batch_type
+            except Exception:
+                d['batch_type'] = None
+            d.pop('_sa_instance_state', None)
+            result.append(d)
+        return result
     except Exception as e:
         # It's good practice to log the full exception for debugging
         # Assuming you have a logger configured
@@ -52,7 +67,16 @@ def read_batches(batch_date: date, skip: int = 0, limit: int = 100, db: Session 
     logger.info("Fetching batches with skip=%d, limit=%d, batch_date=%s", skip, limit, batch_date)
     batches = crud_batch.get_all_batches(db, skip=skip, limit=limit, batch_date=batch_date)
     logger.info("Fetched %d batches", len(batches))
-    return batches
+    result = []
+    for batch in batches:
+        d = batch.__dict__.copy()
+        try:
+            d['batch_type'] = batch.batch_type
+        except Exception:
+            d['batch_type'] = None
+        d.pop('_sa_instance_state', None)
+        result.append(d)
+    return result
 
 @router.get("/{batch_id}", response_model=BatchSchema)
 def read_batch(batch_id: int, db: Session = Depends(get_db)):
@@ -62,7 +86,13 @@ def read_batch(batch_id: int, db: Session = Depends(get_db)):
         logger.warning("Batch with batch_id=%d not found", batch_id)
         raise HTTPException(status_code=404, detail="Batch not found")
     logger.info("Fetched batch: %s", db_batch)
-    return db_batch
+    d = db_batch.__dict__.copy()
+    try:
+        d['batch_type'] = db_batch.batch_type
+    except Exception:
+        d['batch_type'] = None
+    d.pop('_sa_instance_state', None)
+    return d
 
 @router.patch("/{batch_id}", response_model=BatchSchema)
 def update_batch(

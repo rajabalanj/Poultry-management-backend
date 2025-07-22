@@ -1,3 +1,4 @@
+from unittest import case
 from sqlalchemy import Column, Integer, String, Date, ForeignKey, Boolean, Numeric
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -8,8 +9,8 @@ class Batch(Base):
     __tablename__ = "batch"
 
     id = Column(Integer, primary_key=True, index=True)
-    shed_no = Column(String, unique=True)
-    batch_no = Column(String, unique=True)
+    shed_no = Column(String)
+    batch_no = Column(String)
     date = Column(Date, default=date.today)
     age = Column(String)  # Format: "week.day" (e.g., "1.1" for 8 days)
     opening_count = Column(Integer)

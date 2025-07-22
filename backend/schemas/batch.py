@@ -9,7 +9,7 @@ class BatchBase(BaseModel):
     batch_no: str
     shed_no: str
     date: date
-    is_active: Optional[bool] = True  # Indicates if the batch is currently active
+
 
 
     @validator('opening_count')
@@ -23,6 +23,7 @@ class BatchCreate(BatchBase):
 
 class Batch(BatchBase):
     id: int
+    batch_type: Optional[str] = None
 
     class Config:
         from_attributes = True 
