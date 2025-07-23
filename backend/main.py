@@ -507,6 +507,7 @@ def get_daily_batches(
             d['hd'] = daily.hd
             d['total_eggs'] = daily.total_eggs
             d['batch_type'] = daily.batch_type
+            d['standard_hen_day_percentage'] = daily.standard_hen_day_percentage
             d.pop('_sa_instance_state', None)
             result.append(d)
         return result
