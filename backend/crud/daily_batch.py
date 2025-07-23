@@ -13,11 +13,6 @@ def get_all_batches(db: Session, skip: int = 0, limit: int = 100):
     return db.query(DailyBatch).offset(skip).limit(limit).all()
 
 
-def update_batch_history(db: Session, batch_id: int, date: date, opening_count: int, age: float, mortality_count: int, culls_count: int, table_egg_count: int, jumbo_egg_count: int, cracked_egg_count: int, closing_count: int, hd: float):
-    batch_history = DailyBatch(batch_id=batch_id, date=date, opening_count=opening_count, age=age, mortality_count=mortality_count, culls_count=culls_count, table_egg_count=table_egg_count, jumbo_egg_count=jumbo_egg_count, cracked_egg_count=cracked_egg_count, closing_count=closing_count, hd=hd)
-    db.session.add(batch_history)
-    db.session.commit()
-
 def create_daily_batch(db: Session, daily_batch_data: DailyBatchCreate, changed_by: Optional[str] = None):
     """
     Creates a single daily batch record in the database.
@@ -41,13 +36,10 @@ def create_daily_batch(db: Session, daily_batch_data: DailyBatchCreate, changed_
         # or if you want to re-calculate them here, ensure daily_batch_data has the raw values.
         # Based on your previous code, these are already calculated in the endpoint
         # and passed into the DailyBatchCreate instance.
-        closing_count=daily_batch_data.closing_count,
         table_eggs=daily_batch_data.table_eggs,
         jumbo=daily_batch_data.jumbo,
         cr=daily_batch_data.cr,
-        hd=daily_batch_data.hd,
         notes=daily_batch_data.notes,
-        standard_hen_day_percentage=daily_batch_data.standard_hen_day_percentage if hasattr(daily_batch_data, 'standard_hen_day_percentage') else 0.0
     )
     db.add(db_daily_batch)
     db.commit()

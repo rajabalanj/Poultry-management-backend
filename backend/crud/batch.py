@@ -54,40 +54,6 @@ def create_batch(db: Session, batch: BatchCreate, changed_by: str = None):
     db.refresh(db_daily_batch)
     return db_batch
 
-def update_batch(db: Session, batch_id: int, batch_date: date, batch_data: dict, changed_by: str = None):
-    # Find today's daily_batch row for this batch_id
-
-    db_daily_batch = db.query(DailyBatch).filter(DailyBatch.batch_id == batch_id, DailyBatch.batch_date == batch_date).first()
-    if db_daily_batch:
-        # Update fields
-        for key, value in batch_data.items():
-            if hasattr(db_daily_batch, key):
-                setattr(db_daily_batch, key, value)
-        # Recalculate closing_count and hd
-        # db_daily_batch.closing_count = int(db_daily_batch.opening_count) - (int(db_daily_batch.mortality) + int(db_daily_batch.culls))
-        # db_daily_batch.hd = (int(db_daily_batch.table_eggs) + int(db_daily_batch.jumbo) + int(db_daily_batch.cr)) / db_daily_batch.closing_count if db_daily_batch.closing_count > 0 else 0
-    else:
-        db_daily_batch = DailyBatch(
-            batch_id=batch_id,
-            batch_no=batch_data.get('batch_no', None),
-            shed_no=batch_data.get('shed_no', None),
-            batch_date=batch_date,
-            upload_date=date.today(),
-            age=batch_data.get('age', None),
-            opening_count=batch_data.get('opening_count', 0),
-            mortality=batch_data.get('mortality', 0),
-            culls=batch_data.get('culls', 0),
-            closing_count=batch_data.get('opening_count', 0) - (batch_data.get('mortality', 0) + batch_data.get('culls', 0)),
-            table_eggs=batch_data.get('table_eggs', 0),
-            jumbo=batch_data.get('jumbo', 0),
-            cr=batch_data.get('cr', 0),
-            hd=(batch_data.get('table_eggs', 0) + batch_data.get('jumbo', 0) + batch_data.get('cr', 0)) / (batch_data.get('opening_count', 0) - (batch_data.get('mortality', 0) + batch_data.get('culls', 0))) if (batch_data.get('opening_count', 0) - (batch_data.get('mortality', 0) + batch_data.get('culls', 0))) > 0 else 0,
-        )
-        db.add(db_daily_batch)
-    db.commit()
-    db.refresh(db_daily_batch)
-    return db_daily_batch
-
 def delete_batch(db: Session, batch_id: int, changed_by: str = None):
     db_batch = db.query(Batch).filter(Batch.id == batch_id).first()
     if db_batch:

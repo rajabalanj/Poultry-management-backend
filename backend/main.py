@@ -214,47 +214,93 @@ def patch_composition(composition_id: int, composition: CompositionCreate, db: S
 
 @app.post("/daily-batch/upload-excel/")
 def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    """Upload and process an Excel file for daily batch data (only daily_batch, no batch insert)."""
+    """
+    Upload and process an Excel file for daily batch data.
+    This function processes multiple daily reports within a single Excel file.
+    """
     try:
         contents = file.file.read()
+        # Read the Excel file, assuming no header row for data extraction
         df = pd.read_excel(io.BytesIO(contents), header=None)
 
-        # Get all shed_nos present in batch table
+        # Get all valid shed_nos from the batch table for validation
         all_batches = db.query(BatchModel).all()
         valid_shed_nos = {b.shed_no for b in all_batches}
 
+        # Find all rows that contain 'DATE' in the first column
         date_indices = df.index[df[0] == 'DATE'].tolist()
         if not date_indices:
             raise HTTPException(status_code=400, detail="No 'DATE' rows found in the Excel file.")
 
         processed_records_count = 0
+
+        # Iterate through each identified daily report section
         for i, date_idx in enumerate(date_indices):
-            report_date = pd.to_datetime(df.iloc[date_idx, 1], format='%m-%d-%Y').date()
+            # Extract and parse the report date. Handle multiple date formats.
+            report_date_str = df.iloc[date_idx, 1]
+            try:
+                report_date = pd.to_datetime(report_date_str, format='%m-%d-%Y').date()
+            except ValueError:
+                try:
+                    report_date = pd.to_datetime(report_date_str, format='%d/%m/%Y').date()
+                except ValueError:
+                    logger.error(f"Could not parse date '{report_date_str}' at row {date_idx}. Skipping this report section.")
+                    continue # Skip to the next report section if date parsing fails
+
+            # Data rows for a report start 2 rows after the 'DATE' row
             data_start = date_idx + 2
+
+            # Determine the end of the current report section
             if i + 1 < len(date_indices):
+                # If there's a next 'DATE' row, the current section ends just before it.
                 data_end = date_indices[i + 1]
             else:
-                total_rows = df.index[(df[0] == 'TOTAL') & (df.index > data_start)].tolist()
-                data_end = total_rows[0] if total_rows else len(df)
+                # This is the last 'DATE' row in the file.
+                # Find all 'TOTAL' rows that appear after the start of this data section.
+                total_rows_after_start = df.index[(df[0] == 'TOTAL') & (df.index >= data_start)].tolist()
+                if total_rows_after_start:
+                    # The end of the last section is marked by the *last* 'TOTAL' row.
+                    data_end = total_rows_after_start[-1]
+                else:
+                    # Fallback: if no 'TOTAL' rows are found, process until the end of the DataFrame.
+                    data_end = len(df)
 
+            # Process each data row within the identified section
             for row_idx in range(data_start, data_end):
                 row = df.iloc[row_idx]
+
+                # Skip rows that are headers or summary rows ('TOTAL', 'GROWER', 'CHICK')
+                # as they do not contain valid batch data for individual entries.
+                if pd.isna(row[0]) or str(row[0]).strip().upper() in ['TOTAL', 'GROWER', 'CHICK']:
+                    continue
+
                 try:
+                    # Attempt to convert the first column (BATCH) to an integer.
+                    # This will fail for non-numeric rows like 'TOTAL', 'GROWER', 'CHICK'.
                     batch_id_excel = int(row[0])
                 except (ValueError, TypeError):
-                    continue
-                if pd.isna(row[0]) or pd.isna(row[1]) or pd.isna(row[2]) or pd.isna(row[3]):
+                    logger.warning(f"Skipping row {row_idx} (Date: {report_date}) due to non-integer batch ID: '{row[0]}'.")
+                    continue # Skip this row if batch ID is not a valid integer
+
+                # Validate essential data points (BATCH, SHED, AGE, OPENING COUNT)
+                if pd.isna(row[1]) or pd.isna(row[2]) or pd.isna(row[3]):
                     logger.warning(f"Skipping row {row_idx} (Date: {report_date}) due to missing essential data: {row.tolist()}")
                     continue
+
                 shed_no_excel = str(row[1]).strip()
                 if shed_no_excel not in valid_shed_nos:
-                    logger.warning(f"Skipping row {row_idx} (Date: {report_date}) due to shed_no not in batch table: {shed_no_excel}")
+                    logger.warning(f"Skipping row {row_idx} (Date: {report_date}) due to shed_no not found in batch table: '{shed_no_excel}'.")
                     continue
+
+                # Retrieve the internal batch_id from your database based on shed_no
                 batch_obj = db.query(BatchModel).filter(BatchModel.shed_no == shed_no_excel).first()
                 batch_id_for_daily_batch = batch_obj.id if batch_obj else None
+
                 if not batch_id_for_daily_batch:
-                    logger.error(f"No batch_id found for shed_no '{shed_no_excel}'. Skipping daily_batch row {row_idx}.")
+                    logger.error(f"No internal batch_id found for shed_no '{shed_no_excel}'. Skipping daily_batch row {row_idx}.")
                     continue
+
+                # Safely extract and convert data from Excel row, handling potential NaN values
                 age_excel = str(row[2]) if pd.notna(row[2]) else ''
                 opening_count_excel = int(row[3]) if pd.notna(row[3]) else 0
                 mortality_excel = int(row[4]) if pd.notna(row[4]) else 0
@@ -262,34 +308,38 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
                 table_eggs_excel = int(row[7]) if pd.notna(row[7]) else 0
                 jumbo_excel = int(row[8]) if pd.notna(row[8]) else 0
                 cr_excel = int(row[9]) if pd.notna(row[9]) else 0
-                closing_count_calculated = opening_count_excel - (mortality_excel + culls_excel)
-                hd_calculated = 0.0
-                total_eggs_produced_daily = table_eggs_excel + jumbo_excel + cr_excel
-                if closing_count_calculated > 0:
-                    hd_calculated = float(total_eggs_produced_daily) / closing_count_calculated
+                
+                # Create an instance of DailyBatchCreate schema
                 daily_batch_instance = DailyBatchCreate(
                     batch_id=batch_id_for_daily_batch,
                     shed_no=shed_no_excel,
-                    batch_no=f"B-{batch_id_excel:04d}",
+                    batch_no=f"B-{batch_id_excel:04d}", # Format batch_id_excel with leading zeros
                     upload_date=date.today(),
                     batch_date=report_date,
                     age=age_excel,
                     opening_count=opening_count_excel,
                     mortality=mortality_excel,
                     culls=culls_excel,
-                    closing_count=closing_count_calculated,
                     table_eggs=table_eggs_excel,
                     jumbo=jumbo_excel,
                     cr=cr_excel,
-                    hd=hd_calculated,
+                    # Note: 'closing_count', 'total_eggs_produced', 'hd_percentage'
+                    # are typically calculated fields and might not be directly stored
+                    # in your DailyBatchCreate schema, depending on your database design.
                 )
+                # Call your CRUD function to insert the daily batch record
                 crud_daily_batch.create_daily_batch(db=db, daily_batch_data=daily_batch_instance)
                 processed_records_count += 1
+
         return {"message": f"File '{file.filename}' processed and {processed_records_count} daily batch records inserted."}
+
     except HTTPException as he:
+        # Re-raise HTTPExceptions as they are already properly formatted
         raise he
     except Exception as e:
+        # Catch any other unexpected errors and log them
         logger.exception(f"Unhandled error during Excel upload: {e}")
+        # Raise a generic HTTP 500 error for unhandled exceptions
         raise HTTPException(status_code=500, detail=f"Failed to process file: {e}")
     
 @app.patch("/daily-batch/{batch_id}/{batch_date}", response_model=DailyBatchUpdate)
