@@ -9,7 +9,6 @@ class EggRoomReportBase(BaseModel):
     table_out: Optional[int]
 
     grade_c_shed_received: Optional[int]
-    grade_c_room_received: Optional[int]
     grade_c_transfer: Optional[int]
     grade_c_labour: Optional[int]
     grade_c_waste: Optional[int]
@@ -17,7 +16,7 @@ class EggRoomReportBase(BaseModel):
     jumbo_received: Optional[int]
     jumbo_transfer: Optional[int]
     jumbo_waste: Optional[int]
-    jumbo_in: Optional[int]
+    jumbo_out: Optional[int]
 
 class EggRoomReportCreate(EggRoomReportBase):
     report_date: date

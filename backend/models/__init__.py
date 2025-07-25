@@ -10,5 +10,7 @@ from models.medicine_usage_history import MedicineUsageHistory
 from models.feed_audit import FeedAudit
 from models.medicine_audit import MedicineAudit
 from models.users import User
+from models.bovanswhitelayerperformance import BovansWhiteLayerPerformance
+from models.app_config import AppConfig
 
 __all__ = ['AppConfig', 'Batch', 'BovansWhiteLayerPerformance', 'CompositionUsageHistory', 'Composition', 'DailyBatch', 'EggRoomReport', 'FeedAudit', 'FeedInComposition', 'Feed', 'MedicineAudit', 'MedicineUsageHistory', 'Medicine',  'User',]

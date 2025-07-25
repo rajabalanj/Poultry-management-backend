@@ -17,7 +17,7 @@ class EggRoomReport(Base):
     table_out = Column(Integer)
 
     grade_c_shed_received = Column(Integer)
-    grade_c_room_received = Column(Integer)
+    # grade_c_room_received = Column(Integer)
     grade_c_transfer = Column(Integer)
     grade_c_labour = Column(Integer)
     grade_c_waste = Column(Integer)
@@ -25,7 +25,8 @@ class EggRoomReport(Base):
     jumbo_received = Column(Integer)
     jumbo_transfer = Column(Integer)
     jumbo_waste = Column(Integer)
-    jumbo_in = Column(Integer)
+    # jumbo_in = Column(Integer)
+    jumbo_out = Column(Integer)
 
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
@@ -93,7 +94,8 @@ class EggRoomReport(Base):
         table_transfer = self.table_transfer if self.table_transfer is not None else 0
         table_damage = self.table_damage if self.table_damage is not None else 0
         table_out = self.table_out if self.table_out is not None else 0
-        return table_opening + table_received - table_transfer - table_damage - table_out
+        table_in = self.table_in if self.table_in is not None else 0
+        return table_opening + table_received - table_transfer - table_damage - table_out + table_in
 
     @hybrid_property
     def jumbo_closing(self):
@@ -102,7 +104,8 @@ class EggRoomReport(Base):
         jumbo_transfer = self.jumbo_transfer if self.jumbo_transfer is not None else 0
         jumbo_waste = self.jumbo_waste if self.jumbo_waste is not None else 0
         jumbo_in = self.jumbo_in if self.jumbo_in is not None else 0
-        return jumbo_opening + jumbo_received - jumbo_transfer - jumbo_waste + jumbo_in
+        jumbo_out = self.jumbo_out if self.jumbo_out is not None else 0
+        return jumbo_opening + jumbo_received - jumbo_transfer - jumbo_waste + jumbo_in - jumbo_out
 
     @hybrid_property
     def grade_c_closing(self):
@@ -113,3 +116,15 @@ class EggRoomReport(Base):
         grade_c_labour = self.grade_c_labour if self.grade_c_labour is not None else 0
         grade_c_waste = self.grade_c_waste if self.grade_c_waste is not None else 0
         return grade_c_opening + grade_c_shed_received + grade_c_room_received - grade_c_transfer - grade_c_labour - grade_c_waste
+    
+    @hybrid_property
+    def jumbo_in(self):
+        return self.table_out if self.table_out is not None else 0
+    
+    @hybrid_property
+    def table_in(self):
+        return self.jumbo_out if self.jumbo_out is not None else 0
+    
+    @hybrid_property
+    def grade_c_room_received(self):
+        return self.table_damage if self.table_damage is not None else 0
