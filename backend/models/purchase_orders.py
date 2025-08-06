@@ -9,8 +9,8 @@ class PurchaseOrderStatus(enum.Enum):
     PENDING_APPROVAL = "Pending Approval"
     APPROVED = "Approved"
     ORDERED = "Ordered"
-    PARTIALLY_RECEIVED = "Partially Received"
-    RECEIVED = "Received"
+    PARTIALLY_PAID = "Partially Paid"
+    PAID = "Paid"
     CANCELLED = "Cancelled"
 
 class PurchaseOrder(Base):

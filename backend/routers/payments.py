@@ -49,13 +49,13 @@ def create_payment(
     updated_paid_amount = sum([p.amount_paid for p in db_po.payments])
     
     if updated_paid_amount >= db_po.total_amount:
-        db_po.status = PurchaseOrderStatus.RECEIVED # Or a new status like 'Paid' if you want that distinction
-        logger.info(f"PO {db_po.po_number} status updated to 'RECEIVED' (fully paid).")
+        db_po.status = PurchaseOrderStatus.PAID # Or a new status like 'Paid' if you want that distinction
+        logger.info(f"PO {db_po.po_number} status updated to 'PAID' (fully paid).")
     elif updated_paid_amount > 0 and updated_paid_amount < db_po.total_amount:
         # If PO status isn't already 'Partially Received', update it
-        if db_po.status != PurchaseOrderStatus.PARTIALLY_RECEIVED:
-            db_po.status = PurchaseOrderStatus.PARTIALLY_RECEIVED
-            logger.info(f"PO {db_po.po_number} status updated to 'PARTIALLY_RECEIVED'.")
+        if db_po.status != PurchaseOrderStatus.PARTIALLY_PAID:
+            db_po.status = PurchaseOrderStatus.PARTIALLY_PAID
+            logger.info(f"PO {db_po.po_number} status updated to 'PARTIALLY_PAID'.")
     
     db.commit() # Commit PO status update
     db.refresh(db_payment) # Re-refresh payment to ensure everything is in sync for response
@@ -108,9 +108,9 @@ def update_payment(
         updated_paid_amount = sum([p.amount_paid for p in db_po.payments])
         
         if updated_paid_amount >= db_po.total_amount:
-            db_po.status = PurchaseOrderStatus.RECEIVED
+            db_po.status = PurchaseOrderStatus.PAID
         elif updated_paid_amount > 0:
-            db_po.status = PurchaseOrderStatus.PARTIALLY_RECEIVED
+            db_po.status = PurchaseOrderStatus.PARTIALLY_PAID
         else: # updated_paid_amount is 0 or less (shouldn't be less)
             db_po.status = PurchaseOrderStatus.DRAFT # Or whatever initial status is if no payments
 
@@ -142,9 +142,9 @@ def delete_payment(
         updated_paid_amount = sum([p.amount_paid for p in db_po.payments])
 
         if updated_paid_amount >= db_po.total_amount:
-            db_po.status = PurchaseOrderStatus.RECEIVED
+            db_po.status = PurchaseOrderStatus.PAID
         elif updated_paid_amount > 0:
-            db_po.status = PurchaseOrderStatus.PARTIALLY_RECEIVED
+            db_po.status = PurchaseOrderStatus.PARTIALLY_PAID
         else: # No payments left
             db_po.status = PurchaseOrderStatus.APPROVED # Assuming PO is 'Approved' if no payments, but not 'Received'
 

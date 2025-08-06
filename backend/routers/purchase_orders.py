@@ -177,10 +177,10 @@ def update_purchase_order(
         raise HTTPException(status_code=404, detail="Purchase Order not found")
     
     # If status is changing to 'Received', trigger inventory update (not fully implemented here)
-    if po_update.status == PurchaseOrderStatus.RECEIVED and db_po.status != PurchaseOrderStatus.RECEIVED:
+    if po_update.status == PurchaseOrderStatus.PAID and db_po.status != PurchaseOrderStatus.PAID:
         # Here you would typically call a service/function to update inventory
         # For this example, we'll just log it.
-        logger.info(f"PO {db_po.po_number} status changed to 'Received'. Inventory update logic would be triggered here.")
+        logger.info(f"PO {db_po.po_number} status changed to 'Paid'. Inventory update logic would be triggered here.")
         # Example of how you might update stock (simplified, needs error handling and atomicity)
         # for item in db_po.items:
         #     db_inventory_item = db.query(InventoryItemModel).get(item.inventory_item_id)
@@ -233,7 +233,7 @@ def delete_purchase_order(
     # If PO has been received (even partially), deleting it would affect inventory.
     # This logic would need to reverse inventory updates or be strictly prevented.
     # For now, we assume this strict check is enough.
-    if db_po.status in [PurchaseOrderStatus.PARTIALLY_RECEIVED, PurchaseOrderStatus.RECEIVED]:
+    if db_po.status in [PurchaseOrderStatus.PARTIALLY_PAID, PurchaseOrderStatus.PAID]:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Cannot delete a purchase order that has been partially or fully received. Change status to 'Cancelled' instead."
@@ -259,7 +259,7 @@ def add_item_to_purchase_order(
         raise HTTPException(status_code=404, detail="Purchase Order not found")
     
     # Restrict item modification based on PO status (e.g., cannot add if 'Received')
-    if db_po.status in [PurchaseOrderStatus.RECEIVED, PurchaseOrderStatus.CANCELLED]:
+    if db_po.status in [PurchaseOrderStatus.PAID, PurchaseOrderStatus.CANCELLED]:
         raise HTTPException(status_code=400, detail=f"Cannot add items to a purchase order with status '{db_po.status.value}'.")
 
     db_inventory_item = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_request.inventory_item_id).first()
@@ -312,7 +312,7 @@ def update_item_in_purchase_order(
     if db_po is None:
         raise HTTPException(status_code=404, detail="Purchase Order not found")
     
-    if db_po.status in [PurchaseOrderStatus.RECEIVED, PurchaseOrderStatus.CANCELLED]:
+    if db_po.status in [PurchaseOrderStatus.PAID, PurchaseOrderStatus.CANCELLED]:
         raise HTTPException(status_code=400, detail=f"Cannot update items in a purchase order with status '{db_po.status.value}'.")
 
     db_po_item = db.query(PurchaseOrderItemModel).filter(
@@ -356,7 +356,7 @@ def remove_item_from_purchase_order(
     if db_po is None:
         raise HTTPException(status_code=404, detail="Purchase Order not found")
 
-    if db_po.status in [PurchaseOrderStatus.RECEIVED, PurchaseOrderStatus.CANCELLED]:
+    if db_po.status in [PurchaseOrderStatus.PAID, PurchaseOrderStatus.CANCELLED]:
         raise HTTPException(status_code=400, detail=f"Cannot remove items from a purchase order with status '{db_po.status.value}'.")
         
     db_po_item = db.query(PurchaseOrderItemModel).filter(
