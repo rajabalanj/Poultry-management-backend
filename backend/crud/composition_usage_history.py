@@ -4,7 +4,7 @@ from models.composition import Composition
 from models.feed_in_composition import FeedInComposition
 from models.feed import Feed
 from schemas.composition_usage_history import CompositionUsageHistoryCreate
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from models.feed_audit import FeedAudit
 from models.batch import Batch
@@ -229,3 +229,41 @@ def revert_composition_usage(db: Session, usage_id: int, changed_by: str = None)
     db.delete(usage_to_revert)
     db.commit()
     return True, "Composition usage reverted successfully."
+
+def get_composition_usage_by_date(db: Session, usage_date: date, batch_id: int = None):
+    start_of_day = datetime.combine(usage_date, datetime.min.time())
+    end_of_day = datetime.combine(usage_date, datetime.max.time())
+
+    query = db.query(CompositionUsageHistory).filter(
+        CompositionUsageHistory.used_at >= start_of_day,
+        CompositionUsageHistory.used_at <= end_of_day
+    )
+
+    if batch_id:
+        query = query.filter(CompositionUsageHistory.batch_id == batch_id)
+
+    usage_history = query.all()
+
+    total_feed = 0
+    feed_breakdown = {}
+
+    for usage in usage_history:
+        composition = usage.composition
+        feed_quantity = 0
+        for feed_in_comp in composition.feeds:
+            feed_quantity += feed_in_comp.weight * usage.times
+        
+        total_feed += feed_quantity
+        composition_name = composition.name
+        if composition_name in feed_breakdown:
+            feed_breakdown[composition_name] += feed_quantity
+        else:
+            feed_breakdown[composition_name] = feed_quantity
+
+    feed_breakdown_list = [{"feed_type": f, "amount": a} for f, a in feed_breakdown.items()]
+
+    return {
+        "total_feed": total_feed,
+        "feed_breakdown": feed_breakdown_list
+    }
+

@@ -12,7 +12,7 @@ from database import get_db
 import os
 from schemas.compositon import Composition, CompositionCreate
 import crud.composition as crud_composition
-from crud.composition_usage_history import use_composition, get_composition_usage_history, revert_composition_usage
+from crud.composition_usage_history import use_composition, get_composition_usage_history, revert_composition_usage, get_composition_usage_by_date
 from schemas.composition_usage_history import CompositionUsageHistory
 from datetime import datetime
 from schemas.batch import BatchCreate
@@ -590,3 +590,11 @@ def get_daily_batches(
     created.sort(key=lambda x: x.get('batch_no', float('inf'))) # Use .get() with a default for safety
 
     return created
+
+@app.get("/compositions/usage-by-date/")
+def get_usage_by_date(
+    usage_date: date,
+    batch_id: Optional[int] = None,
+    db: Session = Depends(get_db)
+):
+    return get_composition_usage_by_date(db, usage_date, batch_id)
