@@ -496,100 +496,108 @@ def get_daily_batches(
     db: Session = Depends(get_db)
 ):
     """
-    Fetch all daily_batch rows for a given batch_date. If none exist, generate them and return.
-    If batch_date is before a batch's start date, return a message for that batch.
+    Fetch all daily_batch rows for a given batch_date.
+    If a daily_batch row for an active batch does not exist for the given date, it is generated.
+    If the batch_date is before a batch's start date, a message is returned for that batch.
     """
     from models.daily_batch import DailyBatch as DailyBatchModel
-    from models.batch import Batch as BatchModel # Ensure BatchModel is imported
+    from models.batch import Batch as BatchModel
     from utils import calculate_age_progression
     
-    # Try to fetch existing daily_batch rows for the date
-    # Sort by BatchModel.batch_no directly in the query
-    daily_batches = db.query(DailyBatchModel).join(BatchModel).filter(
+    today = date.today()
+    
+    # Get all active batches, ordered by batch_no
+    active_batches = db.query(BatchModel).filter(BatchModel.is_active).order_by(BatchModel.batch_no).all()
+    
+    # Get existing daily batches for the given date and map them by batch_id
+    existing_daily_batches = db.query(DailyBatchModel).join(BatchModel).filter(
         DailyBatchModel.batch_date == batch_date, BatchModel.is_active
-    ).order_by(BatchModel.batch_no).all() # Added .order_by(BatchModel.batch_no)
-
-    if daily_batches:
-        result = []
-        for daily in daily_batches:
-            d = daily.__dict__.copy()
-            d['closing_count'] = daily.closing_count  # access the hybrid property
+    ).all()
+    existing_daily_batches_map = {db.batch_id: db for db in existing_daily_batches}
+    
+    result_list = []
+    
+    for batch in active_batches:
+        if batch.id in existing_daily_batches_map:
+            # Use existing daily batch
+            daily = existing_daily_batches_map[batch.id]
+            # Manually construct dict to ensure all fields, including batch_no, are present
+            d = {c.name: getattr(daily, c.name) for c in daily.__table__.columns}
+            d['closing_count'] = daily.closing_count
             d['hd'] = daily.hd
             d['total_eggs'] = daily.total_eggs
             d['batch_type'] = daily.batch_type
             d['standard_hen_day_percentage'] = daily.standard_hen_day_percentage
-            d.pop('_sa_instance_state', None)
-            result.append(d)
-        return result
-    
-    # If not found, generate them (same logic as /daily-batch/generate/)
-    today = date.today()
-    created = []
-    # Sort batches by batch_no before processing them
-    batches = db.query(BatchModel).filter(BatchModel.is_active).order_by(BatchModel.batch_no).all() # Added .order_by(BatchModel.batch_no)
-
-    for batch in batches:
-        # If batch_date is before batch's start date, skip and add message
-        if batch_date < batch.date:
-            created.append({
-                "batch_id": batch.id,
-                "shed_no": batch.shed_no,
-                "batch_no": batch.batch_no, # Ensure batch_no is included for sorting later
-                "message": "Please modify batch start date in configuration screen to create batch for this date.",
-                "batch_start_date": batch.date.isoformat(),
-                "requested_date": batch_date.isoformat()
-            })
-            continue
-        # Find the most recent previous daily_batch for this batch
-        prev_daily = db.query(DailyBatchModel).filter(
-            DailyBatchModel.batch_id == batch.id,
-            DailyBatchModel.batch_date < batch_date
-        ).order_by(DailyBatchModel.batch_date.desc()).first()
-
-        if prev_daily:
-            opening_count = prev_daily.closing_count  # hybrid property
-            try:
-                prev_age = float(prev_daily.age)
-            except Exception:
-                prev_age = 0.0
-            days_diff = (batch_date - prev_daily.batch_date).days
-            age = calculate_age_progression(prev_age, days_diff)
+            result_list.append(d)
         else:
-            opening_count = batch.opening_count
-            try:
-                age = float(batch.age)
-            except Exception:
-                age = 0.0
+            # Generate missing daily batch
+            if batch_date < batch.date:
+                result_list.append({
+                    "batch_id": batch.id,
+                    "shed_no": batch.shed_no,
+                    "batch_no": batch.batch_no,
+                    "message": "Please modify batch start date in configuration screen to create batch for this date.",
+                    "batch_start_date": batch.date.isoformat(),
+                    "requested_date": batch_date.isoformat()
+                })
+                continue
+            
+            # Find the most recent previous daily_batch for this batch
+            prev_daily = db.query(DailyBatchModel).filter(
+                DailyBatchModel.batch_id == batch.id,
+                DailyBatchModel.batch_date < batch_date
+            ).order_by(DailyBatchModel.batch_date.desc()).first()
 
-        db_daily = DailyBatchModel(
-            batch_id=batch.id,
-            shed_no=batch.shed_no,
-            batch_no=batch.batch_no, # Ensure batch_no is set for the new DailyBatchModel instance
-            upload_date=today,
-            batch_date=batch_date,
-            age=str(round(age, 1)),
-            opening_count=opening_count,
-            mortality=0,
-            culls=0,
-            table_eggs=0,
-            jumbo=0,
-            cr=0,
-        )
-        db.add(db_daily)
-        db.commit()
-        db.refresh(db_daily)
-        d = db_daily.__dict__.copy()
-        d['closing_count'] = db_daily.closing_count  # access the hybrid property
-        d['hd'] = db_daily.hd
-        d['total_eggs'] = db_daily.total_eggs
-        d['batch_type'] = db_daily.batch_type
-        d.pop('_sa_instance_state', None)
-        created.append(d)
-    
-    # Sort the 'created' list by 'batch_no' before returning
-    created.sort(key=lambda x: x.get('batch_no', float('inf'))) # Use .get() with a default for safety
+            if prev_daily:
+                opening_count = prev_daily.closing_count
+                try:
+                    prev_age = float(prev_daily.age)
+                except (ValueError, TypeError):
+                    prev_age = 0.0
+                days_diff = (batch_date - prev_daily.batch_date).days
+                age = calculate_age_progression(prev_age, days_diff)
+            else:
+                # This is the first daily record to be generated for this batch.
+                # Calculate age based on batch start date.
+                opening_count = batch.opening_count
+                try:
+                    base_age = float(batch.age)
+                except (ValueError, TypeError):
+                    base_age = 0.0
+                days_diff = (batch_date - batch.date).days
+                age = calculate_age_progression(base_age, days_diff)
 
-    return created
+            db_daily = DailyBatchModel(
+                batch_id=batch.id,
+                shed_no=batch.shed_no,
+                batch_no=batch.batch_no,
+                upload_date=today,
+                batch_date=batch_date,
+                age=str(round(age, 1)),
+                opening_count=opening_count,
+                mortality=0,
+                culls=0,
+                table_eggs=0,
+                jumbo=0,
+                cr=0,
+            )
+            db.add(db_daily)
+            db.commit()
+            db.refresh(db_daily)
+            
+            # Manually construct dict to ensure all fields are present
+            d = {c.name: getattr(db_daily, c.name) for c in db_daily.__table__.columns}
+            d['closing_count'] = db_daily.closing_count
+            d['hd'] = db_daily.hd
+            d['total_eggs'] = db_daily.total_eggs
+            d['batch_type'] = db_daily.batch_type
+            d['standard_hen_day_percentage'] = db_daily.standard_hen_day_percentage
+            result_list.append(d)
+            
+    # Sort the final list by 'batch_no' before returning
+    result_list.sort(key=lambda x: x.get('batch_no', float('inf')))
+
+    return result_list
 
 @app.get("/compositions/usage-by-date/")
 def get_usage_by_date(
