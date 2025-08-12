@@ -22,20 +22,21 @@ class EggRoomReportCreate(EggRoomReportBase):
     report_date: date
 
 class EggRoomReportUpdate(EggRoomReportBase):
-    pass
+    table_opening: Optional[int] = None
+    jumbo_opening: Optional[int] = None
+    grade_c_opening: Optional[int] = None
 
 class EggRoomReportResponse(EggRoomReportBase):
     report_date: date
     created_at: datetime
     updated_at: datetime
 
-    # # Add the hybrid properties here
-    # table_opening: Optional[int]
-    # table_closing: Optional[int]
-    # jumbo_opening: Optional[int]
-    # jumbo_closing: Optional[int]
-    # grade_c_opening: Optional[int]
-    # grade_c_closing: Optional[int]
+    table_opening: Optional[int]
+    table_closing: Optional[int]
+    jumbo_opening: Optional[int]
+    jumbo_closing: Optional[int]
+    grade_c_opening: Optional[int]
+    grade_c_closing: Optional[int]
 
     class Config:
         from_attributes = True # This is the correct Pydantic v2 attribute. If you are using v1, it's 'orm_mode = True'

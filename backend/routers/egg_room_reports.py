@@ -31,7 +31,6 @@ def get_system_start_date(db: Session) -> date:
 @router.get("/{report_date}")
 def get_report(report_date: str, db: Session = Depends(get_db)):
     try:
-        # Convert report_date string to date object for comparison
         requested_date = datetime.strptime(report_date, "%Y-%m-%d").date()
         system_start_date = get_system_start_date(db)
 
@@ -43,40 +42,35 @@ def get_report(report_date: str, db: Session = Depends(get_db)):
 
         report = egg_crud.get_report_by_date(db, report_date)
 
-        if not report:
-            # Check if previous day exists and is the start date
-            previous_day = requested_date - timedelta(days=1)
-            # Fetch previous day's closing data to see if it's the start date
-            previous_report_exists = db.query(EggRoomReport).filter(EggRoomReport.report_date == previous_day).first()
+        # Get previous day's closing for opening balance calculation
+        prev_report = db.query(EggRoomReport).filter(
+            EggRoomReport.report_date < requested_date
+        ).order_by(EggRoomReport.report_date.desc()).first()
 
-            if requested_date > date.today(): # Don't allow creating future records
+        if not report:
+            if requested_date > date.today():
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Cannot create reports for future dates ({report_date})."
                 )
 
-            # Additional check: If requested_date is the system_start_date
-            # and no previous reports exist, it's a valid first entry.
-            # Otherwise, if it's not system_start_date and previous_report_exists is None,
-            # it implies a skipped day, which your current logic handles by setting opening to 0.
-            # No additional check needed here for "ask user to fill..." as your current logic works for it.
-
             dummy_data = EggRoomReportCreate(
-                report_date=requested_date, # Use the date object
-                table_received=0,
-                table_transfer=0,
-                table_damage=0,
-                table_out=0,
-                jumbo_received=0,
-                jumbo_transfer=0,
-                jumbo_waste=0,
-                jumbo_out=0,
-                grade_c_shed_received=0,
-                grade_c_transfer=0,
-                grade_c_labour=0,
-                grade_c_waste=0,
+                report_date=requested_date,
+                table_received=0, table_transfer=0, table_damage=0, table_out=0,
+                jumbo_received=0, jumbo_transfer=0, jumbo_waste=0, jumbo_out=0,
+                grade_c_shed_received=0, grade_c_transfer=0, grade_c_labour=0, grade_c_waste=0,
             )
             report = egg_crud.create_report(db, dummy_data)
+        elif prev_report and (
+            report.table_opening != prev_report.table_closing or
+            report.jumbo_opening != prev_report.jumbo_closing or
+            report.grade_c_opening != prev_report.grade_c_closing
+        ):
+            report.table_opening = prev_report.table_closing
+            report.jumbo_opening = prev_report.jumbo_closing
+            report.grade_c_opening = prev_report.grade_c_closing
+            db.commit()
+            db.refresh(report)
 
         # Manually serialize the report including hybrid properties
         if report:

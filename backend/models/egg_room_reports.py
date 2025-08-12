@@ -31,15 +31,15 @@ class EggRoomReport(Base):
     jumbo_opening = Column(Integer, default=0)
     grade_c_opening = Column(Integer, default=0)
 
-    # Closing balances (sum of daily changes up to the current row)
+    # Closing balances (calculated for single row)
     table_closing = column_property(
-        func.sum(table_received - table_transfer - table_damage - table_out + jumbo_out).over(order_by=report_date)
+        table_opening + table_received - table_transfer - table_damage - table_out + jumbo_out
     )
     jumbo_closing = column_property(
-        func.sum(jumbo_received - jumbo_transfer - jumbo_waste + table_out - jumbo_out).over(order_by=report_date)
+        jumbo_opening + jumbo_received - jumbo_transfer - jumbo_waste + table_out - jumbo_out
     )
     grade_c_closing = column_property(
-        func.sum(grade_c_shed_received + table_damage - grade_c_transfer - grade_c_labour - grade_c_waste).over(order_by=report_date)
+        grade_c_opening + grade_c_shed_received + table_damage - grade_c_transfer - grade_c_labour - grade_c_waste
     )
 
     # Synonyms for aliased columns
