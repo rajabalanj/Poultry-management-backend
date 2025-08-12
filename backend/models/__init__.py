@@ -16,5 +16,6 @@ from models.purchase_orders import PurchaseOrder
 from models.inventory_items import InventoryItem
 from models.purchase_order_items import PurchaseOrderItem
 from models.vendors import Vendor
+from models.payments import Payment
 
-__all__ = ['AppConfig', 'Batch', 'BovansWhiteLayerPerformance', 'CompositionUsageHistory', 'Composition', 'DailyBatch', 'EggRoomReport', 'FeedAudit', 'FeedInComposition', 'Feed', 'MedicineAudit', 'MedicineUsageHistory', 'Medicine', 'PurchaseOrder', 'PurchaseOrderItem', 'Vendor', 'InventoryItem', 'User',]
+__all__ = ['AppConfig', 'Batch', 'BovansWhiteLayerPerformance', 'CompositionUsageHistory', 'Composition', 'DailyBatch', 'EggRoomReport', 'FeedAudit', 'FeedInComposition', 'Feed', 'MedicineAudit', 'MedicineUsageHistory', 'Medicine', 'Payment', 'PurchaseOrder', 'PurchaseOrderItem', 'Vendor', 'InventoryItem', 'User',]
