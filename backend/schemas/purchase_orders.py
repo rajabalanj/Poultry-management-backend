@@ -28,10 +28,8 @@ class Payment(BaseModel): # Defined below properly, but needed for List type hin
         from_attributes = True
 
 class PurchaseOrderBase(BaseModel):
-    po_number: str
     vendor_id: int
     order_date: date
-    expected_delivery_date: Optional[date] = None
     status: Optional[PurchaseOrderStatus] = PurchaseOrderStatus.DRAFT
     notes: Optional[str] = None
 
@@ -40,10 +38,8 @@ class PurchaseOrderCreate(PurchaseOrderBase):
     items: List[PurchaseOrderItemCreateRequest] # List of items to be included in this PO
 
 class PurchaseOrderUpdate(BaseModel):
-    po_number: Optional[str] = None
     vendor_id: Optional[int] = None
     order_date: Optional[date] = None
-    expected_delivery_date: Optional[date] = None
     status: Optional[PurchaseOrderStatus] = None
     notes: Optional[str] = None
     # Items updates are typically handled via separate endpoints (add/remove item from PO)
@@ -52,6 +48,7 @@ class PurchaseOrderUpdate(BaseModel):
 class PurchaseOrder(PurchaseOrderBase):
     id: int
     total_amount: Decimal
+    total_amount_paid: Decimal
     created_by: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None

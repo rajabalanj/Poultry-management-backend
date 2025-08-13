@@ -63,11 +63,6 @@ def create_purchase_order(
     if not db_vendor:
         raise HTTPException(status_code=400, detail="Vendor not found or is inactive.")
 
-    # 2. Check for existing PO number
-    existing_po = db.query(PurchaseOrderModel).filter(PurchaseOrderModel.po_number == po.po_number).first()
-    if existing_po:
-        raise HTTPException(status_code=400, detail=f"Purchase Order with number '{po.po_number}' already exists.")
-
     total_amount = Decimal(0)
     db_po_items = []
 
@@ -94,10 +89,8 @@ def create_purchase_order(
     
     # 4. Create the Purchase Order
     db_po = PurchaseOrderModel(
-        po_number=po.po_number,
         vendor_id=po.vendor_id,
         order_date=po.order_date,
-        expected_delivery_date=po.expected_delivery_date,
         status=po.status,
         notes=po.notes,
         total_amount=total_amount,
@@ -119,7 +112,7 @@ def create_purchase_order(
         selectinload(PurchaseOrderModel.payments)
     ).filter(PurchaseOrderModel.id == db_po.id).first()
 
-    logger.info(f"Purchase Order '{db_po.po_number}' created for Vendor ID {db_po.vendor_id} by {x_user_id}")
+    logger.info(f"Purchase Order (ID: {db_po.id}) created for Vendor ID {db_po.vendor_id} by {x_user_id}")
     return db_po
 
 @router.get("/", response_model=List[PurchaseOrderSchema])
@@ -180,7 +173,7 @@ def update_purchase_order(
     if po_update.status == PurchaseOrderStatus.PAID and db_po.status != PurchaseOrderStatus.PAID:
         # Here you would typically call a service/function to update inventory
         # For this example, we'll just log it.
-        logger.info(f"PO {db_po.po_number} status changed to 'Paid'. Inventory update logic would be triggered here.")
+        logger.info(f"PO (ID: {po_id}) status changed to 'Paid'. Inventory update logic would be triggered here.")
         # Example of how you might update stock (simplified, needs error handling and atomicity)
         # for item in db_po.items:
         #     db_inventory_item = db.query(InventoryItemModel).get(item.inventory_item_id)
@@ -209,7 +202,7 @@ def update_purchase_order(
         selectinload(PurchaseOrderModel.payments)
     ).filter(PurchaseOrderModel.id == po_id).first()
     
-    logger.info(f"Purchase Order '{db_po.po_number}' (ID: {po_id}) updated by {x_user_id}")
+    logger.info(f"Purchase Order (ID: {po_id}) updated by {x_user_id}")
     return db_po
 
 @router.delete("/{po_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -241,7 +234,7 @@ def delete_purchase_order(
 
     db.delete(db_po)
     db.commit()
-    logger.info(f"Purchase Order '{db_po.po_number}' (ID: {po_id}) hard deleted by {x_user_id}")
+    logger.info(f"Purchase Order (ID: {po_id}) hard deleted by {x_user_id}")
     return {"message": "Purchase Order deleted successfully"}
 
 # --- Purchase Order Item Endpoints (Nested for managing items within a PO) ---
@@ -296,7 +289,7 @@ def add_item_to_purchase_order(
         selectinload(PurchaseOrderModel.payments)
     ).filter(PurchaseOrderModel.id == po_id).first()
 
-    logger.info(f"Item added to Purchase Order '{db_po.po_number}' (ID: {po_id}) by {x_user_id}")
+    logger.info(f"Item added to Purchase Order (ID: {po_id}) by {x_user_id}")
     return db_po
 
 @router.patch("/{po_id}/items/{item_id}", response_model=PurchaseOrderSchema)
@@ -341,7 +334,7 @@ def update_item_in_purchase_order(
         selectinload(PurchaseOrderModel.payments)
     ).filter(PurchaseOrderModel.id == po_id).first()
 
-    logger.info(f"Item ID {item_id} in Purchase Order '{db_po.po_number}' (ID: {po_id}) updated by {x_user_id}")
+    logger.info(f"Item ID {item_id} in Purchase Order (ID: {po_id}) updated by {x_user_id}")
     return db_po
 
 @router.delete("/{po_id}/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -373,5 +366,5 @@ def remove_item_from_purchase_order(
     db.commit()
     db.refresh(db_po) # Refresh the PO to reflect updated total
 
-    logger.info(f"Item ID {item_id} removed from Purchase Order '{db_po.po_number}' (ID: {po_id}) by {x_user_id}")
+    logger.info(f"Item ID {item_id} removed from Purchase Order (ID: {po_id}) by {x_user_id}")
     return {"message": "Item removed successfully"}

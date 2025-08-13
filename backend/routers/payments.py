@@ -27,15 +27,12 @@ def create_payment(
     if db_po.status == PurchaseOrderStatus.CANCELLED:
         raise HTTPException(status_code=400, detail="Cannot record payments for a cancelled purchase order.")
 
-    # Calculate current paid amount for the PO
-    current_paid_amount = sum([p.amount_paid for p in db_po.payments]) if db_po.payments else Decimal(0)
-    
     # Check if payment exceeds remaining amount
-    remaining_amount = db_po.total_amount - current_paid_amount
+    remaining_amount = db_po.total_amount - db_po.total_amount_paid
     if payment.amount_paid > remaining_amount:
         raise HTTPException(
             status_code=400,
-            detail=f"Payment amount ({payment.amount_paid}) exceeds remaining due amount ({remaining_amount}) for PO {db_po.po_number}."
+            detail=f"Payment amount ({payment.amount_paid}) exceeds remaining due amount ({remaining_amount}) for PO {db_po.id}."
         )
 
     db_payment = PaymentModel(**payment.model_dump())
@@ -43,19 +40,16 @@ def create_payment(
     db.commit()
     db.refresh(db_payment)
 
-    # Update PO status based on payment (if needed, this could be a separate function/trigger)
-    # Re-calculate paid amount after new payment
-    db.refresh(db_po) # Refresh PO to get the newly added payment in its relationship
-    updated_paid_amount = sum([p.amount_paid for p in db_po.payments])
+    # Update total_amount_paid and PO status
+    db_po.total_amount_paid += payment.amount_paid
     
-    if updated_paid_amount >= db_po.total_amount:
-        db_po.status = PurchaseOrderStatus.PAID # Or a new status like 'Paid' if you want that distinction
-        logger.info(f"PO {db_po.po_number} status updated to 'PAID' (fully paid).")
-    elif updated_paid_amount > 0 and updated_paid_amount < db_po.total_amount:
-        # If PO status isn't already 'Partially Received', update it
+    if db_po.total_amount_paid >= db_po.total_amount:
+        db_po.status = PurchaseOrderStatus.PAID
+        logger.info(f"PO {db_po.id} status updated to 'PAID' (fully paid).")
+    elif db_po.total_amount_paid > 0:
         if db_po.status != PurchaseOrderStatus.PARTIALLY_PAID:
             db_po.status = PurchaseOrderStatus.PARTIALLY_PAID
-            logger.info(f"PO {db_po.po_number} status updated to 'PARTIALLY_PAID'.")
+            logger.info(f"PO {db_po.id} status updated to 'PARTIALLY_PAID'.")
     
     db.commit() # Commit PO status update
     db.refresh(db_payment) # Re-refresh payment to ensure everything is in sync for response
@@ -103,19 +97,20 @@ def update_payment(
     db.refresh(db_payment)
 
     # Re-evaluate PO payment status and total if amount changed
-    db_po = db_payment.purchase_order # Access the related PO directly
-    if db_po:
-        updated_paid_amount = sum([p.amount_paid for p in db_po.payments])
+    db_po = db_payment.purchase_order
+    if db_po and 'amount_paid' in payment_data:
+        amount_difference = db_payment.amount_paid - old_amount_paid
+        db_po.total_amount_paid += amount_difference
         
-        if updated_paid_amount >= db_po.total_amount:
+        if db_po.total_amount_paid >= db_po.total_amount:
             db_po.status = PurchaseOrderStatus.PAID
-        elif updated_paid_amount > 0:
+        elif db_po.total_amount_paid > 0:
             db_po.status = PurchaseOrderStatus.PARTIALLY_PAID
-        else: # updated_paid_amount is 0 or less (shouldn't be less)
-            db_po.status = PurchaseOrderStatus.DRAFT # Or whatever initial status is if no payments
+        else:
+            db_po.status = PurchaseOrderStatus.DRAFT
 
-        db.commit() # Commit PO status update
-        db.refresh(db_po) # Refresh PO to get updated status
+        db.commit()
+        db.refresh(db_po)
 
     logger.info(f"Payment ID {payment_id} updated for Purchase Order ID {db_payment.purchase_order_id} by {x_user_id}")
     return db_payment
@@ -138,17 +133,16 @@ def delete_payment(
 
     # Re-evaluate PO payment status after deletion
     if db_po:
-        db.refresh(db_po) # Refresh PO to ensure payments relationship is updated
-        updated_paid_amount = sum([p.amount_paid for p in db_po.payments])
+        db_po.total_amount_paid -= db_payment.amount_paid
 
-        if updated_paid_amount >= db_po.total_amount:
+        if db_po.total_amount_paid >= db_po.total_amount:
             db_po.status = PurchaseOrderStatus.PAID
-        elif updated_paid_amount > 0:
+        elif db_po.total_amount_paid > 0:
             db_po.status = PurchaseOrderStatus.PARTIALLY_PAID
-        else: # No payments left
-            db_po.status = PurchaseOrderStatus.APPROVED # Assuming PO is 'Approved' if no payments, but not 'Received'
+        else:
+            db_po.status = PurchaseOrderStatus.APPROVED
 
-        db.commit() # Commit PO status update
+        db.commit()
 
     logger.info(f"Payment ID {payment_id} deleted for Purchase Order ID {db_payment.purchase_order_id} by {x_user_id}")
     return {"message": "Payment deleted successfully"}

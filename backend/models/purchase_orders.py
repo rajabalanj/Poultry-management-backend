@@ -17,11 +17,10 @@ class PurchaseOrder(Base):
     __tablename__ = "purchase_orders"
 
     id = Column(Integer, primary_key=True, index=True)
-    po_number = Column(String, unique=True, nullable=False) # Human-readable PO number
     vendor_id = Column(Integer, ForeignKey("vendors.id"), nullable=False)
     order_date = Column(Date, nullable=False)
-    expected_delivery_date = Column(Date, nullable=True)
     total_amount = Column(Numeric(10, 3), default=0.0, nullable=False) # Increased precision
+    total_amount_paid = Column(Numeric(10, 3), default=0.0, server_default='0.0', nullable=False) # Total payments made
     status = Column(Enum(PurchaseOrderStatus), default=PurchaseOrderStatus.DRAFT, nullable=False)
     notes = Column(Text, nullable=True)
     created_by = Column(String, nullable=True) # Assuming a user ID string or name for auditing
