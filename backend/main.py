@@ -39,6 +39,8 @@ import routers.vendors as vendors
 import routers.purchase_orders as purchase_orders
 import routers.payments as payments
 import routers.inventory_items as inventory_items
+import routers.sales_orders as sales_orders
+import routers.sales_payments as sales_payments
 
 
 from fastapi.staticfiles import StaticFiles
@@ -114,6 +116,8 @@ app.include_router(vendors.router)
 app.include_router(purchase_orders.router)
 app.include_router(payments.router)
 app.include_router(inventory_items.router)
+app.include_router(sales_orders.router)
+app.include_router(sales_payments.router)
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():

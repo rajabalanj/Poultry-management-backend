@@ -13,6 +13,7 @@ class Payment(Base):
     payment_mode = Column(String, nullable=True) # e.g., "Cash", "Bank Transfer", "Cheque"
     reference_number = Column(String, nullable=True) # Cheque number, transaction ID etc.
     notes = Column(Text, nullable=True)
+    payment_receipt = Column(String(500), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, onupdate=func.now())
 

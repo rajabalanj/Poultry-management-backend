@@ -23,6 +23,7 @@ class Payment(BaseModel): # Defined below properly, but needed for List type hin
     payment_mode: Optional[str] = None
     reference_number: Optional[str] = None
     notes: Optional[str] = None
+    payment_receipt: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -32,6 +33,7 @@ class PurchaseOrderBase(BaseModel):
     order_date: date
     status: Optional[PurchaseOrderStatus] = PurchaseOrderStatus.DRAFT
     notes: Optional[str] = None
+    payment_receipt: Optional[str] = None
 
 class PurchaseOrderCreate(PurchaseOrderBase):
     # When creating, items are often part of the initial request
@@ -42,6 +44,7 @@ class PurchaseOrderUpdate(BaseModel):
     order_date: Optional[date] = None
     status: Optional[PurchaseOrderStatus] = None
     notes: Optional[str] = None
+    payment_receipt: Optional[str] = None
     # Items updates are typically handled via separate endpoints (add/remove item from PO)
     # total_amount is system-calculated, not updated directly
 

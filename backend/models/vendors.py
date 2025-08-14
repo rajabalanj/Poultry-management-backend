@@ -24,3 +24,4 @@ class Vendor(Base):
 
     # Relationships
     purchase_orders = relationship("PurchaseOrder", back_populates="vendor")
+    sales_orders = relationship("SalesOrder", back_populates="vendor")

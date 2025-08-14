@@ -1,8 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException, Header, status
+from fastapi import APIRouter, Depends, HTTPException, Header, status, UploadFile, File
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import logging
 from decimal import Decimal
+import os
+import uuid
+
+try:
+    from utils.s3_upload import upload_receipt_to_s3
+except ImportError:
+    upload_receipt_to_s3 = None
 
 from database import get_db
 from models.payments import Payment as PaymentModel
@@ -146,3 +153,45 @@ def delete_payment(
 
     logger.info(f"Payment ID {payment_id} deleted for Purchase Order ID {db_payment.purchase_order_id} by {x_user_id}")
     return {"message": "Payment deleted successfully"}
+
+@router.post("/{payment_id}/receipt")
+def upload_payment_receipt(
+    payment_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """Upload payment receipt for a payment."""
+    db_payment = db.query(PaymentModel).filter(PaymentModel.id == payment_id).first()
+    if not db_payment:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    
+    # Validate file type
+    allowed_types = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg']
+    if file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Only PDF and image files allowed")
+    
+    # Create uploads directory
+    upload_dir = "uploads/payment_receipts"
+    os.makedirs(upload_dir, exist_ok=True)
+    
+    # Generate unique filename
+    file_extension = file.filename.split('.')[-1]
+    unique_filename = f"payment_{payment_id}_{uuid.uuid4().hex}.{file_extension}"
+    file_path = os.path.join(upload_dir, unique_filename)
+    
+    # Read and save file
+    content = file.file.read()
+    
+    if os.getenv('AWS_ENVIRONMENT') and upload_receipt_to_s3:
+        try:
+            s3_url = upload_receipt_to_s3(content, file.filename, payment_id)
+            db_payment.payment_receipt = s3_url
+        except Exception:
+            raise HTTPException(status_code=500, detail="Failed to upload to S3")
+    else:
+        with open(file_path, "wb") as buffer:
+            buffer.write(content)
+        db_payment.payment_receipt = file_path
+    
+    db.commit()
+    return {"message": "Receipt uploaded successfully", "file_path": db_payment.payment_receipt}

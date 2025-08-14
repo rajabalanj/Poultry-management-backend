@@ -23,6 +23,7 @@ class PurchaseOrder(Base):
     total_amount_paid = Column(Numeric(10, 3), default=0.0, server_default='0.0', nullable=False) # Total payments made
     status = Column(Enum(PurchaseOrderStatus), default=PurchaseOrderStatus.DRAFT, nullable=False)
     notes = Column(Text, nullable=True)
+    payment_receipt = Column(String(500), nullable=True)
     created_by = Column(String, nullable=True) # Assuming a user ID string or name for auditing
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, onupdate=func.now())

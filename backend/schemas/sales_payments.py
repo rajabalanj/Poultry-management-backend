@@ -3,8 +3,8 @@ from typing import Optional
 from datetime import date, datetime
 from decimal import Decimal
 
-class PaymentBase(BaseModel):
-    purchase_order_id: int
+class SalesPaymentBase(BaseModel):
+    sales_order_id: int
     payment_date: date
     amount_paid: Decimal
     payment_mode: Optional[str] = None
@@ -12,10 +12,10 @@ class PaymentBase(BaseModel):
     notes: Optional[str] = None
     payment_receipt: Optional[str] = None
 
-class PaymentCreate(PaymentBase):
+class SalesPaymentCreate(SalesPaymentBase):
     pass
 
-class PaymentUpdate(BaseModel):
+class SalesPaymentUpdate(BaseModel):
     payment_date: Optional[date] = None
     amount_paid: Optional[Decimal] = None
     payment_mode: Optional[str] = None
@@ -23,7 +23,7 @@ class PaymentUpdate(BaseModel):
     notes: Optional[str] = None
     payment_receipt: Optional[str] = None
 
-class Payment(PaymentBase):
+class SalesPayment(SalesPaymentBase):
     id: int
     created_at: datetime
     updated_at: Optional[datetime] = None
