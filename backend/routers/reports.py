@@ -30,8 +30,9 @@ router = APIRouter(
 @router.get("/snapshot")
 def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None, db: Session = Depends(get_db)):
     """
-    Get a snapshot of batches between the specified start_date and end_date with total_eggs count.
-    Optionally filter by batch_id. Returns all rows for the batch_id if provided.
+    Get a snapshot of batches between the specified start_date and end_date.
+    If batch_id is provided, returns all rows for that batch.
+    If batch_id is not provided, consolidates data into one row per batch.
     """
     try:
         start_date_obj = datetime.strptime(start_date, "%Y-%m-%d").date()
@@ -42,40 +43,82 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
     if start_date_obj > end_date_obj:
         raise HTTPException(status_code=400, detail="Start date cannot be after the end date")
 
-    # Query DailyBatch for the specified date range, ordered by batch_id and batch_date
     query = db.query(DailyBatch).join(Batch).filter(
         DailyBatch.batch_date >= start_date_obj,
         DailyBatch.batch_date <= end_date_obj,
-        Batch.is_active  # Only include active batches
+        Batch.is_active
     )
 
     if batch_id is not None:
         query = query.filter(DailyBatch.batch_id == batch_id)
-
-    query = query.order_by(DailyBatch.batch_id.asc(), DailyBatch.batch_date.asc())
-    daily_batches = query.all()
-
-    # Serialize the data, including total_eggs
-    result = [
-        {
-            "batch_id": batch.batch_id,
-            "batch_no": batch.batch_no,
-            "batch_date": batch.batch_date.strftime("%d-%m-%Y"),
-            "shed_no": batch.shed_no,
-            "age": batch.age,
-            "opening_count": batch.opening_count,
-            "mortality": batch.mortality,
-            "culls": batch.culls,
-            "closing_count": batch.closing_count,
-            "table_eggs": batch.table_eggs,
-            "jumbo": batch.jumbo,
-            "cr": batch.cr,
-            "total_eggs": batch.total_eggs,  # Computed property
-            "hd": batch.hd,  # Computed property
-            "standard_hen_day_percentage": float(batch.standard_hen_day_percentage) if batch.standard_hen_day_percentage is not None else batch.standard_hen_day_percentage,
-        }
-        for batch in daily_batches
-    ]
+        daily_batches = query.order_by(DailyBatch.batch_date.asc()).all()
+        
+        result = [
+            {
+                "batch_id": batch.batch_id,
+                "batch_no": batch.batch_no,
+                "batch_date": batch.batch_date.strftime("%d-%m-%Y"),
+                "shed_no": batch.shed_no,
+                "age": batch.age,
+                "opening_count": batch.opening_count,
+                "mortality": batch.mortality,
+                "culls": batch.culls,
+                "closing_count": batch.closing_count,
+                "table_eggs": batch.table_eggs,
+                "jumbo": batch.jumbo,
+                "cr": batch.cr,
+                "total_eggs": batch.total_eggs,
+                "hd": batch.hd,
+                "standard_hen_day_percentage": float(batch.standard_hen_day_percentage) if batch.standard_hen_day_percentage is not None else batch.standard_hen_day_percentage,
+            }
+            for batch in daily_batches
+        ]
+    else:
+        daily_batches = query.all()
+        
+        # Group by batch_id and consolidate
+        batch_groups = {}
+        for batch in daily_batches:
+            if batch.batch_id not in batch_groups:
+                batch_groups[batch.batch_id] = []
+            batch_groups[batch.batch_id].append(batch)
+        
+        result = []
+        for batch_id, batches in batch_groups.items():
+            # Sum totals
+            total_mortality = sum(b.mortality for b in batches)
+            total_culls = sum(b.culls for b in batches)
+            total_table_eggs = sum(b.table_eggs for b in batches)
+            total_jumbo = sum(b.jumbo for b in batches)
+            total_cr = sum(b.cr for b in batches)
+            total_eggs = total_table_eggs + total_jumbo + total_cr
+            
+            # Get latest values
+            latest_batch = max(batches, key=lambda x: x.batch_date)
+            first_batch = min(batches, key=lambda x: x.batch_date)
+            
+            # Calculate averages
+            avg_hd = sum(b.hd for b in batches) / len(batches)
+            
+            result.append({
+                "batch_id": batch_id,
+                "batch_no": latest_batch.batch_no,
+                "shed_no": latest_batch.shed_no,
+                "age": latest_batch.age,
+                "opening_count": first_batch.opening_count,
+                "closing_count": latest_batch.closing_count,
+                "mortality": total_mortality,
+                "culls": total_culls,
+                "table_eggs": total_table_eggs,
+                "jumbo": total_jumbo,
+                "cr": total_cr,
+                "total_eggs": total_eggs,
+                "hd": round(avg_hd, 4),
+                "date_range": f"{first_batch.batch_date.strftime('%d-%m-%Y')} to {latest_batch.batch_date.strftime('%d-%m-%Y')}",
+                "days_count": len(batches)
+            })
+        
+        result.sort(key=lambda x: x["batch_id"])
 
     return JSONResponse(content=result)
 
