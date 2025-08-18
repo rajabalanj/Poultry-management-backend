@@ -16,7 +16,7 @@ from database import get_db
 from models.sales_orders import SalesOrder as SalesOrderModel, SalesOrderStatus
 from models.sales_order_items import SalesOrderItem as SalesOrderItemModel
 from models.inventory_items import InventoryItem as InventoryItemModel
-from models.vendors import Vendor as VendorModel
+from models.business_partners import BusinessPartner as BusinessPartnerModel
 from models.sales_payments import SalesPayment as SalesPaymentModel
 from schemas.sales_orders import (
     SalesOrder as SalesOrderSchema,
@@ -36,9 +36,13 @@ def create_sales_order(
     x_user_id: Optional[str] = Header(None, alias="X-User-ID")
 ):
     """Create a new sales order with associated items."""
-    db_vendor = db.query(VendorModel).filter(VendorModel.id == so.vendor_id, VendorModel.status == 'ACTIVE').first()
-    if not db_vendor:
-        raise HTTPException(status_code=400, detail="Customer not found or is inactive.")
+    db_customer = db.query(BusinessPartnerModel).filter(
+        BusinessPartnerModel.id == so.customer_id, 
+        BusinessPartnerModel.status == 'ACTIVE',
+        BusinessPartnerModel.is_customer == True
+    ).first()
+    if not db_customer:
+        raise HTTPException(status_code=400, detail="Business partner not found, inactive, or not a customer.")
 
     total_amount = Decimal(0)
     db_so_items = []
@@ -64,7 +68,7 @@ def create_sales_order(
         )
     
     db_so = SalesOrderModel(
-        vendor_id=so.vendor_id,
+        customer_id=so.customer_id,
         order_date=so.order_date,
         status=so.status,
         notes=so.notes,
@@ -86,14 +90,14 @@ def create_sales_order(
         selectinload(SalesOrderModel.payments)
     ).filter(SalesOrderModel.id == db_so.id).first()
 
-    logger.info(f"Sales Order (ID: {db_so.id}) created for Customer ID {db_so.vendor_id} by {x_user_id}")
+    logger.info(f"Sales Order (ID: {db_so.id}) created for Customer ID {db_so.customer_id} by {x_user_id}")
     return db_so
 
 @router.get("/", response_model=List[SalesOrderSchema])
 def read_sales_orders(
     skip: int = 0,
     limit: int = 100,
-    vendor_id: Optional[int] = None,
+    customer_id: Optional[int] = None,
     status: Optional[SalesOrderStatus] = None,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
@@ -102,8 +106,8 @@ def read_sales_orders(
     """Retrieve a list of sales orders with various filters."""
     query = db.query(SalesOrderModel)
 
-    if vendor_id:
-        query = query.filter(SalesOrderModel.vendor_id == vendor_id)
+    if customer_id:
+        query = query.filter(SalesOrderModel.customer_id == customer_id)
     if status:
         query = query.filter(SalesOrderModel.status == status)
     if start_date:
@@ -161,6 +165,53 @@ def update_sales_order(
     
     logger.info(f"Sales Order (ID: {so_id}) updated by {x_user_id}")
     return db_so
+
+
+@router.patch("/{so_id}/items/{item_id}", response_model=SalesOrderSchema)
+def update_sales_order_item(
+    so_id: int,
+    item_id: int,
+    item_update: SalesOrderItemUpdate,
+    db: Session = Depends(get_db),
+    x_user_id: Optional[str] = Header(None, alias="X-User-ID"),
+):
+    """Update a specific item in a sales order."""
+    db_so = (
+        db.query(SalesOrderModel)
+        .options(selectinload(SalesOrderModel.items))
+        .filter(SalesOrderModel.id == so_id)
+        .first()
+    )
+    if not db_so:
+        raise HTTPException(status_code=404, detail="Sales Order not found")
+
+    item_to_update = None
+    for item in db_so.items:
+        if item.id == item_id:
+            item_to_update = item
+            break
+
+    if not item_to_update:
+        raise HTTPException(status_code=404, detail="Sales Order Item not found")
+
+    update_data = item_update.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(item_to_update, key, value)
+
+    # Recalculate line total and order total amount
+    item_to_update.line_total = item_to_update.quantity * item_to_update.price_per_unit
+    
+    total_amount = sum(item.line_total for item in db_so.items)
+    db_so.total_amount = total_amount
+
+    db.commit()
+    db.refresh(db_so)
+
+    logger.info(
+        f"Sales Order Item (ID: {item_id}) of Sales Order (ID: {so_id}) updated by {x_user_id}"
+    )
+    return db_so
+
 
 @router.delete("/{so_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_sales_order(

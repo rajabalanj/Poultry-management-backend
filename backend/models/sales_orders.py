@@ -17,7 +17,7 @@ class SalesOrder(Base):
     __tablename__ = "sales_orders"
 
     id = Column(Integer, primary_key=True, index=True)
-    vendor_id = Column(Integer, ForeignKey("vendors.id"), nullable=False)  # Reusing vendors as customers
+    customer_id = Column(Integer, ForeignKey("business_partners.id"), nullable=False)
     order_date = Column(Date, nullable=False)
     total_amount = Column(Numeric(10, 3), default=0.0, nullable=False)
     total_amount_paid = Column(Numeric(10, 3), default=0.0, server_default='0.0', nullable=False)
@@ -29,6 +29,6 @@ class SalesOrder(Base):
     updated_at = Column(DateTime, onupdate=func.now())
 
     # Relationships
-    vendor = relationship("Vendor", back_populates="sales_orders")
+    customer = relationship("BusinessPartner", back_populates="sales_orders", foreign_keys=[customer_id])
     items = relationship("SalesOrderItem", back_populates="sales_order", cascade="all, delete-orphan")
     payments = relationship("SalesPayment", back_populates="sales_order", cascade="all, delete-orphan")

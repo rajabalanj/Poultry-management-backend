@@ -29,7 +29,7 @@ class Payment(BaseModel): # Defined below properly, but needed for List type hin
         from_attributes = True
 
 class PurchaseOrderBase(BaseModel):
-    vendor_id: int
+    vendor_id: int  # Now references business_partners table
     order_date: date
     status: Optional[PurchaseOrderStatus] = PurchaseOrderStatus.DRAFT
     notes: Optional[str] = None

@@ -35,7 +35,7 @@ import routers.medicine as medicine
 import routers.feed as feed
 import routers.medicine_usage_history as medicine_usage_history
 import routers.batch as batch
-import routers.vendors as vendors
+import routers.business_partners as business_partners
 import routers.purchase_orders as purchase_orders
 import routers.payments as payments
 import routers.inventory_items as inventory_items
@@ -112,7 +112,7 @@ app.include_router(medicine.router)
 app.include_router(feed.router)
 app.include_router(medicine_usage_history.router)
 app.include_router(batch.router)
-app.include_router(vendors.router)
+app.include_router(business_partners.router)
 app.include_router(purchase_orders.router)
 app.include_router(payments.router)
 app.include_router(inventory_items.router)

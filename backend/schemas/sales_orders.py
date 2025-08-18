@@ -27,7 +27,7 @@ class SalesPayment(BaseModel):
         from_attributes = True
 
 class SalesOrderBase(BaseModel):
-    vendor_id: int
+    customer_id: int  # Now references business_partners table
     order_date: date
     status: Optional[SalesOrderStatus] = SalesOrderStatus.DRAFT
     notes: Optional[str] = None
@@ -37,7 +37,7 @@ class SalesOrderCreate(SalesOrderBase):
     items: List[SalesOrderItemCreateRequest]
 
 class SalesOrderUpdate(BaseModel):
-    vendor_id: Optional[int] = None
+    customer_id: Optional[int] = None
     order_date: Optional[date] = None
     status: Optional[SalesOrderStatus] = None
     notes: Optional[str] = None

@@ -15,10 +15,10 @@ from models.app_config import AppConfig
 from models.purchase_orders import PurchaseOrder
 from models.inventory_items import InventoryItem
 from models.purchase_order_items import PurchaseOrderItem
-from models.vendors import Vendor
 from models.payments import Payment
 from models.sales_order_items import SalesOrderItem
 from models.sales_orders import SalesOrder
 from models.sales_payments import SalesPayment
+from models.business_partners import BusinessPartner
 
-__all__ = ['AppConfig', 'Batch', 'BovansWhiteLayerPerformance', 'CompositionUsageHistory', 'Composition', 'DailyBatch', 'EggRoomReport', 'FeedAudit', 'FeedInComposition', 'Feed', 'MedicineAudit', 'MedicineUsageHistory', 'Medicine', 'Payment', 'PurchaseOrder', 'PurchaseOrderItem', 'Vendor', 'InventoryItem', 'User', 'SalesOrderItem', 'SalesOrder', 'SalesPayment']
+__all__ = ['AppConfig', 'Batch', 'BovansWhiteLayerPerformance', 'CompositionUsageHistory', 'Composition', 'DailyBatch', 'EggRoomReport', 'FeedAudit', 'FeedInComposition', 'Feed', 'MedicineAudit', 'MedicineUsageHistory', 'Medicine', 'Payment', 'PurchaseOrder', 'PurchaseOrderItem', 'InventoryItem', 'User', 'SalesOrderItem', 'SalesOrder', 'SalesPayment', 'BusinessPartner']

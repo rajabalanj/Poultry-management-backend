@@ -19,7 +19,7 @@ from database import get_db
 from models.purchase_orders import PurchaseOrder as PurchaseOrderModel, PurchaseOrderStatus
 from models.purchase_order_items import PurchaseOrderItem as PurchaseOrderItemModel
 from models.inventory_items import InventoryItem as InventoryItemModel
-from models.vendors import Vendor as VendorModel
+from models.business_partners import BusinessPartner as BusinessPartnerModel
 from models.payments import Payment as PaymentModel # Import the Payment model
 from schemas.purchase_orders import (
     PurchaseOrder as PurchaseOrderSchema,
@@ -65,10 +65,14 @@ def create_purchase_order(
     x_user_id: Optional[str] = Header(None, alias="X-User-ID")
 ):
     """Create a new purchase order with associated items."""
-    # 1. Validate Vendor
-    db_vendor = db.query(VendorModel).filter(VendorModel.id == po.vendor_id, VendorModel.status == 'ACTIVE').first()
+    # 1. Validate Business Partner (Vendor)
+    db_vendor = db.query(BusinessPartnerModel).filter(
+        BusinessPartnerModel.id == po.vendor_id, 
+        BusinessPartnerModel.status == 'ACTIVE',
+        BusinessPartnerModel.is_vendor == True
+    ).first()
     if not db_vendor:
-        raise HTTPException(status_code=400, detail="Vendor not found or is inactive.")
+        raise HTTPException(status_code=400, detail="Business partner not found, inactive, or not a vendor.")
 
     total_amount = Decimal(0)
     db_po_items = []

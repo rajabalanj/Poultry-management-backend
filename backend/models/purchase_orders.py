@@ -17,7 +17,7 @@ class PurchaseOrder(Base):
     __tablename__ = "purchase_orders"
 
     id = Column(Integer, primary_key=True, index=True)
-    vendor_id = Column(Integer, ForeignKey("vendors.id"), nullable=False)
+    vendor_id = Column(Integer, ForeignKey("business_partners.id"), nullable=False)
     order_date = Column(Date, nullable=False)
     total_amount = Column(Numeric(10, 3), default=0.0, nullable=False) # Increased precision
     total_amount_paid = Column(Numeric(10, 3), default=0.0, server_default='0.0', nullable=False) # Total payments made
@@ -29,6 +29,6 @@ class PurchaseOrder(Base):
     updated_at = Column(DateTime, onupdate=func.now())
 
     # Relationships
-    vendor = relationship("Vendor", back_populates="purchase_orders")
+    vendor = relationship("BusinessPartner", back_populates="purchase_orders", foreign_keys=[vendor_id])
     items = relationship("PurchaseOrderItem", back_populates="purchase_order", cascade="all, delete-orphan")
     payments = relationship("Payment", back_populates="purchase_order", cascade="all, delete-orphan")

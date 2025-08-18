@@ -1,0 +1,107 @@
+from fastapi import APIRouter, Depends, HTTPException, Header, status, Query
+from sqlalchemy.orm import Session, selectinload
+from typing import List, Optional
+import logging
+
+from database import get_db
+from models.business_partners import BusinessPartner as BusinessPartnerModel
+from models.purchase_orders import PurchaseOrder as PurchaseOrderModel
+from models.sales_orders import SalesOrder as SalesOrderModel
+from schemas.business_partners import BusinessPartner, BusinessPartnerCreate, BusinessPartnerUpdate, PartnerStatus
+
+router = APIRouter(prefix="/business-partners", tags=["Business Partners"])
+logger = logging.getLogger("business_partners")
+
+@router.post("/", response_model=BusinessPartner, status_code=status.HTTP_201_CREATED)
+def create_business_partner(
+    partner: BusinessPartnerCreate,
+    db: Session = Depends(get_db),
+    x_user_id: Optional[str] = Header(None, alias="X-User-ID")
+):
+    db_partner = db.query(BusinessPartnerModel).filter(BusinessPartnerModel.name == partner.name).first()
+    if db_partner:
+        raise HTTPException(status_code=400, detail="Business partner with this name already exists")
+    
+    db_partner = BusinessPartnerModel(**partner.model_dump())
+    db.add(db_partner)
+    db.commit()
+    db.refresh(db_partner)
+    logger.info(f"Business partner '{db_partner.name}' created by {x_user_id}")
+    return db_partner
+
+@router.get("/", response_model=List[BusinessPartner])
+def read_business_partners(
+    skip: int = 0,
+    limit: int = 100,
+    status: Optional[PartnerStatus] = None,
+    is_vendor: Optional[bool] = Query(None),
+    is_customer: Optional[bool] = Query(None),
+    db: Session = Depends(get_db)
+):
+    query = db.query(BusinessPartnerModel)
+    if status:
+        query = query.filter(BusinessPartnerModel.status == status)
+    if is_vendor is not None:
+        query = query.filter(BusinessPartnerModel.is_vendor == is_vendor)
+    if is_customer is not None:
+        query = query.filter(BusinessPartnerModel.is_customer == is_customer)
+    return query.offset(skip).limit(limit).all()
+
+@router.get("/{partner_id}", response_model=BusinessPartner)
+def read_business_partner(partner_id: int, db: Session = Depends(get_db)):
+    db_partner = db.query(BusinessPartnerModel).filter(BusinessPartnerModel.id == partner_id).first()
+    if db_partner is None:
+        raise HTTPException(status_code=404, detail="Business partner not found")
+    return db_partner
+
+@router.patch("/{partner_id}", response_model=BusinessPartner)
+def update_business_partner(
+    partner_id: int,
+    partner: BusinessPartnerUpdate,
+    db: Session = Depends(get_db),
+    x_user_id: Optional[str] = Header(None, alias="X-User-ID")
+):
+    db_partner = db.query(BusinessPartnerModel).filter(BusinessPartnerModel.id == partner_id).first()
+    if db_partner is None:
+        raise HTTPException(status_code=404, detail="Business partner not found")
+    
+    if partner.name is not None and partner.name != db_partner.name:
+        existing_partner = db.query(BusinessPartnerModel).filter(BusinessPartnerModel.name == partner.name).first()
+        if existing_partner:
+            raise HTTPException(status_code=400, detail="Business partner with this name already exists")
+
+    partner_data = partner.model_dump(exclude_unset=True)
+    for key, value in partner_data.items():
+        setattr(db_partner, key, value)
+    
+    db.commit()
+    db.refresh(db_partner)
+    logger.info(f"Business partner '{db_partner.name}' (ID: {partner_id}) updated by {x_user_id}")
+    return db_partner
+
+@router.delete("/{partner_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_business_partner(
+    partner_id: int,
+    db: Session = Depends(get_db),
+    x_user_id: Optional[str] = Header(None, alias="X-User-ID")
+):
+    db_partner = db.query(BusinessPartnerModel).filter(BusinessPartnerModel.id == partner_id).first()
+    if db_partner is None:
+        raise HTTPException(status_code=404, detail="Business partner not found")
+
+    # Check for associated orders
+    has_purchases = db.query(PurchaseOrderModel).filter(PurchaseOrderModel.vendor_id == partner_id).first()
+    has_sales = db.query(SalesOrderModel).filter(SalesOrderModel.customer_id == partner_id).first()
+    
+    if has_purchases or has_sales:
+        db_partner.status = PartnerStatus.INACTIVE
+        db.commit()
+        logger.warning(f"Business partner '{db_partner.name}' (ID: {partner_id}) set to INACTIVE due to associated orders by {x_user_id}")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Business partner '{db_partner.name}' has associated orders. Status changed to Inactive."
+        )
+    
+    db.delete(db_partner)
+    db.commit()
+    logger.info(f"Business partner '{db_partner.name}' (ID: {partner_id}) deleted by {x_user_id}")
