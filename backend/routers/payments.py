@@ -30,9 +30,7 @@ def create_payment(
     if db_po is None:
         raise HTTPException(status_code=404, detail="Purchase Order not found for this payment.")
 
-    # Prevent payments on cancelled POs
-    if db_po.status == PurchaseOrderStatus.CANCELLED:
-        raise HTTPException(status_code=400, detail="Cannot record payments for a cancelled purchase order.")
+    # No explicit CANCELLED status in enum; payments route controls PAID/PARTIALLY_PAID/APPROVED/DRAFT
 
     # Check if payment exceeds remaining amount
     remaining_amount = db_po.total_amount - db_po.total_amount_paid

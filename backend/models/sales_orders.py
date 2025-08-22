@@ -6,12 +6,9 @@ import enum
 
 class SalesOrderStatus(enum.Enum):
     DRAFT = "Draft"
-    PENDING_APPROVAL = "Pending Approval"
     APPROVED = "Approved"
-    SHIPPED = "Shipped"
     PARTIALLY_PAID = "Partially Paid"
     PAID = "Paid"
-    CANCELLED = "Cancelled"
 
 class SalesOrder(Base):
     __tablename__ = "sales_orders"

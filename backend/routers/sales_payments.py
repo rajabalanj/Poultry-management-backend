@@ -30,8 +30,7 @@ def create_sales_payment(
     if db_so is None:
         raise HTTPException(status_code=404, detail="Sales Order not found for this payment.")
 
-    if db_so.status == SalesOrderStatus.CANCELLED:
-        raise HTTPException(status_code=400, detail="Cannot record payments for a cancelled sales order.")
+    # No CANCELLED status present in enum; continue with payment logic
 
     remaining_amount = db_so.total_amount - db_so.total_amount_paid
     if payment.amount_paid > remaining_amount:

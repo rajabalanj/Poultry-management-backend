@@ -113,6 +113,13 @@ def create_purchase_order(
     for item in db_po_items:
         item.purchase_order_id = db_po.id
         db.add(item)
+    # Increase inventory immediately for each purchase order item
+    for item in db_po_items:
+        inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item.inventory_item_id).with_for_update().first()
+        if inv is None:
+            raise HTTPException(status_code=400, detail=f"Inventory Item with ID {item.inventory_item_id} not found when updating stock.")
+        inv.current_stock = (inv.current_stock or 0) + item.quantity
+        db.add(inv)
     
     db.commit()
     db.refresh(db_po)
@@ -180,21 +187,25 @@ def update_purchase_order(
     if db_po is None:
         raise HTTPException(status_code=404, detail="Purchase Order not found")
     
-    # If status is changing to 'Received', trigger inventory update (not fully implemented here)
-    if po_update.status == PurchaseOrderStatus.PAID and db_po.status != PurchaseOrderStatus.PAID:
-        # Here you would typically call a service/function to update inventory
-        # For this example, we'll just log it.
-        logger.info(f"PO (ID: {po_id}) status changed to 'Paid'. Inventory update logic would be triggered here.")
-        # Example of how you might update stock (simplified, needs error handling and atomicity)
-        # for item in db_po.items:
-        #     db_inventory_item = db.query(InventoryItemModel).get(item.inventory_item_id)
-        #     if db_inventory_item:
-        #         db_inventory_item.current_stock += item.quantity
-        #         # Recalculate average cost if needed
-        #         # db_inventory_item.average_cost = (old_stock * old_avg_cost + new_qty * new_price) / (old_stock + new_qty)
-        #         db.add(db_inventory_item)
-        # db.commit() # Commit inventory changes
-        # db.refresh(db_po) # Refresh PO after inventory update
+    # Handle inventory changes when PO is marked as received/paid
+    new_status = getattr(po_update, 'status', None)
+    # Marking as PAID (received): increase inventory
+    if new_status == PurchaseOrderStatus.PAID and db_po.status != PurchaseOrderStatus.PAID:
+        for item in db_po.items:
+            inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item.inventory_item_id).with_for_update().first()
+            if inv is None:
+                raise HTTPException(status_code=400, detail=f"Inventory item {item.inventory_item_id} not found")
+            inv.current_stock = (inv.current_stock or 0) + item.quantity
+            db.add(inv)
+        logger.info(f"PO (ID: {po_id}) marked as 'Paid/Received'. Inventory increased.")
+    # If previously PAID and status is changing away, rollback the inventory increase
+    elif db_po.status == PurchaseOrderStatus.PAID and new_status != PurchaseOrderStatus.PAID:
+        for item in db_po.items:
+            inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item.inventory_item_id).with_for_update().first()
+            if inv:
+                inv.current_stock = (inv.current_stock or 0) - item.quantity
+                db.add(inv)
+        logger.info(f"PO (ID: {po_id}) un-marked as 'Paid'. Inventory adjusted.")
 
 
     po_data = po_update.model_dump(exclude_unset=True)
@@ -228,10 +239,10 @@ def delete_purchase_order(
     if db_po is None:
         raise HTTPException(status_code=404, detail="Purchase Order not found")
 
-    if db_po.status not in [PurchaseOrderStatus.DRAFT, PurchaseOrderStatus.CANCELLED]:
+    if db_po.status != PurchaseOrderStatus.DRAFT:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Purchase Order status is '{db_po.status.value}'. Only 'Draft' or 'Cancelled' POs can be hard deleted. Consider changing status to 'Cancelled' instead."
+            detail=f"Purchase Order status is '{db_po.status.value}'. Only 'Draft' POs can be hard deleted. Consider changing status to 'Draft' if you want to remove."
         )
     
     # If PO has been received (even partially), deleting it would affect inventory.
@@ -240,8 +251,14 @@ def delete_purchase_order(
     if db_po.status in [PurchaseOrderStatus.PARTIALLY_PAID, PurchaseOrderStatus.PAID]:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Cannot delete a purchase order that has been partially or fully received. Change status to 'Cancelled' instead."
+            detail="Cannot delete a purchase order that has been partially or fully received. Change status instead."
         )
+    # Restore inventory for items on the deleted PO (undo the earlier increment)
+    for item in db_po.items:
+        inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item.inventory_item_id).with_for_update().first()
+        if inv:
+            inv.current_stock = (inv.current_stock or 0) - item.quantity
+            db.add(inv)
 
     db.delete(db_po)
     db.commit()
@@ -262,8 +279,8 @@ def add_item_to_purchase_order(
     if db_po is None:
         raise HTTPException(status_code=404, detail="Purchase Order not found")
     
-    # Restrict item modification based on PO status (e.g., cannot add if 'Received')
-    if db_po.status in [PurchaseOrderStatus.PAID, PurchaseOrderStatus.CANCELLED]:
+    # Restrict item modification based on PO status (e.g., cannot add if 'Paid/Received')
+    if db_po.status == PurchaseOrderStatus.PAID:
         raise HTTPException(status_code=400, detail=f"Cannot add items to a purchase order with status '{db_po.status.value}'.")
 
     db_inventory_item = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_request.inventory_item_id).first()
@@ -290,6 +307,12 @@ def add_item_to_purchase_order(
     
     # Update total_amount on the PO
     db_po.total_amount += line_total
+    # Immediately increase inventory for this PO item
+    inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_request.inventory_item_id).with_for_update().first()
+    if inv is None:
+        raise HTTPException(status_code=400, detail=f"Inventory Item with ID {item_request.inventory_item_id} not found when updating stock.")
+    inv.current_stock = (inv.current_stock or 0) + item_request.quantity
+    db.add(inv)
     
     db.commit()
     db.refresh(db_po)
@@ -316,7 +339,7 @@ def update_item_in_purchase_order(
     if db_po is None:
         raise HTTPException(status_code=404, detail="Purchase Order not found")
     
-    if db_po.status in [PurchaseOrderStatus.PAID, PurchaseOrderStatus.CANCELLED]:
+    if db_po.status == PurchaseOrderStatus.PAID:
         raise HTTPException(status_code=400, detail=f"Cannot update items in a purchase order with status '{db_po.status.value}'.")
 
     db_po_item = db.query(PurchaseOrderItemModel).filter(
@@ -326,14 +349,23 @@ def update_item_in_purchase_order(
     if db_po_item is None:
         raise HTTPException(status_code=404, detail="Purchase Order Item not found in this PO.")
 
+    old_qty = db_po_item.quantity
     old_line_total = db_po_item.line_total
-    
+
     item_data = item_update.model_dump(exclude_unset=True)
     for key, value in item_data.items():
         setattr(db_po_item, key, value)
-    
+
     db_po_item.line_total = db_po_item.quantity * db_po_item.price_per_unit
     db_po.total_amount += (db_po_item.line_total - old_line_total) # Adjust PO total
+    # Adjust inventory by delta
+    delta = db_po_item.quantity - old_qty
+    if delta != 0:
+        inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == db_po_item.inventory_item_id).with_for_update().first()
+        if inv is None:
+            raise HTTPException(status_code=400, detail=f"Inventory Item with ID {db_po_item.inventory_item_id} not found when updating stock.")
+        inv.current_stock = (inv.current_stock or 0) + delta
+        db.add(inv)
 
     db.commit()
     db.refresh(db_po_item)
@@ -360,7 +392,7 @@ def remove_item_from_purchase_order(
     if db_po is None:
         raise HTTPException(status_code=404, detail="Purchase Order not found")
 
-    if db_po.status in [PurchaseOrderStatus.PAID, PurchaseOrderStatus.CANCELLED]:
+    if db_po.status == PurchaseOrderStatus.PAID:
         raise HTTPException(status_code=400, detail=f"Cannot remove items from a purchase order with status '{db_po.status.value}'.")
         
     db_po_item = db.query(PurchaseOrderItemModel).filter(
@@ -370,8 +402,12 @@ def remove_item_from_purchase_order(
     if db_po_item is None:
         raise HTTPException(status_code=404, detail="Purchase Order Item not found in this PO.")
     
-    # Adjust total_amount on the PO
+    # Adjust total_amount on the PO and reduce inventory
     db_po.total_amount -= db_po_item.line_total
+    inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == db_po_item.inventory_item_id).with_for_update().first()
+    if inv:
+        inv.current_stock = (inv.current_stock or 0) - db_po_item.quantity
+        db.add(inv)
 
     db.delete(db_po_item)
     db.commit()

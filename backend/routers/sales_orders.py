@@ -54,6 +54,9 @@ def create_sales_order(
         db_inventory_item = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_data.inventory_item_id).first()
         if not db_inventory_item:
             raise HTTPException(status_code=400, detail=f"Inventory Item with ID {item_data.inventory_item_id} not found.")
+        # Ensure there is enough stock to fulfill this sales order item
+        if db_inventory_item.current_stock is not None and db_inventory_item.current_stock < item_data.quantity:
+            raise HTTPException(status_code=400, detail=f"Insufficient stock for item '{db_inventory_item.name}'. Available: {db_inventory_item.current_stock}, Requested: {item_data.quantity}")
         
         line_total = item_data.quantity * item_data.price_per_unit
         total_amount += line_total
@@ -81,6 +84,15 @@ def create_sales_order(
     for item in db_so_items:
         item.sales_order_id = db_so.id
         db.add(item)
+    # Deduct inventory immediately for each sales order item
+    for item in db_so_items:
+        inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item.inventory_item_id).with_for_update().first()
+        if inv is None:
+            raise HTTPException(status_code=400, detail=f"Inventory Item with ID {item.inventory_item_id} not found when updating stock.")
+        if inv.current_stock is None or inv.current_stock < item.quantity:
+            raise HTTPException(status_code=400, detail=f"Insufficient stock for item '{getattr(inv, 'name', item.inventory_item_id)}'. Available: {inv.current_stock}, Required: {item.quantity}")
+        inv.current_stock -= item.quantity
+        db.add(inv)
     
     db.commit()
     db.refresh(db_so)
@@ -145,9 +157,9 @@ def update_sales_order(
     if db_so is None:
         raise HTTPException(status_code=404, detail="Sales Order not found")
     
-    # When status changes to SHIPPED, reduce inventory
-    if so_update.status == SalesOrderStatus.SHIPPED and db_so.status != SalesOrderStatus.SHIPPED:
-        logger.info(f"SO (ID: {so_id}) status changed to 'Shipped'. Inventory reduction logic would be triggered here.")
+    # Note: SHIPPED and CANCELLED statuses are not set anywhere in backend.
+    # Keep status changes minimal here; payments update payment-related statuses (PAID/PARTIALLY_PAID/APPROVED/DRAFT).
+    # No inventory changes are handled here for SHIPPED because the backend does not transition to SHIPPED.
 
     so_data = so_update.model_dump(exclude_unset=True)
     so_data.pop("total_amount", None)
@@ -164,6 +176,74 @@ def update_sales_order(
     ).filter(SalesOrderModel.id == so_id).first()
     
     logger.info(f"Sales Order (ID: {so_id}) updated by {x_user_id}")
+    return db_so
+
+
+@router.post("/{so_id}/items", response_model=SalesOrderSchema, status_code=status.HTTP_201_CREATED)
+def add_item_to_sales_order(
+    so_id: int,
+    item_request: SalesOrderItemCreateRequest,
+    db: Session = Depends(get_db),
+    x_user_id: Optional[str] = Header(None, alias="X-User-ID")
+):
+    """Add a new item to an existing sales order."""
+    db_so = db.query(SalesOrderModel).filter(SalesOrderModel.id == so_id).first()
+    if not db_so:
+        raise HTTPException(status_code=404, detail="Sales Order not found")
+
+    # Restrict adding items based on SO status (only prevent adding when fully paid)
+    if db_so.status == SalesOrderStatus.PAID:
+        raise HTTPException(status_code=400, detail=f"Cannot add items to a sales order with status '{db_so.status.value}'.")
+
+    # Validate that the inventory item exists
+    db_inventory_item = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_request.inventory_item_id).first()
+    if not db_inventory_item:
+        raise HTTPException(status_code=400, detail=f"Inventory Item with ID {item_request.inventory_item_id} not found.")
+
+    # Critical for sales: Check if there is enough stock
+    if db_inventory_item.current_stock < item_request.quantity:
+        raise HTTPException(status_code=400, detail=f"Insufficient stock for item '{db_inventory_item.name}'. Available: {db_inventory_item.current_stock}, Requested: {item_request.quantity}")
+
+    # Check if item already exists in this SO to prevent duplicates
+    existing_item = db.query(SalesOrderItemModel).filter(
+        SalesOrderItemModel.sales_order_id == so_id,
+        SalesOrderItemModel.inventory_item_id == item_request.inventory_item_id
+    ).first()
+    if existing_item:
+        raise HTTPException(status_code=400, detail="This item already exists in this sales order. Use the update endpoint to change quantity.")
+
+    line_total = item_request.quantity * item_request.price_per_unit
+    db_so_item = SalesOrderItemModel(
+        sales_order_id=so_id,
+        inventory_item_id=item_request.inventory_item_id,
+        quantity=item_request.quantity,
+        price_per_unit=item_request.price_per_unit,
+        line_total=line_total
+    )
+    db.add(db_so_item)
+    
+    # Update the total_amount on the parent Sales Order
+    db_so.total_amount += line_total
+    # Deduct inventory for this added item
+    inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_request.inventory_item_id).with_for_update().first()
+    if inv is None:
+        raise HTTPException(status_code=400, detail=f"Inventory Item with ID {item_request.inventory_item_id} not found when updating stock.")
+    if inv.current_stock is None or inv.current_stock < item_request.quantity:
+        raise HTTPException(status_code=400, detail=f"Insufficient stock for item '{getattr(inv, 'name', item_request.inventory_item_id)}'. Available: {inv.current_stock}, Required: {item_request.quantity}")
+    inv.current_stock -= item_request.quantity
+    db.add(inv)
+    
+    db.commit()
+    db.refresh(db_so)
+
+    # Re-query with relationships for a complete response object
+    db_so = db.query(SalesOrderModel).options(
+        selectinload(SalesOrderModel.items).selectinload(SalesOrderItemModel.inventory_item),
+        selectinload(SalesOrderModel.payments),
+        selectinload(SalesOrderModel.customer)
+    ).filter(SalesOrderModel.id == so_id).first()
+
+    logger.info(f"Item {db_inventory_item.name} added to Sales Order (ID: {so_id}) by {x_user_id}")
     return db_so
 
 
@@ -194,13 +274,35 @@ def update_sales_order_item(
     if not item_to_update:
         raise HTTPException(status_code=404, detail="Sales Order Item not found")
 
+    # Do not allow item updates for finalized sales orders
+    if db_so.status == SalesOrderStatus.PAID:
+        raise HTTPException(status_code=400, detail=f"Cannot modify items for a sales order with status '{db_so.status.value}'.")
+
+    # Capture old quantity then apply updates and adjust inventory by the delta
+    old_qty = item_to_update.quantity
     update_data = item_update.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(item_to_update, key, value)
 
     # Recalculate line total and order total amount
     item_to_update.line_total = item_to_update.quantity * item_to_update.price_per_unit
-    
+    # Adjust inventory by the difference
+    new_qty = item_to_update.quantity
+    delta = new_qty - old_qty
+    if delta != 0:
+        inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_to_update.inventory_item_id).with_for_update().first()
+        if inv is None:
+            raise HTTPException(status_code=400, detail=f"Inventory Item with ID {item_to_update.inventory_item_id} not found when updating stock.")
+        if delta > 0:
+            # Need more stock
+            if inv.current_stock is None or inv.current_stock < delta:
+                raise HTTPException(status_code=400, detail=f"Insufficient stock for item '{getattr(inv, 'name', item_to_update.inventory_item_id)}'. Available: {inv.current_stock}, Required additional: {delta}")
+            inv.current_stock -= delta
+        else:
+            # Returned/reduced quantity -> restore stock
+            inv.current_stock = (inv.current_stock or 0) + (-delta)
+        db.add(inv)
+
     total_amount = sum(item.line_total for item in db_so.items)
     db_so.total_amount = total_amount
 
@@ -224,12 +326,18 @@ def delete_sales_order(
     if db_so is None:
         raise HTTPException(status_code=404, detail="Sales Order not found")
 
-    if db_so.status not in [SalesOrderStatus.DRAFT, SalesOrderStatus.CANCELLED]:
+    if db_so.status != SalesOrderStatus.DRAFT:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Sales Order status is '{db_so.status.value}'. Only 'Draft' or 'Cancelled' SOs can be deleted."
+            detail=f"Sales Order status is '{db_so.status.value}'. Only 'Draft' SOs can be deleted."
         )
 
+    # Restore inventory for items on the deleted sales order
+    for item in db_so.items:
+        inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item.inventory_item_id).with_for_update().first()
+        if inv:
+            inv.current_stock = (inv.current_stock or 0) + item.quantity
+            db.add(inv)
     db.delete(db_so)
     db.commit()
     logger.info(f"Sales Order (ID: {so_id}) deleted by {x_user_id}")
