@@ -87,7 +87,7 @@ app = FastAPI()
 
 allowed_origins_str = os.getenv(
     "CORS_ALLOWED_ORIGINS",
-    "http://localhost:5173,http://127.0.0.1:5173,http://51.21.190.170,https://51.21.190.170"
+    "http://localhost:5173,http://127.0.0.1:5173,http://51.21.190.170,https://51.21.190.170,https://poultrix.in"
 )
 
 # Split the string into a list, stripping any whitespace
