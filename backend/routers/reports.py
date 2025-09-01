@@ -99,6 +99,8 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
             
             # Calculate averages
             avg_hd = sum(b.hd for b in batches) / len(batches)
+            standard_hd_values = [float(b.standard_hen_day_percentage) for b in batches if b.standard_hen_day_percentage is not None]
+            avg_standard_hd = sum(standard_hd_values) / len(standard_hd_values) if standard_hd_values else 0
             
             result.append({
                 "batch_id": batch_id,
@@ -114,6 +116,7 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
                 "cr": total_cr,
                 "total_eggs": total_eggs,
                 "hd": round(avg_hd, 4),
+                "standard_hen_day_percentage": round(avg_standard_hd, 4),
                 "date_range": f"{first_batch.batch_date.strftime('%d-%m-%Y')} to {latest_batch.batch_date.strftime('%d-%m-%Y')}",
                 "days_count": len(batches)
             })
