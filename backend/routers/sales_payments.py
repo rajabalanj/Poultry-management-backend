@@ -5,6 +5,7 @@ import logging
 from decimal import Decimal
 import os
 import uuid
+from utils.auth_utils import get_current_user
 
 try:
     from utils.s3_upload import upload_receipt_to_s3
@@ -23,7 +24,7 @@ logger = logging.getLogger("sales_payments")
 def create_sales_payment(
     payment: SalesPaymentCreate,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-ID")
+    user: dict = Depends(get_current_user),
 ):
     """Record a new payment for a sales order."""
     db_so = db.query(SalesOrderModel).filter(SalesOrderModel.id == payment.sales_order_id).first()
@@ -58,7 +59,7 @@ def create_sales_payment(
     db.commit()
     db.refresh(db_payment)
 
-    logger.info(f"Payment of {payment.amount_paid} recorded for Sales Order ID {payment.sales_order_id} by {x_user_id}")
+    logger.info(f"Payment of {payment.amount_paid} recorded for Sales Order ID {payment.sales_order_id} by user {user.get('sub')}")
     return db_payment
 
 @router.get("/by-so/{so_id}", response_model=List[SalesPayment])
@@ -84,7 +85,7 @@ def update_sales_payment(
     payment_id: int,
     payment_update: SalesPaymentUpdate,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-ID")
+    user: dict = Depends(get_current_user),
 ):
     """Update an existing sales payment."""
     db_payment = db.query(SalesPaymentModel).filter(SalesPaymentModel.id == payment_id).first()
@@ -116,14 +117,14 @@ def update_sales_payment(
         db.commit()
         db.refresh(db_so)
 
-    logger.info(f"Sales Payment ID {payment_id} updated for Sales Order ID {db_payment.sales_order_id} by {x_user_id}")
+    logger.info(f"Sales Payment ID {payment_id} updated for Sales Order ID {db_payment.sales_order_id} by user {user.get('sub')}")
     return db_payment
 
 @router.delete("/{payment_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_sales_payment(
     payment_id: int,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-ID")
+    user: dict = Depends(get_current_user),
 ):
     """Delete a sales payment."""
     db_payment = db.query(SalesPaymentModel).filter(SalesPaymentModel.id == payment_id).first()
@@ -148,7 +149,7 @@ def delete_sales_payment(
 
         db.commit()
 
-    logger.info(f"Sales Payment ID {payment_id} deleted for Sales Order ID {db_payment.sales_order_id} by {x_user_id}")
+    logger.info(f"Sales Payment ID {payment_id} deleted for Sales Order ID {db_payment.sales_order_id}  by user {user.get('sub')}")
     return {"message": "Sales Payment deleted successfully"}
 
 @router.post("/{payment_id}/receipt")

@@ -7,7 +7,7 @@ from decimal import Decimal
 from database import get_db
 from models.inventory_items import InventoryItem as InventoryItemModel
 from schemas.inventory_items import InventoryItem, InventoryItemCreate, InventoryItemUpdate
-
+from utils.auth_utils import get_current_user
 router = APIRouter(prefix="/inventory-items", tags=["Inventory Items"])
 logger = logging.getLogger("inventory_items")
 
@@ -15,7 +15,7 @@ logger = logging.getLogger("inventory_items")
 def create_inventory_item(
     item: InventoryItemCreate,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-ID")
+    user: dict = Depends(get_current_user)
 ):
     """Create a new inventory item."""
     db_item = db.query(InventoryItemModel).filter(InventoryItemModel.name == item.name).first()
@@ -26,7 +26,7 @@ def create_inventory_item(
     db.add(db_item)
     db.commit()
     db.refresh(db_item)
-    logger.info(f"Inventory item '{db_item.name}' created by {x_user_id}")
+    logger.info(f"Inventory item '{db_item.name}' created by user {user.get('sub')}")
     return db_item
 
 @router.get("/", response_model=List[InventoryItem])
@@ -56,7 +56,7 @@ def update_inventory_item(
     item_id: int,
     item: InventoryItemUpdate,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-ID")
+    user: dict = Depends(get_current_user)
 ):
     """Update an existing inventory item."""
     db_item = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_id).first()
@@ -75,14 +75,14 @@ def update_inventory_item(
     
     db.commit()
     db.refresh(db_item)
-    logger.info(f"Inventory item '{db_item.name}' (ID: {item_id}) updated by {x_user_id}")
+    logger.info(f"Inventory item '{db_item.name}' (ID: {item_id}) updated by user {user.get('sub')}")
     return db_item
 
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_inventory_item(
     item_id: int,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-ID")
+    user: dict = Depends(get_current_user)
 ):
     """Delete an inventory item. Items with associated purchase order items cannot be deleted."""
     db_item = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_id).first()
@@ -101,5 +101,5 @@ def delete_inventory_item(
     
     db.delete(db_item)
     db.commit()
-    logger.info(f"Inventory item '{db_item.name}' (ID: {item_id}) deleted by {x_user_id}")
+    logger.info(f"Inventory item '{db_item.name}' (ID: {item_id}) deleted by user {user.get('sub')}")
     return {"message": "Inventory item deleted successfully"}

@@ -8,6 +8,7 @@ from typing import List, Optional
 from models.feed import Feed as FeedModel # Assuming FeedModel exists
 from schemas.feed import Feed as FeedSchema # Assuming FeedSchema exists
 from models.feed_audit import FeedAudit as FeedAuditModel # Assuming FeedAuditModel exists
+from utils.auth_utils import get_current_user
 
 # Assuming these imports exist and are correct for the feed module
 # router = APIRouter(prefix="/feed", tags=["feed"])
@@ -36,17 +37,17 @@ def get_all_feeds(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
 def create_feed(
     feed: FeedSchema, 
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None)
+    user: dict = Depends(get_current_user)
 ):
     """Create a new feed."""
-    return crud_feed.create_feed(db=db, feed=feed, changed_by=x_user_id)
+    return crud_feed.create_feed(db=db, feed=feed, changed_by=user.get('sub'))
 
 @router.patch("/{feed_id}")
 def update_feed(
     feed_id: int, 
     feed_data: dict, 
     db: Session = Depends(get_db),
-    changed_by: str = None
+    user: dict = Depends(get_current_user)
 ):
     """Update an existing feed."""
     db_feed = db.query(FeedModel).filter(FeedModel.id == feed_id).first() # Use FeedModel
@@ -92,7 +93,7 @@ def update_feed(
             change_amount=change_amount_kg, # Store in kg
             old_weight=old_quantity_kg,     # Store in kg
             new_weight=new_quantity_decimal,   # Store in kg
-            changed_by=changed_by,
+            changed_by=user.get('sub'),
             note=audit_note, # Simple note
         )
         db.add(audit)
@@ -104,10 +105,10 @@ def update_feed(
 def delete_feed(
     feed_id: int, 
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None)
+    user: dict = Depends(get_current_user)
 ):
     """Delete a specific feed."""
-    success = crud_feed.delete_feed(db, feed_id=feed_id, changed_by=x_user_id)
+    success = crud_feed.delete_feed(db, feed_id=feed_id, changed_by=user.get('sub'))
     if not success:
         raise HTTPException(status_code=404, detail="Feed not found")
     return {"message": "Feed deleted successfully"}

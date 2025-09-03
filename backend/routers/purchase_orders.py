@@ -8,6 +8,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 import os
 import uuid
+from utils.auth_utils import get_current_user
 
 try:
     from utils.s3_upload import upload_receipt_to_s3
@@ -62,7 +63,7 @@ def get_purchase_order(
 def create_purchase_order(
     po: PurchaseOrderCreate,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-ID")
+    user: dict = Depends(get_current_user),
 ):
     """Create a new purchase order with associated items."""
     # 1. Validate Business Partner (Vendor)
@@ -105,7 +106,7 @@ def create_purchase_order(
         status=po.status,
         notes=po.notes,
         total_amount=total_amount,
-        created_by=x_user_id
+        created_by=user.get('sub'),
     )
     db.add(db_po)
     db.flush() # Flush to get db_po.id before adding items
@@ -130,7 +131,7 @@ def create_purchase_order(
         selectinload(PurchaseOrderModel.payments)
     ).filter(PurchaseOrderModel.id == db_po.id).first()
 
-    logger.info(f"Purchase Order (ID: {db_po.id}) created for Vendor ID {db_po.vendor_id} by {x_user_id}")
+    logger.info(f"Purchase Order (ID: {db_po.id}) created for Vendor ID {db_po.vendor_id} by user {user.get('sub')}")
     return db_po
 
 @router.get("/", response_model=List[PurchaseOrderSchema])
@@ -179,7 +180,7 @@ def update_purchase_order(
     po_id: int,
     po_update: PurchaseOrderUpdate,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-ID")
+    user: dict = Depends(get_current_user),
 ):
     """Update an existing purchase order (partial update).
     Note: Item additions/removals are handled via separate endpoints."""
@@ -224,14 +225,14 @@ def update_purchase_order(
         selectinload(PurchaseOrderModel.payments)
     ).filter(PurchaseOrderModel.id == po_id).first()
     
-    logger.info(f"Purchase Order (ID: {po_id}) updated by {x_user_id}")
+    logger.info(f"Purchase Order (ID: {po_id}) updated by user {user.get('sub')}")
     return db_po
 
 @router.delete("/{po_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_purchase_order(
     po_id: int,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-ID")
+    user: dict = Depends(get_current_user),
 ):
     """Delete a purchase order. Only DRAFT or CANCELLED POs can be fully deleted.
     Others should be cancelled (status change)."""
@@ -262,7 +263,7 @@ def delete_purchase_order(
 
     db.delete(db_po)
     db.commit()
-    logger.info(f"Purchase Order (ID: {po_id}) hard deleted by {x_user_id}")
+    logger.info(f"Purchase Order (ID: {po_id}) hard deleted by user {user.get('sub')}")
     return {"message": "Purchase Order deleted successfully"}
 
 # --- Purchase Order Item Endpoints (Nested for managing items within a PO) ---
@@ -272,7 +273,7 @@ def add_item_to_purchase_order(
     po_id: int,
     item_request: PurchaseOrderItemCreateRequest,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-ID")
+    user: dict = Depends(get_current_user),
 ):
     """Add a new item to an existing purchase order."""
     db_po = db.query(PurchaseOrderModel).filter(PurchaseOrderModel.id == po_id).first()
@@ -323,7 +324,7 @@ def add_item_to_purchase_order(
         selectinload(PurchaseOrderModel.payments)
     ).filter(PurchaseOrderModel.id == po_id).first()
 
-    logger.info(f"Item added to Purchase Order (ID: {po_id}) by {x_user_id}")
+    logger.info(f"Item added to Purchase Order (ID: {po_id}) by user {user.get('sub')}")
     return db_po
 
 @router.patch("/{po_id}/items/{item_id}", response_model=PurchaseOrderSchema)
@@ -332,7 +333,7 @@ def update_item_in_purchase_order(
     item_id: int,
     item_update: PurchaseOrderItemUpdate,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-ID")
+    user: dict = Depends(get_current_user),
 ):
     """Update an item's quantity or price in a purchase order."""
     db_po = db.query(PurchaseOrderModel).filter(PurchaseOrderModel.id == po_id).first()
@@ -377,7 +378,7 @@ def update_item_in_purchase_order(
         selectinload(PurchaseOrderModel.payments)
     ).filter(PurchaseOrderModel.id == po_id).first()
 
-    logger.info(f"Item ID {item_id} in Purchase Order (ID: {po_id}) updated by {x_user_id}")
+    logger.info(f"Item ID {item_id} in Purchase Order (ID: {po_id}) updated by user {user.get('sub')}")
     return db_po
 
 @router.delete("/{po_id}/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -385,7 +386,7 @@ def remove_item_from_purchase_order(
     po_id: int,
     item_id: int,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-ID")
+    user: dict = Depends(get_current_user),
 ):
     """Remove an item from a purchase order."""
     db_po = db.query(PurchaseOrderModel).filter(PurchaseOrderModel.id == po_id).first()
@@ -413,14 +414,15 @@ def remove_item_from_purchase_order(
     db.commit()
     db.refresh(db_po) # Refresh the PO to reflect updated total
 
-    logger.info(f"Item ID {item_id} removed from Purchase Order (ID: {po_id}) by {x_user_id}")
+    logger.info(f"Item ID {item_id} removed from Purchase Order (ID: {po_id}) by user {user.get('sub')}")
     return {"message": "Item removed successfully"}
 
 @router.post("/{po_id}/receipt")
 def upload_payment_receipt(
     po_id: int,
     file: UploadFile = File(...),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
 ):
     """Upload payment receipt for a purchase order."""
     db_po = db.query(PurchaseOrderModel).filter(PurchaseOrderModel.id == po_id).first()

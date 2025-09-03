@@ -1,5 +1,6 @@
 from models.daily_batch import DailyBatch as DailyBatchModel
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
+from utils.auth_utils import get_current_user
 from sqlalchemy.orm import Session
 from models.batch import Batch as BatchModel
 from schemas.batch import BatchCreate, Batch as BatchSchema
@@ -23,7 +24,7 @@ router = APIRouter(
 def create_batch(
     batch: BatchCreate, 
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None)
+    user: dict = Depends(get_current_user)
 ):
     # Application-level uniqueness check for active batches
     existing = db.query(BatchModel).filter(
@@ -31,7 +32,7 @@ def create_batch(
     ).first()
     if existing:
         raise HTTPException(status_code=400, detail="An active batch with the same shed_no or batch_no already exists.")
-    return crud_batch.create_batch(db=db, batch=batch, changed_by=x_user_id)
+    return crud_batch.create_batch(db=db, batch=batch, changed_by=user.get('sub'))
 
 @router.get("/all/", response_model=List[BatchSchema])
 def get_all_batches(
@@ -99,7 +100,7 @@ def update_batch(
     batch_id: int,
     batch_data: dict,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None)
+    user: dict = Depends(get_current_user)
 ):
     from utils import calculate_age_progression
     db_batch = db.query(BatchModel).filter(BatchModel.id == batch_id).first()
@@ -206,7 +207,7 @@ def update_batch(
                         next_row.opening_count = prev_row.closing_count  # closing_count is a hybrid property
                         prev_row = next_row
         # Optional: insert change logs into audit table here
-        # insert_audit_logs(batch_id, changes, x_user_id)
+        # insert_audit_logs(batch_id, changes, user.get('sub'))
         db.commit()
         db.refresh(db_batch)
 
@@ -218,9 +219,9 @@ def update_batch(
 def delete_batch(
     batch_id: int, 
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None)
+    user: dict = Depends(get_current_user)
 ):
-    success = crud_batch.delete_batch(db, batch_id=batch_id, changed_by=x_user_id)
+    success = crud_batch.delete_batch(db, batch_id=batch_id, changed_by=user.get('sub'))
     if not success:
         raise HTTPException(status_code=404, detail="Batch not found")
     return {"message": "Batch deleted successfully"}

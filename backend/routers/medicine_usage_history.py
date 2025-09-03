@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime
 import logging
+from utils.auth_utils import get_current_user
 
 from database import get_db
 from models.batch import Batch as BatchModel
@@ -16,7 +17,7 @@ logger = logging.getLogger(__name__)
 def use_medicine_endpoint(
     usage_data: MedicineUsageHistoryCreate,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None)
+    user: dict = Depends(get_current_user),
 ):
     """
     Records usage of a specific medicine quantity for a given batch/shed.
@@ -35,7 +36,7 @@ def use_medicine_endpoint(
             batch_id=batch_id,
             used_quantity_grams=usage_data.used_quantity_grams,
             used_at=used_at_dt,
-            changed_by=x_user_id
+            changed_by=user.get('sub')
         )
         return usage
     except ValueError as e:
@@ -67,12 +68,12 @@ def get_single_medicine_usage_history_endpoint(
 def revert_medicine_usage_endpoint(
     usage_id: int,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None)
+    user: dict = Depends(get_current_user),
 ):
     """
     Reverts a specific medicine usage by ID, adding back quantities and auditing.
     """
-    success, message = revert_medicine_usage(db, usage_id, changed_by=x_user_id)
+    success, message = revert_medicine_usage(db, usage_id, changed_by=user.get('sub'))
     if not success:
         raise HTTPException(status_code=404, detail=message)
     return {"message": message}

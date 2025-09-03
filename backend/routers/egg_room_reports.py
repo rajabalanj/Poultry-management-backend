@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from models.egg_room_reports import EggRoomReport
 from models.app_config import AppConfig # Import AppConfig
 from datetime import datetime, date, timedelta # Import date for comparison
+from utils.auth_utils import get_current_user
 
 router = APIRouter(prefix="/egg-room-report", tags=["egg_room_reports"])
 logger = logging.getLogger("egg_room_reports")
@@ -111,7 +112,7 @@ def get_report(report_date: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
 @router.post("/", response_model=EggRoomReportResponse)
-def create_report(report: EggRoomReportCreate, db: Session = Depends(get_db)):
+def create_report(report: EggRoomReportCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     try:
         requested_date = report.report_date # Already a date object from Pydantic
         system_start_date = get_system_start_date(db)
@@ -175,7 +176,7 @@ def create_report(report: EggRoomReportCreate, db: Session = Depends(get_db)):
 
 
 @router.put("/{report_date}")
-def update_report(report_date: str, report: EggRoomReportUpdate, db: Session = Depends(get_db)):
+def update_report(report_date: str, report: EggRoomReportUpdate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     try:
         requested_date = datetime.strptime(report_date, "%Y-%m-%d").date()
         system_start_date = get_system_start_date(db)
@@ -230,7 +231,7 @@ def update_report(report_date: str, report: EggRoomReportUpdate, db: Session = D
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
 @router.delete("/{report_date}")
-def delete_report(report_date: str, db: Session = Depends(get_db)):
+def delete_report(report_date: str, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     try:
         requested_date = datetime.strptime(report_date, "%Y-%m-%d").date()
         system_start_date = get_system_start_date(db)

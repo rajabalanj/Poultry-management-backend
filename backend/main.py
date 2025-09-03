@@ -1,9 +1,11 @@
 from fastapi import FastAPI, HTTPException, Depends, Header, UploadFile, File
+from dotenv import load_dotenv
+
+load_dotenv()
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
-import routers.auth as auth
 import io
 from database import Base, engine
 from datetime import datetime
@@ -41,6 +43,7 @@ import routers.payments as payments
 import routers.inventory_items as inventory_items
 import routers.sales_orders as sales_orders
 import routers.sales_payments as sales_payments
+from utils.auth_utils import get_current_user
 
 
 from fastapi.staticfiles import StaticFiles
@@ -105,7 +108,6 @@ app.add_middleware(
 
 #app.mount("/", StaticFiles(directory="dist", html=True), name="static")
 app.include_router(reports.router)
-app.include_router(auth.router)
 app.include_router(egg_room_reports.router)
 app.include_router(bovanswhitelayerperformance.router)
 app.include_router(medicine.router)
@@ -128,7 +130,7 @@ async def test_route():
     return {"message": "Welcome to the FastAPI application!"}
 
 @app.post("/compositions/", response_model=Composition)
-def create_composition(composition: CompositionCreate, db: Session = Depends(get_db)):
+def create_composition(composition: CompositionCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     return crud_composition.create_composition(db, composition)
 
 @app.get("/compositions/{composition_id}", response_model=Composition)
@@ -143,14 +145,14 @@ def read_compositions(skip: int = 0, limit: int = 100, db: Session = Depends(get
     return crud_composition.get_compositions(db, skip=skip, limit=limit)
 
 @app.put("/compositions/{composition_id}", response_model=Composition)
-def update_composition(composition_id: int, composition: CompositionCreate, db: Session = Depends(get_db)):
+def update_composition(composition_id: int, composition: CompositionCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     db_composition = crud_composition.update_composition(db, composition_id, composition)
     if db_composition is None:
         raise HTTPException(status_code=404, detail="Composition not found")
     return db_composition
 
 @app.delete("/compositions/{composition_id}")
-def delete_composition(composition_id: int, db: Session = Depends(get_db)):
+def delete_composition(composition_id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     success = crud_composition.delete_composition(db, composition_id)
     if not success:
         raise HTTPException(status_code=404, detail="Composition not found")
@@ -160,7 +162,7 @@ def delete_composition(composition_id: int, db: Session = Depends(get_db)):
 def use_composition_endpoint(
     data: dict,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None) # Get user ID from header
+    user: dict = Depends(get_current_user)
 ):
     composition_id = data["compositionId"]
     shed_no = data["shed_no"]
@@ -181,8 +183,8 @@ def use_composition_endpoint(
         raise HTTPException(status_code=404, detail=f"Active batch with shed_no '{shed_no}' not found.")
     batch_id = batch.id
 
-    # Call use_composition and pass changed_by (x_user_id)
-    usage = use_composition(db, composition_id, batch_id, times, used_at_dt, changed_by=x_user_id)
+    # Call use_composition and pass changed_by (user from token)
+    usage = use_composition(db, composition_id, batch_id, times, used_at_dt, changed_by=user.get('sub'))
     
     # Now, 'usage' object should have its ID populated
     if usage and hasattr(usage, 'id'):
@@ -208,26 +210,26 @@ def get_composition_usage_history_endpoint(
 def revert_composition_usage_endpoint(
     usage_id: int,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None) # User performing the revert
+    user: dict = Depends(get_current_user)
 ):
     """
     Reverts a specific composition usage by ID.
     Adds back the quantities to feeds and deletes the usage history record.
     """
-    success, message = revert_composition_usage(db, usage_id, changed_by=x_user_id)
+    success, message = revert_composition_usage(db, usage_id, changed_by=user.get('sub'))
     if not success:
         raise HTTPException(status_code=404, detail=message)
     return {"message": message}
 
 @app.patch("/compositions/{composition_id}", response_model=Composition)
-def patch_composition(composition_id: int, composition: CompositionCreate, db: Session = Depends(get_db)):
+def patch_composition(composition_id: int, composition: CompositionCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     db_composition = crud_composition.update_composition(db, composition_id, composition)
     if db_composition is None:
         raise HTTPException(status_code=404, detail="Composition not found")
     return db_composition
 
 @app.post("/daily-batch/upload-excel/")
-def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends(get_db)):
+def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     """
     Upload and process an Excel file for daily batch data.
     This function processes multiple daily reports within a single Excel file.
@@ -362,7 +364,7 @@ def update_daily_batch(
     batch_date: str,
     payload: dict,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None)
+    user: dict = Depends(get_current_user)
 ):
     """Update a daily batch row by batch_id and batch_date. Applies propagation logic for age, counts."""
     from models.daily_batch import DailyBatch as DailyBatchModel
@@ -473,7 +475,7 @@ def update_daily_batch(
     return daily_batch
 
 @app.post("/configurations/", response_model=AppConfigOut)
-def create_config(config: AppConfigCreate, db: Session = Depends(get_db)):
+def create_config(config: AppConfigCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     return crud_app_config.create_config(db, config)
 
 
@@ -484,7 +486,7 @@ def get_configs(name: Optional[str] = None, db: Session = Depends(get_db)):
     return [configs] if name and configs else configs or []
 
 @app.patch("/configurations/{name}/", response_model=AppConfigOut)
-def update_config(name: str, config: AppConfigUpdate, db: Session = Depends(get_db)):
+def update_config(name: str, config: AppConfigUpdate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     updated = crud_app_config.update_config_by_name(db, name, config)
     if not updated:
         raise HTTPException(status_code=404, detail="Configuration not found")

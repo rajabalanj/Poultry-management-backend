@@ -8,6 +8,7 @@ from models.business_partners import BusinessPartner as BusinessPartnerModel
 from models.purchase_orders import PurchaseOrder as PurchaseOrderModel
 from models.sales_orders import SalesOrder as SalesOrderModel
 from schemas.business_partners import BusinessPartner, BusinessPartnerCreate, BusinessPartnerUpdate, PartnerStatus
+from utils.auth_utils import get_current_user
 
 router = APIRouter(prefix="/business-partners", tags=["Business Partners"])
 logger = logging.getLogger("business_partners")
@@ -16,7 +17,7 @@ logger = logging.getLogger("business_partners")
 def create_business_partner(
     partner: BusinessPartnerCreate,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-ID")
+    user: dict = Depends(get_current_user)
 ):
     db_partner = db.query(BusinessPartnerModel).filter(BusinessPartnerModel.name == partner.name).first()
     if db_partner:
@@ -26,7 +27,7 @@ def create_business_partner(
     db.add(db_partner)
     db.commit()
     db.refresh(db_partner)
-    logger.info(f"Business partner '{db_partner.name}' created by {x_user_id}")
+    logger.info(f"Business partner '{db_partner.name}' created by user {user.get('sub')}")
     return db_partner
 
 @router.get("/", response_model=List[BusinessPartner])
@@ -59,7 +60,7 @@ def update_business_partner(
     partner_id: int,
     partner: BusinessPartnerUpdate,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-ID")
+    user: dict = Depends(get_current_user)
 ):
     db_partner = db.query(BusinessPartnerModel).filter(BusinessPartnerModel.id == partner_id).first()
     if db_partner is None:
@@ -76,14 +77,14 @@ def update_business_partner(
     
     db.commit()
     db.refresh(db_partner)
-    logger.info(f"Business partner '{db_partner.name}' (ID: {partner_id}) updated by {x_user_id}")
+    logger.info(f"Business partner '{db_partner.name}' (ID: {partner_id}) updated by user {user.get('sub')}")
     return db_partner
 
 @router.delete("/{partner_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_business_partner(
     partner_id: int,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-ID")
+    user: dict = Depends(get_current_user)
 ):
     db_partner = db.query(BusinessPartnerModel).filter(BusinessPartnerModel.id == partner_id).first()
     if db_partner is None:
@@ -96,7 +97,7 @@ def delete_business_partner(
     if has_purchases or has_sales:
         db_partner.status = PartnerStatus.INACTIVE
         db.commit()
-        logger.warning(f"Business partner '{db_partner.name}' (ID: {partner_id}) set to INACTIVE due to associated orders by {x_user_id}")
+        logger.warning(f"Business partner '{db_partner.name}' (ID: {partner_id}) set to INACTIVE due to associated orders by user {user.get('sub')}")
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Business partner '{db_partner.name}' has associated orders. Status changed to Inactive."
@@ -104,4 +105,4 @@ def delete_business_partner(
     
     db.delete(db_partner)
     db.commit()
-    logger.info(f"Business partner '{db_partner.name}' (ID: {partner_id}) deleted by {x_user_id}")
+    logger.info(f"Business partner '{db_partner.name}' (ID: {partner_id}) deleted by user {user.get('sub')}")

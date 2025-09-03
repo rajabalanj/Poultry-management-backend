@@ -8,6 +8,7 @@ from typing import List, Optional
 from models.medicine import Medicine as MedicineModel
 from schemas.medicine import Medicine as MedicineSchema
 from models.medicine_audit import MedicineAudit as MedicineAuditModel
+from utils.auth_utils import get_current_user
 
 router = APIRouter(prefix="/medicine", tags=["medicine"])
 logger = logging.getLogger("medicine")
@@ -30,17 +31,17 @@ def get_all_medicines(skip: int = 0, limit: int = 100, db: Session = Depends(get
 def create_medicine(
     medicine: MedicineSchema,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None)
+    user: dict = Depends(get_current_user), 
 ):
     """Create a new medicine."""
-    return crud_medicine.create_medicine(db=db, medicine=medicine, changed_by=x_user_id)
+    return crud_medicine.create_medicine(db=db, medicine=medicine, changed_by=user.get('sub'))
 
 @router.patch("/{medicine_id}")
 def update_medicine(
     medicine_id: int,
     medicine_data: dict,
     db: Session = Depends(get_db),
-    changed_by: str = None
+    user: dict = Depends(get_current_user)
 ):
     """Update an existing medicine."""
     db_medicine = db.query(MedicineModel).filter(MedicineModel.id == medicine_id).first()
@@ -92,7 +93,7 @@ def update_medicine(
             change_amount=change_amount_grams, # Store in grams
             old_weight=old_quantity_grams,     # Store in grams
             new_weight=new_quantity_decimal,   # Store in grams
-            changed_by=changed_by,
+            changed_by=user.get('sub'),
             note=audit_note, # Simple note
         )
         db.add(audit)
@@ -119,7 +120,7 @@ def get_medicine_audit(medicine_id: int, db: Session = Depends(get_db)):
 def delete_medicine(
     medicine_id: int,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None)
+    user: dict = Depends(get_current_user)
 ):
     """Delete a medicine by ID."""
     db_medicine = crud_medicine.get_medicine(db, medicine_id=medicine_id)

@@ -5,6 +5,7 @@ import logging
 from decimal import Decimal
 import os
 import uuid
+from utils.auth_utils import get_current_user
 
 try:
     from utils.s3_upload import upload_receipt_to_s3
@@ -23,7 +24,7 @@ logger = logging.getLogger("payments")
 def create_payment(
     payment: PaymentCreate,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-ID")
+    user: dict = Depends(get_current_user),
 ):
     """Record a new payment for a purchase order."""
     db_po = db.query(PurchaseOrderModel).filter(PurchaseOrderModel.id == payment.purchase_order_id).first()
@@ -59,7 +60,7 @@ def create_payment(
     db.commit() # Commit PO status update
     db.refresh(db_payment) # Re-refresh payment to ensure everything is in sync for response
 
-    logger.info(f"Payment of {payment.amount_paid} recorded for Purchase Order ID {payment.purchase_order_id} by {x_user_id}")
+    logger.info(f"Payment of {payment.amount_paid} recorded for Purchase Order ID {payment.purchase_order_id} by user {user.get('sub')}")
     return db_payment
 
 @router.get("/by-po/{po_id}", response_model=List[Payment])
@@ -85,7 +86,7 @@ def update_payment(
     payment_id: int,
     payment_update: PaymentUpdate,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-ID")
+    user: dict = Depends(get_current_user),
 ):
     """Update an existing payment."""
     db_payment = db.query(PaymentModel).filter(PaymentModel.id == payment_id).first()
@@ -117,14 +118,14 @@ def update_payment(
         db.commit()
         db.refresh(db_po)
 
-    logger.info(f"Payment ID {payment_id} updated for Purchase Order ID {db_payment.purchase_order_id} by {x_user_id}")
+    logger.info(f"Payment ID {payment_id} updated for Purchase Order ID {db_payment.purchase_order_id} by user {user.get('sub')}")
     return db_payment
 
 @router.delete("/{payment_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_payment(
     payment_id: int,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-ID")
+    user: dict = Depends(get_current_user),
 ):
     """Delete a payment."""
     db_payment = db.query(PaymentModel).filter(PaymentModel.id == payment_id).first()
@@ -149,14 +150,15 @@ def delete_payment(
 
         db.commit()
 
-    logger.info(f"Payment ID {payment_id} deleted for Purchase Order ID {db_payment.purchase_order_id} by {x_user_id}")
+    logger.info(f"Payment ID {payment_id} deleted for Purchase Order ID {db_payment.purchase_order_id} by user {user.get('sub')}")
     return {"message": "Payment deleted successfully"}
 
 @router.post("/{payment_id}/receipt")
 def upload_payment_receipt(
     payment_id: int,
     file: UploadFile = File(...),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
 ):
     """Upload payment receipt for a payment."""
     db_payment = db.query(PaymentModel).filter(PaymentModel.id == payment_id).first()

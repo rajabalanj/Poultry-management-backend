@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 import os
 import uuid
+from utils.auth_utils import get_current_user
 
 try:
     from utils.s3_upload import upload_receipt_to_s3
@@ -33,7 +34,7 @@ logger = logging.getLogger("sales_orders")
 def create_sales_order(
     so: SalesOrderCreate,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-ID")
+    user: dict = Depends(get_current_user),
 ):
     """Create a new sales order with associated items."""
     db_customer = db.query(BusinessPartnerModel).filter(
@@ -76,7 +77,7 @@ def create_sales_order(
         status=so.status,
         notes=so.notes,
         total_amount=total_amount,
-        created_by=x_user_id
+        created_by=user.get('sub')
     )
     db.add(db_so)
     db.flush()
@@ -102,7 +103,7 @@ def create_sales_order(
         selectinload(SalesOrderModel.payments)
     ).filter(SalesOrderModel.id == db_so.id).first()
 
-    logger.info(f"Sales Order (ID: {db_so.id}) created for Customer ID {db_so.customer_id} by {x_user_id}")
+    logger.info(f"Sales Order (ID: {db_so.id}) created for Customer ID {db_so.customer_id} by User {user.get('sub')}")
     return db_so
 
 @router.get("/", response_model=List[SalesOrderSchema])
@@ -150,7 +151,7 @@ def update_sales_order(
     so_id: int,
     so_update: SalesOrderUpdate,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-ID")
+    user: dict = Depends(get_current_user),
 ):
     """Update an existing sales order."""
     db_so = db.query(SalesOrderModel).filter(SalesOrderModel.id == so_id).first()
@@ -175,7 +176,7 @@ def update_sales_order(
         selectinload(SalesOrderModel.payments)
     ).filter(SalesOrderModel.id == so_id).first()
     
-    logger.info(f"Sales Order (ID: {so_id}) updated by {x_user_id}")
+    logger.info(f"Sales Order (ID: {so_id}) updated by user {user.get('sub')}")
     return db_so
 
 
@@ -184,7 +185,7 @@ def add_item_to_sales_order(
     so_id: int,
     item_request: SalesOrderItemCreateRequest,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-ID")
+    user: dict = Depends(get_current_user),
 ):
     """Add a new item to an existing sales order."""
     db_so = db.query(SalesOrderModel).filter(SalesOrderModel.id == so_id).first()
@@ -243,7 +244,7 @@ def add_item_to_sales_order(
         selectinload(SalesOrderModel.customer)
     ).filter(SalesOrderModel.id == so_id).first()
 
-    logger.info(f"Item {db_inventory_item.name} added to Sales Order (ID: {so_id}) by {x_user_id}")
+    logger.info(f"Item {db_inventory_item.name} added to Sales Order (ID: {so_id}) by user {user.get('sub')}")
     return db_so
 
 
@@ -253,7 +254,7 @@ def update_sales_order_item(
     item_id: int,
     item_update: SalesOrderItemUpdate,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-ID"),
+    user: dict = Depends(get_current_user),
 ):
     """Update a specific item in a sales order."""
     db_so = (
@@ -310,7 +311,7 @@ def update_sales_order_item(
     db.refresh(db_so)
 
     logger.info(
-        f"Sales Order Item (ID: {item_id}) of Sales Order (ID: {so_id}) updated by {x_user_id}"
+        f"Sales Order Item (ID: {item_id}) of Sales Order (ID: {so_id}) updated by user {user.get('sub')}"
     )
     return db_so
 
@@ -319,7 +320,7 @@ def update_sales_order_item(
 def delete_sales_order(
     so_id: int,
     db: Session = Depends(get_db),
-    x_user_id: Optional[str] = Header(None, alias="X-User-ID")
+    user: dict = Depends(get_current_user),
 ):
     """Delete a sales order."""
     db_so = db.query(SalesOrderModel).filter(SalesOrderModel.id == so_id).first()
@@ -340,14 +341,15 @@ def delete_sales_order(
             db.add(inv)
     db.delete(db_so)
     db.commit()
-    logger.info(f"Sales Order (ID: {so_id}) deleted by {x_user_id}")
+    logger.info(f"Sales Order (ID: {so_id}) deleted by user {user.get('sub')}")
     return {"message": "Sales Order deleted successfully"}
 
 @router.post("/{so_id}/receipt")
 def upload_payment_receipt(
     so_id: int,
     file: UploadFile = File(...),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
 ):
     """Upload payment receipt for a sales order."""
     db_so = db.query(SalesOrderModel).filter(SalesOrderModel.id == so_id).first()
