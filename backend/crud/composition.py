@@ -1,19 +1,19 @@
 from sqlalchemy.orm import Session
 from models.composition import Composition
-from models.feed_in_composition import FeedInComposition
-from schemas.compositon import CompositionCreate
+from models.inventory_item_in_composition import InventoryItemInComposition
+from schemas.composition import CompositionCreate
 
 def create_composition(db: Session, composition: CompositionCreate):
     db_composition = Composition(name=composition.name)
     db.add(db_composition)
     db.flush()
-    for feed in composition.feeds:
-        db_feed = FeedInComposition(
+    for item in composition.inventory_items:
+        db_item = InventoryItemInComposition(
             composition_id=db_composition.id,
-            feed_id=feed.feed_id,
-            weight=feed.weight
+            inventory_item_id=item.inventory_item_id,
+            weight=item.weight
         )
-        db.add(db_feed)
+        db.add(db_item)
     db.commit()
     db.refresh(db_composition)
     return db_composition
@@ -29,14 +29,14 @@ def update_composition(db: Session, composition_id: int, composition: Compositio
     if not db_composition:
         return None
     db_composition.name = composition.name
-    db.query(FeedInComposition).filter(FeedInComposition.composition_id == composition_id).delete()
-    for feed in composition.feeds:
-        db_feed = FeedInComposition(
+    db.query(InventoryItemInComposition).filter(InventoryItemInComposition.composition_id == composition_id).delete()
+    for item in composition.inventory_items:
+        db_item = InventoryItemInComposition(
             composition_id=composition_id,
-            feed_id=feed.feed_id,
-            weight=feed.weight
+            inventory_item_id=item.inventory_item_id,
+            weight=item.weight
         )
-        db.add(db_feed)
+        db.add(db_item)
     db.commit()
     db.refresh(db_composition)
     return db_composition

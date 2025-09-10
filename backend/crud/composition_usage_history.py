@@ -1,12 +1,12 @@
 from sqlalchemy.orm import Session
 from models.composition_usage_history import CompositionUsageHistory
 from models.composition import Composition
-from models.feed_in_composition import FeedInComposition
-from models.feed import Feed
+from models.inventory_item_in_composition import InventoryItemInComposition
+from models.inventory_items import InventoryItem
 from schemas.composition_usage_history import CompositionUsageHistoryCreate
 from datetime import date, datetime
 from decimal import Decimal
-from models.feed_audit import FeedAudit
+from models.inventory_item_audit import InventoryItemAudit
 from models.batch import Batch
 import logging
 
@@ -50,70 +50,60 @@ def use_composition(db: Session, composition_id: int, batch_id: int, times: int,
         times=times,
         used_at=used_at
     )
-    db.add(usage) # Add the usage object to the session here
+    db.add(usage)
 
-    # Get the shed_no from the Batch model for the note
     batch_obj = db.query(Batch).filter(Batch.id == batch_id).first()
     shed_no = batch_obj.shed_no if batch_obj else "N/A"
 
-    # Get composition name for the note
     composition_obj = db.query(Composition).filter(Composition.id == composition_id).first()
     composition_name = composition_obj.name if composition_obj else "N/A"
 
-    # Get all feeds in the composition
-    feeds_in_comp = db.query(FeedInComposition).filter(FeedInComposition.composition_id == composition_id).all()
+    items_in_comp = db.query(InventoryItemInComposition).filter(InventoryItemInComposition.composition_id == composition_id).all()
 
-    for fic in feeds_in_comp:
-        feed = db.query(Feed).filter(Feed.id == fic.feed_id).first()
-        if feed:
-            old_feed_quantity = feed.quantity  # Quantity in its current unit (kg/ton/gram)
-            old_feed_unit = feed.unit
+    for iic in items_in_comp:
+        item = db.query(InventoryItem).filter(InventoryItem.id == iic.inventory_item_id).first()
+        if item:
+            old_item_quantity = item.current_stock
+            old_item_unit = item.unit
 
-            # Convert old quantity to KILOGRAMS for auditing
-            old_quantity_for_audit_kg = _convert_quantity(old_feed_quantity, old_feed_unit, 'kg')
+            old_quantity_for_audit_kg = _convert_quantity(old_item_quantity, old_item_unit, 'kg')
 
-            # Calculate the total quantity to reduce from FeedInComposition
-            # fic.quantity is always in 'kg' as per your clarification.
-            total_fic_quantity_kg = Decimal(str(fic.weight)) * Decimal(str(times))
+            total_iic_quantity_kg = Decimal(str(iic.weight)) * Decimal(str(times))
             
-            # Convert total_fic_quantity_kg to the feed's *current* unit for accurate subtraction from feed.quantity
             try:
-                quantity_to_reduce_in_feeds_unit = _convert_quantity(
-                    total_fic_quantity_kg,
-                    'kg', # Source unit is always 'kg' as per user clarification
-                    old_feed_unit
+                quantity_to_reduce_in_items_unit = _convert_quantity(
+                    total_iic_quantity_kg,
+                    'kg',
+                    old_item_unit
                 )
             except ValueError as e:
-                logger.error(f"Error converting FIC quantity for subtraction: {e}")
-                raise # Re-raise to indicate a critical conversion error
+                logger.error(f"Error converting IIC quantity for subtraction: {e}")
+                raise
 
-            # Update the feed's quantity in the database (in its original unit)
-            feed.quantity -= quantity_to_reduce_in_feeds_unit
-            db.add(feed) # Mark the feed object as modified for the session
-            db.flush() # Flush to ensure feed.quantity is updated in the session before next read
+            item.current_stock -= quantity_to_reduce_in_items_unit
+            db.add(item)
+            db.flush()
 
-            # Recalculate the new quantity in KILOGRAMS for auditing after the update
-            new_quantity_for_audit_kg = _convert_quantity(feed.quantity, feed.unit, 'kg')
+            new_quantity_for_audit_kg = _convert_quantity(item.current_stock, item.unit, 'kg')
 
-            # Calculate change amount for audit in KILOGRAMS
             change_amount_for_audit_kg = new_quantity_for_audit_kg - old_quantity_for_audit_kg
 
-            # Create FeedAudit record
-            audit = FeedAudit(
-                feed_id=feed.id,
+            audit = InventoryItemAudit(
+                inventory_item_id=item.id,
                 change_type="composition_usage",
-                change_amount=change_amount_for_audit_kg, # Store in kilograms
-                old_weight=old_quantity_for_audit_kg,     # Store in kilograms
-                new_weight=new_quantity_for_audit_kg,   # Store in kilograms
+                change_amount=change_amount_for_audit_kg,
+                old_quantity=old_quantity_for_audit_kg,
+                new_quantity=new_quantity_for_audit_kg,
                 changed_by=changed_by,
                 note=f"Used in composition '{composition_name}' for batch '{shed_no}' ({times} times)."
             )
             db.add(audit)
     
-    db.commit() # Commit all changes (usage history, feed updates, and audit records)
-    db.refresh(usage) # <--- IMPORTANT: Refresh 'usage' to load its ID from the database
+    db.commit()
+    db.refresh(usage)
 
-    return usage # <--- IMPORTANT: Return the 'usage' object
+    return usage
+
 
 def create_composition_usage_history(db: Session, composition_id: int, times: int, used_at: datetime, batch_id: int = None):
     # import pdb; pdb.set_trace()
@@ -161,7 +151,7 @@ def get_composition_usage_history(db: Session, composition_id: int = None):
 
 def revert_composition_usage(db: Session, usage_id: int, changed_by: str = None):
     """
-    Reverts a specific composition usage, adding back feed quantities and auditing the reversal.
+    Reverts a specific composition usage, adding back item quantities and auditing the reversal.
     """
     usage_to_revert = db.query(CompositionUsageHistory).filter(CompositionUsageHistory.id == usage_id).first()
     if not usage_to_revert:
@@ -170,65 +160,57 @@ def revert_composition_usage(db: Session, usage_id: int, changed_by: str = None)
     composition_id = usage_to_revert.composition_id
     times = usage_to_revert.times
 
-    # Get composition name and batch shed_no for the audit note
     composition_obj = db.query(Composition).filter(Composition.id == composition_id).first()
     composition_name = composition_obj.name if composition_obj else "N/A"
 
     batch_obj = db.query(Batch).filter(Batch.id == usage_to_revert.batch_id).first()
     shed_no = batch_obj.shed_no if batch_obj else "N/A"
 
-    feeds_in_comp = db.query(FeedInComposition).filter(FeedInComposition.composition_id == composition_id).all()
+    items_in_comp = db.query(InventoryItemInComposition).filter(InventoryItemInComposition.composition_id == composition_id).all()
 
-    for fic in feeds_in_comp:
-        feed = db.query(Feed).filter(Feed.id == fic.feed_id).first()
-        if feed:
-            old_feed_quantity = feed.quantity
-            old_feed_unit = feed.unit
+    for iic in items_in_comp:
+        item = db.query(InventoryItem).filter(InventoryItem.id == iic.inventory_item_id).first()
+        if item:
+            old_item_quantity = item.current_stock
+            old_item_unit = item.unit
 
-            # Convert old quantity to KILOGRAMS for auditing
-            old_quantity_for_audit_kg = _convert_quantity(old_feed_quantity, old_feed_unit, 'kg')
+            old_quantity_for_audit_kg = _convert_quantity(old_item_quantity, old_item_unit, 'kg')
 
-            # Calculate the total quantity to add back (always in kg from fic.weight)
-            total_fic_quantity_kg = Decimal(str(fic.weight)) * Decimal(str(times))
+            total_iic_quantity_kg = Decimal(str(iic.weight)) * Decimal(str(times))
 
-            # Convert quantity to add back to the feed's *current* unit
             try:
-                quantity_to_add_in_feeds_unit = _convert_quantity(
-                    total_fic_quantity_kg,
-                    'kg', # Source unit is always 'kg'
-                    old_feed_unit
+                quantity_to_add_in_items_unit = _convert_quantity(
+                    total_iic_quantity_kg,
+                    'kg',
+                    old_item_unit
                 )
             except ValueError as e:
-                logger.error(f"Error converting FIC quantity for addition: {e}")
+                logger.error(f"Error converting IIC quantity for addition: {e}")
                 raise
 
-            # Add back the quantity to the feed
-            feed.quantity += quantity_to_add_in_feeds_unit
-            db.add(feed)
-            db.flush() # Flush to ensure feed.quantity is updated before next read
+            item.current_stock += quantity_to_add_in_items_unit
+            db.add(item)
+            db.flush()
 
-            # Recalculate new quantity in KILOGRAMS for auditing
-            new_quantity_for_audit_kg = _convert_quantity(feed.quantity, feed.unit, 'kg')
+            new_quantity_for_audit_kg = _convert_quantity(item.current_stock, item.unit, 'kg')
 
-            # Calculate change amount for audit (positive as we are adding back)
             change_amount_for_audit_kg = new_quantity_for_audit_kg - old_quantity_for_audit_kg
 
-            # Create FeedAudit record for the reversal
-            audit = FeedAudit(
-                feed_id=feed.id,
+            audit = InventoryItemAudit(
+                inventory_item_id=item.id,
                 change_type="composition_revert",
-                change_amount=change_amount_for_audit_kg, # Store in kilograms
-                old_weight=old_quantity_for_audit_kg,     # Store in kilograms
-                new_weight=new_quantity_for_audit_kg,   # Store in kilograms
+                change_amount=change_amount_for_audit_kg,
+                old_quantity=old_quantity_for_audit_kg,
+                new_quantity=new_quantity_for_audit_kg,
                 changed_by=changed_by,
                 note=f"Reverted usage of composition '{composition_name}' for batch '{shed_no}' ({times} times)."
             )
             db.add(audit)
 
-    # Delete the original usage history record after successful reversal of quantities
     db.delete(usage_to_revert)
     db.commit()
     return True, "Composition usage reverted successfully."
+
 
 def get_composition_usage_by_date(db: Session, usage_date: date, batch_id: int = None):
     start_of_day = datetime.combine(usage_date, datetime.min.time())
@@ -250,8 +232,9 @@ def get_composition_usage_by_date(db: Session, usage_date: date, batch_id: int =
     for usage in usage_history:
         composition = usage.composition
         feed_quantity = 0
-        for feed_in_comp in composition.feeds:
-            feed_quantity += feed_in_comp.weight * usage.times
+        for item_in_comp in composition.inventory_items:
+            if item_in_comp.inventory_item and item_in_comp.inventory_item.category == 'Feed':
+                feed_quantity += item_in_comp.weight * usage.times
         
         total_feed += feed_quantity
         composition_name = composition.name
@@ -266,4 +249,3 @@ def get_composition_usage_by_date(db: Session, usage_date: date, batch_id: int =
         "total_feed": total_feed,
         "feed_breakdown": feed_breakdown_list
     }
-

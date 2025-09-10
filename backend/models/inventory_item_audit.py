@@ -4,17 +4,17 @@ from datetime import datetime
 from database import Base
 import pytz
 
-class FeedAudit(Base):
-    __tablename__ = "feed_audit"
+class InventoryItemAudit(Base):
+    __tablename__ = "inventory_item_audit"
 
     id = Column(Integer, primary_key=True, index=True)
-    feed_id = Column(Integer, ForeignKey("feed.id"), nullable=False)
-    change_type = Column(String, nullable=False)  # "manual" or "composition"
+    inventory_item_id = Column(Integer, ForeignKey("inventory_items.id"), nullable=False)
+    change_type = Column(String, nullable=False)  # "manual", "composition", "usage" etc.
     change_amount = Column(Float, nullable=False) # Positive or negative
-    old_weight = Column(Float, nullable=False)
-    new_weight = Column(Float, nullable=False)
+    old_quantity = Column(Float, nullable=False)
+    new_quantity = Column(Float, nullable=False)
     changed_by = Column(String, nullable=True)
     timestamp = Column(DateTime, default=datetime.now(pytz.timezone('Asia/Kolkata')))
     note = Column(String, nullable=True)
 
-    feed = relationship("Feed", back_populates="audits")
+    inventory_item = relationship("InventoryItem", back_populates="audits")

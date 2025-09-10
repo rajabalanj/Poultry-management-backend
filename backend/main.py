@@ -12,7 +12,7 @@ from datetime import datetime
 import routers.reports as reports
 from database import get_db
 import os
-from schemas.compositon import Composition, CompositionCreate
+from schemas.composition import Composition, CompositionCreate
 import crud.composition as crud_composition
 from crud.composition_usage_history import use_composition, get_composition_usage_history, revert_composition_usage, get_composition_usage_by_date
 from schemas.composition_usage_history import CompositionUsageHistory
@@ -33,9 +33,6 @@ from typing import List, Optional
 from models.daily_batch import DailyBatch as DailyBatchModel
 import routers.egg_room_reports as egg_room_reports
 import routers.bovanswhitelayerperformance as bovanswhitelayerperformance
-import routers.medicine as medicine
-import routers.feed as feed
-import routers.medicine_usage_history as medicine_usage_history
 import routers.batch as batch
 import routers.business_partners as business_partners
 import routers.purchase_orders as purchase_orders
@@ -43,7 +40,7 @@ import routers.payments as payments
 import routers.inventory_items as inventory_items
 import routers.sales_orders as sales_orders
 import routers.sales_payments as sales_payments
-from utils.auth_utils import get_current_user
+from utils.auth_utils import get_current_user, require_group
 
 
 from fastapi.staticfiles import StaticFiles
@@ -110,9 +107,7 @@ app.add_middleware(
 app.include_router(reports.router)
 app.include_router(egg_room_reports.router)
 app.include_router(bovanswhitelayerperformance.router)
-app.include_router(medicine.router)
-app.include_router(feed.router)
-app.include_router(medicine_usage_history.router)
+
 app.include_router(batch.router)
 app.include_router(business_partners.router)
 app.include_router(purchase_orders.router)
@@ -130,7 +125,7 @@ async def test_route():
     return {"message": "Welcome to the FastAPI application!"}
 
 @app.post("/compositions/", response_model=Composition)
-def create_composition(composition: CompositionCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+def create_composition(composition: CompositionCreate, db: Session = Depends(get_db), user: dict = Depends(require_group(["admin"]))):
     return crud_composition.create_composition(db, composition)
 
 @app.get("/compositions/{composition_id}", response_model=Composition)

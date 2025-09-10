@@ -1,7 +1,7 @@
 
 import json
 import time
-from typing import Dict
+from typing import Dict, List
 import urllib.request
 
 from fastapi import Depends, HTTPException, status, Request
@@ -40,8 +40,11 @@ def get_jwks():
     Caches the keys to improve performance.
     """
     global jwks_cache
-    # Check if cache is still valid
-    print(f"Fetching JWKS from: {COGNITO_JWKS_URL}")
+    # Check if cache is still valid and not empty
+    if jwks_cache.get("expiration_time", 0) > time.time() and jwks_cache.get("keys"):
+        return jwks_cache["keys"]
+
+    print(f"Fetching new JWKS from: {COGNITO_JWKS_URL}")
     try:
         with urllib.request.urlopen(COGNITO_JWKS_URL) as response:
             jwks_data = json.loads(response.read().decode("utf-8"))
@@ -144,3 +147,17 @@ def get_current_user(request: Request) -> Dict[str, any]:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An unexpected error occurred during token validation: {e}"
         )
+
+def require_group(allowed_groups: List[str]):
+    """
+    FastAPI dependency to check if the current user is in one of the allowed groups.
+    """
+    def dependency(user: Dict[str, any] = Depends(get_current_user)) -> Dict[str, any]:
+        user_groups = user.get("cognito:groups", [])
+        if not any(group in user_groups for group in allowed_groups):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User is not in the required group(s)",
+            )
+        return user
+    return dependency

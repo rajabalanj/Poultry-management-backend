@@ -20,6 +20,7 @@ from database import get_db
 from models.purchase_orders import PurchaseOrder as PurchaseOrderModel, PurchaseOrderStatus
 from models.purchase_order_items import PurchaseOrderItem as PurchaseOrderItemModel
 from models.inventory_items import InventoryItem as InventoryItemModel
+from models.inventory_item_audit import InventoryItemAudit
 from models.business_partners import BusinessPartner as BusinessPartnerModel
 from models.payments import Payment as PaymentModel # Import the Payment model
 from schemas.purchase_orders import (
@@ -119,7 +120,31 @@ def create_purchase_order(
         inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item.inventory_item_id).with_for_update().first()
         if inv is None:
             raise HTTPException(status_code=400, detail=f"Inventory Item with ID {item.inventory_item_id} not found when updating stock.")
-        inv.current_stock = (inv.current_stock or 0) + item.quantity
+        
+        old_stock = inv.current_stock or 0
+
+        # Calculate new average cost
+        new_quantity = item.quantity
+        purchase_price = item.price_per_unit
+        current_avg_cost = inv.average_cost or 0
+
+        if old_stock + new_quantity > 0:
+            new_avg_cost = ((old_stock * current_avg_cost) + (new_quantity * purchase_price)) / (old_stock + new_quantity)
+            inv.average_cost = new_avg_cost
+
+        inv.current_stock = old_stock + new_quantity
+        
+        # Create audit record
+        audit = InventoryItemAudit(
+            inventory_item_id=inv.id,
+            change_type="purchase",
+            change_amount=new_quantity,
+            old_quantity=old_stock,
+            new_quantity=inv.current_stock,
+            changed_by=user.get('sub'),
+            note=f"Received from PO #{db_po.id}"
+        )
+        db.add(audit)
         db.add(inv)
     
     db.commit()
@@ -196,8 +221,33 @@ def update_purchase_order(
             inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item.inventory_item_id).with_for_update().first()
             if inv is None:
                 raise HTTPException(status_code=400, detail=f"Inventory item {item.inventory_item_id} not found")
+
+            # Calculate new average cost
+            new_quantity = item.quantity
+            purchase_price = item.price_per_unit
+            current_stock = inv.current_stock or 0
+            current_avg_cost = inv.average_cost or 0
+
+            if current_stock + new_quantity > 0:
+                new_avg_cost = ((current_stock * current_avg_cost) + (new_quantity * purchase_price)) / (current_stock + new_quantity)
+                inv.average_cost = new_avg_cost
+
+            old_stock = inv.current_stock or 0
             inv.current_stock = (inv.current_stock or 0) + item.quantity
             db.add(inv)
+
+            # Create audit record for inventory increase from PO being marked PAID
+            audit = InventoryItemAudit(
+                inventory_item_id=inv.id,
+                change_type="purchase",
+                change_amount=new_quantity,
+                old_quantity=old_stock,
+                new_quantity=inv.current_stock,
+                changed_by=user.get('sub'),
+                note=f"Marked PAID - Received from PO #{po_id}"
+            )
+            db.add(audit)
+
         logger.info(f"PO (ID: {po_id}) marked as 'Paid/Received'. Inventory increased.")
     # If previously PAID and status is changing away, rollback the inventory increase
     elif db_po.status == PurchaseOrderStatus.PAID and new_status != PurchaseOrderStatus.PAID:
@@ -312,8 +362,32 @@ def add_item_to_purchase_order(
     inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_request.inventory_item_id).with_for_update().first()
     if inv is None:
         raise HTTPException(status_code=400, detail=f"Inventory Item with ID {item_request.inventory_item_id} not found when updating stock.")
-    inv.current_stock = (inv.current_stock or 0) + item_request.quantity
+
+    # Calculate new average cost
+    new_quantity = item_request.quantity
+    purchase_price = item_request.price_per_unit
+    current_stock = inv.current_stock or 0
+    current_avg_cost = inv.average_cost or 0
+
+    if current_stock + new_quantity > 0:
+        new_avg_cost = ((current_stock * current_avg_cost) + (new_quantity * purchase_price)) / (current_stock + new_quantity)
+        inv.average_cost = new_avg_cost
+
+    old_stock = inv.current_stock or 0
+    inv.current_stock = current_stock + new_quantity
     db.add(inv)
+
+    # Create audit record for the inventory increase from adding this PO item
+    audit = InventoryItemAudit(
+        inventory_item_id=inv.id,
+        change_type="purchase",
+        change_amount=new_quantity,
+        old_quantity=old_stock,
+        new_quantity=inv.current_stock,
+        changed_by=user.get('sub'),
+        note=f"Added via PO #{po_id}"
+    )
+    db.add(audit)
     
     db.commit()
     db.refresh(db_po)
@@ -365,8 +439,36 @@ def update_item_in_purchase_order(
         inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == db_po_item.inventory_item_id).with_for_update().first()
         if inv is None:
             raise HTTPException(status_code=400, detail=f"Inventory Item with ID {db_po_item.inventory_item_id} not found when updating stock.")
-        inv.current_stock = (inv.current_stock or 0) + delta
-        db.add(inv)
+        
+        if delta > 0:
+            # Calculate new average cost
+            purchase_price = db_po_item.price_per_unit
+            current_stock = inv.current_stock or 0
+            current_avg_cost = inv.average_cost or 0
+
+            if current_stock + delta > 0:
+                new_avg_cost = ((current_stock * current_avg_cost) + (delta * purchase_price)) / (current_stock + delta)
+                inv.average_cost = new_avg_cost
+
+            old_stock = inv.current_stock or 0
+            inv.current_stock = (inv.current_stock or 0) + delta
+            db.add(inv)
+
+            # Create audit record for the inventory increase from PO item update
+            audit = InventoryItemAudit(
+                inventory_item_id=inv.id,
+                change_type="purchase",
+                change_amount=delta,
+                old_quantity=old_stock,
+                new_quantity=inv.current_stock,
+                changed_by=user.get('sub'),
+                note=f"Increased via PO #{po_id} item update (Item ID: {item_id})"
+            )
+            db.add(audit)
+        else:
+            # delta < 0 -> decrease inventory (handled elsewhere/optional)
+            inv.current_stock = (inv.current_stock or 0) + delta
+            db.add(inv)
 
     db.commit()
     db.refresh(db_po_item)

@@ -2,12 +2,15 @@ from fastapi import APIRouter, Depends, HTTPException, Header, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import logging
-from decimal import Decimal
 
 from database import get_db
 from models.inventory_items import InventoryItem as InventoryItemModel
 from schemas.inventory_items import InventoryItem, InventoryItemCreate, InventoryItemUpdate
+from schemas.inventory_item_audit import InventoryItemAudit
 from utils.auth_utils import get_current_user
+from crud import inventory_items as crud_inventory_items
+from crud import inventory_item_audit as crud_inventory_item_audit
+
 router = APIRouter(prefix="/inventory-items", tags=["Inventory Items"])
 logger = logging.getLogger("inventory_items")
 
@@ -22,12 +25,9 @@ def create_inventory_item(
     if db_item:
         raise HTTPException(status_code=400, detail="Inventory item with this name already exists")
     
-    db_item = InventoryItemModel(**item.model_dump())
-    db.add(db_item)
-    db.commit()
-    db.refresh(db_item)
-    logger.info(f"Inventory item '{db_item.name}' created by user {user.get('sub')}")
-    return db_item
+    new_item = crud_inventory_items.create_inventory_item(db=db, item=item)
+    logger.info(f"Inventory item '{new_item.name}' created by user {user.get('sub')}")
+    return new_item
 
 @router.get("/", response_model=List[InventoryItem])
 def read_inventory_items(
@@ -37,6 +37,7 @@ def read_inventory_items(
     db: Session = Depends(get_db)
 ):
     """Retrieve a list of inventory items, with optional filtering by category."""
+    # The filtering logic will remain here, as it's a query parameter concern
     query = db.query(InventoryItemModel)
     if category:
         query = query.filter(InventoryItemModel.category == category)
@@ -46,7 +47,7 @@ def read_inventory_items(
 @router.get("/{item_id}", response_model=InventoryItem)
 def read_inventory_item(item_id: int, db: Session = Depends(get_db)):
     """Retrieve a single inventory item by ID."""
-    db_item = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_id).first()
+    db_item = crud_inventory_items.get_inventory_item(db=db, item_id=item_id)
     if db_item is None:
         raise HTTPException(status_code=404, detail="Inventory item not found")
     return db_item
@@ -59,7 +60,7 @@ def update_inventory_item(
     user: dict = Depends(get_current_user)
 ):
     """Update an existing inventory item."""
-    db_item = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_id).first()
+    db_item = crud_inventory_items.get_inventory_item(db=db, item_id=item_id)
     if db_item is None:
         raise HTTPException(status_code=404, detail="Inventory item not found")
     
@@ -69,14 +70,9 @@ def update_inventory_item(
         if existing_item:
             raise HTTPException(status_code=400, detail="Inventory item with this name already exists")
 
-    item_data = item.model_dump(exclude_unset=True)
-    for key, value in item_data.items():
-        setattr(db_item, key, value)
-    
-    db.commit()
-    db.refresh(db_item)
-    logger.info(f"Inventory item '{db_item.name}' (ID: {item_id}) updated by user {user.get('sub')}")
-    return db_item
+    updated_item = crud_inventory_items.update_inventory_item(db=db, item_id=item_id, item=item)
+    logger.info(f"Inventory item '{updated_item.name}' (ID: {item_id}) updated by user {user.get('sub')}")
+    return updated_item
 
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_inventory_item(
@@ -85,13 +81,12 @@ def delete_inventory_item(
     user: dict = Depends(get_current_user)
 ):
     """Delete an inventory item. Items with associated purchase order items cannot be deleted."""
-    db_item = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_id).first()
+    db_item = crud_inventory_items.get_inventory_item(db=db, item_id=item_id)
     if db_item is None:
         raise HTTPException(status_code=404, detail="Inventory item not found")
 
     # Check for associated purchase order items
-    # You might want a soft delete here too, similar to vendors
-    from models.purchase_order_items import PurchaseOrderItem as PurchaseOrderItemModel # Avoid circular import if this is directly in main router file
+    from models.purchase_order_items import PurchaseOrderItem as PurchaseOrderItemModel
     associated_po_items = db.query(PurchaseOrderItemModel).filter(PurchaseOrderItemModel.inventory_item_id == item_id).first()
     if associated_po_items:
         raise HTTPException(
@@ -99,7 +94,18 @@ def delete_inventory_item(
             detail="Inventory item has associated purchase order items and cannot be deleted."
         )
     
-    db.delete(db_item)
-    db.commit()
+    crud_inventory_items.delete_inventory_item(db=db, item_id=item_id)
     logger.info(f"Inventory item '{db_item.name}' (ID: {item_id}) deleted by user {user.get('sub')}")
     return {"message": "Inventory item deleted successfully"}
+
+@router.get("/{item_id}/audit", response_model=List[InventoryItemAudit])
+def get_inventory_item_audit_history(item_id: int, db: Session = Depends(get_db)):
+    """
+    Retrieve the audit history for a specific inventory item.
+    """
+    db_item = crud_inventory_items.get_inventory_item(db=db, item_id=item_id)
+    if db_item is None:
+        raise HTTPException(status_code=404, detail="Inventory item not found")
+    
+    audit_history = crud_inventory_item_audit.get_inventory_item_audits(db=db, inventory_item_id=item_id)
+    return audit_history

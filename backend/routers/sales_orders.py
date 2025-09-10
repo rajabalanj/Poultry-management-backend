@@ -19,6 +19,7 @@ from models.sales_order_items import SalesOrderItem as SalesOrderItemModel
 from models.inventory_items import InventoryItem as InventoryItemModel
 from models.business_partners import BusinessPartner as BusinessPartnerModel
 from models.sales_payments import SalesPayment as SalesPaymentModel
+from models.inventory_item_audit import InventoryItemAudit
 from schemas.sales_orders import (
     SalesOrder as SalesOrderSchema,
     SalesOrderCreate,
@@ -92,8 +93,22 @@ def create_sales_order(
             raise HTTPException(status_code=400, detail=f"Inventory Item with ID {item.inventory_item_id} not found when updating stock.")
         if inv.current_stock is None or inv.current_stock < item.quantity:
             raise HTTPException(status_code=400, detail=f"Insufficient stock for item '{getattr(inv, 'name', item.inventory_item_id)}'. Available: {inv.current_stock}, Required: {item.quantity}")
+        
+        old_stock = inv.current_stock or 0
         inv.current_stock -= item.quantity
         db.add(inv)
+
+        # Create audit record for inventory decrease (sale)
+        audit = InventoryItemAudit(
+            inventory_item_id=inv.id,
+            change_type="sale",
+            change_amount=item.quantity,
+            old_quantity=old_stock,
+            new_quantity=inv.current_stock,
+            changed_by=user.get('sub'),
+            note=f"Sold via SO #{db_so.id}"
+        )
+        db.add(audit)
     
     db.commit()
     db.refresh(db_so)
@@ -231,8 +246,22 @@ def add_item_to_sales_order(
         raise HTTPException(status_code=400, detail=f"Inventory Item with ID {item_request.inventory_item_id} not found when updating stock.")
     if inv.current_stock is None or inv.current_stock < item_request.quantity:
         raise HTTPException(status_code=400, detail=f"Insufficient stock for item '{getattr(inv, 'name', item_request.inventory_item_id)}'. Available: {inv.current_stock}, Required: {item_request.quantity}")
+
+    old_stock = inv.current_stock or 0
     inv.current_stock -= item_request.quantity
     db.add(inv)
+
+    # Create audit record for inventory decrease from adding SO item
+    audit = InventoryItemAudit(
+        inventory_item_id=inv.id,
+        change_type="sale",
+        change_amount=item_request.quantity,
+        old_quantity=old_stock,
+        new_quantity=inv.current_stock,
+        changed_by=user.get('sub'),
+        note=f"Added to SO #{so_id}"
+    )
+    db.add(audit)
     
     db.commit()
     db.refresh(db_so)
@@ -246,7 +275,6 @@ def add_item_to_sales_order(
 
     logger.info(f"Item {db_inventory_item.name} added to Sales Order (ID: {so_id}) by user {user.get('sub')}")
     return db_so
-
 
 @router.patch("/{so_id}/items/{item_id}", response_model=SalesOrderSchema)
 def update_sales_order_item(
@@ -298,11 +326,28 @@ def update_sales_order_item(
             # Need more stock
             if inv.current_stock is None or inv.current_stock < delta:
                 raise HTTPException(status_code=400, detail=f"Insufficient stock for item '{getattr(inv, 'name', item_to_update.inventory_item_id)}'. Available: {inv.current_stock}, Required additional: {delta}")
+            old_stock = inv.current_stock or 0
             inv.current_stock -= delta
+            db.add(inv)
+
+            # Create audit record for inventory decrease due to increasing SO item quantity
+            audit = InventoryItemAudit(
+                inventory_item_id=inv.id,
+                change_type="sale",
+                change_amount=delta,
+                old_quantity=old_stock,
+                new_quantity=inv.current_stock,
+                changed_by=user.get('sub'),
+                note=f"Increased quantity on SO #{so_id} (Item ID: {item_id})"
+            )
+            db.add(audit)
         else:
             # Returned/reduced quantity -> restore stock
-            inv.current_stock = (inv.current_stock or 0) + (-delta)
-        db.add(inv)
+            restore_amount = -delta
+            old_stock = inv.current_stock or 0
+            inv.current_stock = (inv.current_stock or 0) + restore_amount
+            db.add(inv)
+            # (Optional) create a return/adjustment audit if desired
 
     total_amount = sum(item.line_total for item in db_so.items)
     db_so.total_amount = total_amount
@@ -314,7 +359,6 @@ def update_sales_order_item(
         f"Sales Order Item (ID: {item_id}) of Sales Order (ID: {so_id}) updated by user {user.get('sub')}"
     )
     return db_so
-
 
 @router.delete("/{so_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_sales_order(

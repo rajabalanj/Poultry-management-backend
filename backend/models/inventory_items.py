@@ -19,3 +19,5 @@ class InventoryItem(Base):
 
     # Relationships
     purchase_order_items = relationship("PurchaseOrderItem", back_populates="inventory_item")
+    audits = relationship("InventoryItemAudit", back_populates="inventory_item")
+    usage_history = relationship("InventoryItemUsageHistory", back_populates="inventory_item")
