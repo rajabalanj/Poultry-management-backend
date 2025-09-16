@@ -365,7 +365,8 @@ def update_daily_batch(
     batch_date: str,
     payload: dict,
     db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
 ):
     """Update a daily batch row by batch_id and batch_date. Applies propagation logic for age, counts."""
     from models.daily_batch import DailyBatch as DailyBatchModel
@@ -382,7 +383,8 @@ def update_daily_batch(
     daily_batch = db.query(DailyBatchModel).filter(
         and_(
             DailyBatchModel.batch_id == batch_id,
-            DailyBatchModel.batch_date == batch_date_obj
+            DailyBatchModel.batch_date == batch_date_obj,
+            DailyBatchModel.tenant_id == tenant_id
         )
     ).first()
 
@@ -393,7 +395,8 @@ def update_daily_batch(
     if "shed_no" in payload:
         new_shed_no = payload["shed_no"]
         db.query(DailyBatchModel).filter(
-            DailyBatchModel.batch_id == batch_id
+            DailyBatchModel.batch_id == batch_id,
+            DailyBatchModel.tenant_id == tenant_id
         ).update({DailyBatchModel.shed_no: new_shed_no})
         daily_batch.shed_no = new_shed_no
 
@@ -409,7 +412,8 @@ def update_daily_batch(
 
         subsequent_rows = db.query(DailyBatchModel).filter(
             DailyBatchModel.batch_id == batch_id,
-            DailyBatchModel.batch_date > daily_batch.batch_date
+            DailyBatchModel.batch_date > daily_batch.batch_date,
+            DailyBatchModel.tenant_id == tenant_id
         ).order_by(DailyBatchModel.batch_date.asc()).all()
 
         prev_date = daily_batch.batch_date
@@ -433,7 +437,8 @@ def update_daily_batch(
         # Propagate to subsequent rows
         subsequent_rows = db.query(DailyBatchModel).filter(
             DailyBatchModel.batch_id == batch_id,
-            DailyBatchModel.batch_date > daily_batch.batch_date
+            DailyBatchModel.batch_date > daily_batch.batch_date,
+            DailyBatchModel.tenant_id == tenant_id
         ).order_by(DailyBatchModel.batch_date.asc()).all()
 
         prev_closing = daily_batch.opening_count - (daily_batch.mortality + daily_batch.culls)
@@ -450,7 +455,8 @@ def update_daily_batch(
 
         subsequent_rows = db.query(DailyBatchModel).filter(
             DailyBatchModel.batch_id == batch_id,
-            DailyBatchModel.batch_date > daily_batch.batch_date
+            DailyBatchModel.batch_date > daily_batch.batch_date,
+            DailyBatchModel.tenant_id == tenant_id
         ).order_by(DailyBatchModel.batch_date.asc()).all()
 
         prev_closing = daily_batch.opening_count - (daily_batch.mortality + daily_batch.culls)
@@ -481,14 +487,14 @@ def create_config(config: AppConfigCreate, db: Session = Depends(get_db), user: 
 
 
 @app.get("/configurations/", response_model=List[AppConfigOut])
-def get_configs(name: Optional[str] = None, db: Session = Depends(get_db)):
-    configs = crud_app_config.get_config(db, name)
+def get_configs(name: Optional[str] = None, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
+    configs = crud_app_config.get_config(db, tenant_id, name=name)
     # Always return a list, even if empty
     return [configs] if name and configs else configs or []
 
 @app.patch("/configurations/{name}/", response_model=AppConfigOut)
-def update_config(name: str, config: AppConfigUpdate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
-    updated = crud_app_config.update_config_by_name(db, name, config)
+def update_config(name: str, config: AppConfigUpdate, db: Session = Depends(get_db), user: dict = Depends(get_current_user), tenant_id: str = Depends(get_tenant_id)):
+    updated = crud_app_config.update_config_by_name(db, name, config, tenant_id)
     if not updated:
         raise HTTPException(status_code=404, detail="Configuration not found")
     return updated
