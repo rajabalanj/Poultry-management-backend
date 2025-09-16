@@ -9,6 +9,7 @@ from decimal import Decimal
 import os
 import uuid
 from utils.auth_utils import get_current_user
+from utils.tenancy import get_tenant_id
 
 try:
     from utils.s3_upload import upload_receipt_to_s3
@@ -39,12 +40,13 @@ logger = logging.getLogger("purchase_orders")
 @router.get("/{po_id}", response_model=PurchaseOrderSchema)
 def get_purchase_order(
     po_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant_id)
 ):
     """Retrieve a single purchase order by ID, with all related details."""
     db_po = (
         db.query(PurchaseOrderModel)
-        .filter(PurchaseOrderModel.id == po_id)
+        .filter(PurchaseOrderModel.id == po_id, PurchaseOrderModel.tenant_id == tenant_id)
         .options(
             # Eagerly load the vendor relationship
             selectinload(PurchaseOrderModel.vendor),
@@ -65,11 +67,13 @@ def create_purchase_order(
     po: PurchaseOrderCreate,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
 ):
     """Create a new purchase order with associated items."""
     # 1. Validate Business Partner (Vendor)
     db_vendor = db.query(BusinessPartnerModel).filter(
         BusinessPartnerModel.id == po.vendor_id, 
+        BusinessPartnerModel.tenant_id == tenant_id,
         BusinessPartnerModel.status == 'ACTIVE',
         BusinessPartnerModel.is_vendor == True
     ).first()
@@ -84,7 +88,7 @@ def create_purchase_order(
         raise HTTPException(status_code=400, detail="Purchase order must contain at least one item.")
 
     for item_data in po.items:
-        db_inventory_item = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_data.inventory_item_id).first()
+        db_inventory_item = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_data.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).first()
         if not db_inventory_item:
             raise HTTPException(status_code=400, detail=f"Inventory Item with ID {item_data.inventory_item_id} not found.")
         
@@ -96,7 +100,8 @@ def create_purchase_order(
                 inventory_item_id=item_data.inventory_item_id,
                 quantity=item_data.quantity,
                 price_per_unit=item_data.price_per_unit,
-                line_total=line_total
+                line_total=line_total,
+                tenant_id=tenant_id
             )
         )
     
@@ -108,6 +113,7 @@ def create_purchase_order(
         notes=po.notes,
         total_amount=total_amount,
         created_by=user.get('sub'),
+        tenant_id=tenant_id
     )
     db.add(db_po)
     db.flush() # Flush to get db_po.id before adding items
@@ -117,7 +123,7 @@ def create_purchase_order(
         db.add(item)
     # Increase inventory immediately for each purchase order item
     for item in db_po_items:
-        inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item.inventory_item_id).with_for_update().first()
+        inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).with_for_update().first()
         if inv is None:
             raise HTTPException(status_code=400, detail=f"Inventory Item with ID {item.inventory_item_id} not found when updating stock.")
         
@@ -142,7 +148,8 @@ def create_purchase_order(
             old_quantity=old_stock,
             new_quantity=inv.current_stock,
             changed_by=user.get('sub'),
-            note=f"Received from PO #{db_po.id}"
+            note=f"Received from PO #{db_po.id}",
+            tenant_id=tenant_id
         )
         db.add(audit)
         db.add(inv)
@@ -154,9 +161,9 @@ def create_purchase_order(
     db_po = db.query(PurchaseOrderModel).options(
         selectinload(PurchaseOrderModel.items),
         selectinload(PurchaseOrderModel.payments)
-    ).filter(PurchaseOrderModel.id == db_po.id).first()
+    ).filter(PurchaseOrderModel.id == db_po.id, PurchaseOrderModel.tenant_id == tenant_id).first()
 
-    logger.info(f"Purchase Order (ID: {db_po.id}) created for Vendor ID {db_po.vendor_id} by user {user.get('sub')}")
+    logger.info(f"Purchase Order (ID: {db_po.id}) created for Vendor ID {db_po.vendor_id} by user {user.get('sub')} for tenant {tenant_id}")
     return db_po
 
 @router.get("/", response_model=List[PurchaseOrderSchema])
@@ -167,10 +174,11 @@ def read_purchase_orders(
     status: Optional[PurchaseOrderStatus] = None,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant_id)
 ):
     """Retrieve a list of purchase orders with various filters."""
-    query = db.query(PurchaseOrderModel)
+    query = db.query(PurchaseOrderModel).filter(PurchaseOrderModel.tenant_id == tenant_id)
 
     if vendor_id:
         query = query.filter(PurchaseOrderModel.vendor_id == vendor_id)
@@ -190,12 +198,12 @@ def read_purchase_orders(
     return purchase_orders
 
 @router.get("/{po_id}", response_model=PurchaseOrderSchema)
-def read_purchase_order(po_id: int, db: Session = Depends(get_db)):
+def read_purchase_order(po_id: int, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
     """Retrieve a single purchase order by ID."""
     db_po = db.query(PurchaseOrderModel).options(
         selectinload(PurchaseOrderModel.items),
         selectinload(PurchaseOrderModel.payments)
-    ).filter(PurchaseOrderModel.id == po_id).first()
+    ).filter(PurchaseOrderModel.id == po_id, PurchaseOrderModel.tenant_id == tenant_id).first()
     if db_po is None:
         raise HTTPException(status_code=404, detail="Purchase Order not found")
     return db_po
@@ -206,10 +214,11 @@ def update_purchase_order(
     po_update: PurchaseOrderUpdate,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
 ):
     """Update an existing purchase order (partial update).
     Note: Item additions/removals are handled via separate endpoints."""
-    db_po = db.query(PurchaseOrderModel).filter(PurchaseOrderModel.id == po_id).first()
+    db_po = db.query(PurchaseOrderModel).filter(PurchaseOrderModel.id == po_id, PurchaseOrderModel.tenant_id == tenant_id).first()
     if db_po is None:
         raise HTTPException(status_code=404, detail="Purchase Order not found")
     
@@ -218,7 +227,7 @@ def update_purchase_order(
     # Marking as PAID (received): increase inventory
     if new_status == PurchaseOrderStatus.PAID and db_po.status != PurchaseOrderStatus.PAID:
         for item in db_po.items:
-            inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item.inventory_item_id).with_for_update().first()
+            inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).with_for_update().first()
             if inv is None:
                 raise HTTPException(status_code=400, detail=f"Inventory item {item.inventory_item_id} not found")
 
@@ -244,7 +253,8 @@ def update_purchase_order(
                 old_quantity=old_stock,
                 new_quantity=inv.current_stock,
                 changed_by=user.get('sub'),
-                note=f"Marked PAID - Received from PO #{po_id}"
+                note=f"Marked PAID - Received from PO #{po_id}",
+                tenant_id=tenant_id
             )
             db.add(audit)
 
@@ -252,7 +262,7 @@ def update_purchase_order(
     # If previously PAID and status is changing away, rollback the inventory increase
     elif db_po.status == PurchaseOrderStatus.PAID and new_status != PurchaseOrderStatus.PAID:
         for item in db_po.items:
-            inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item.inventory_item_id).with_for_update().first()
+            inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).with_for_update().first()
             if inv:
                 inv.current_stock = (inv.current_stock or 0) - item.quantity
                 db.add(inv)
@@ -273,9 +283,9 @@ def update_purchase_order(
     db_po = db.query(PurchaseOrderModel).options(
         selectinload(PurchaseOrderModel.items),
         selectinload(PurchaseOrderModel.payments)
-    ).filter(PurchaseOrderModel.id == po_id).first()
+    ).filter(PurchaseOrderModel.id == po_id, PurchaseOrderModel.tenant_id == tenant_id).first()
     
-    logger.info(f"Purchase Order (ID: {po_id}) updated by user {user.get('sub')}")
+    logger.info(f"Purchase Order (ID: {po_id}) updated by user {user.get('sub')} for tenant {tenant_id}")
     return db_po
 
 @router.delete("/{po_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -283,10 +293,11 @@ def delete_purchase_order(
     po_id: int,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
 ):
     """Delete a purchase order. Only DRAFT or CANCELLED POs can be fully deleted.
     Others should be cancelled (status change)."""
-    db_po = db.query(PurchaseOrderModel).filter(PurchaseOrderModel.id == po_id).first()
+    db_po = db.query(PurchaseOrderModel).filter(PurchaseOrderModel.id == po_id, PurchaseOrderModel.tenant_id == tenant_id).first()
     if db_po is None:
         raise HTTPException(status_code=404, detail="Purchase Order not found")
 
@@ -306,14 +317,14 @@ def delete_purchase_order(
         )
     # Restore inventory for items on the deleted PO (undo the earlier increment)
     for item in db_po.items:
-        inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item.inventory_item_id).with_for_update().first()
+        inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).with_for_update().first()
         if inv:
             inv.current_stock = (inv.current_stock or 0) - item.quantity
             db.add(inv)
 
     db.delete(db_po)
     db.commit()
-    logger.info(f"Purchase Order (ID: {po_id}) hard deleted by user {user.get('sub')}")
+    logger.info(f"Purchase Order (ID: {po_id}) hard deleted by user {user.get('sub')} for tenant {tenant_id}")
     return {"message": "Purchase Order deleted successfully"}
 
 # --- Purchase Order Item Endpoints (Nested for managing items within a PO) ---
@@ -324,9 +335,10 @@ def add_item_to_purchase_order(
     item_request: PurchaseOrderItemCreateRequest,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
 ):
     """Add a new item to an existing purchase order."""
-    db_po = db.query(PurchaseOrderModel).filter(PurchaseOrderModel.id == po_id).first()
+    db_po = db.query(PurchaseOrderModel).filter(PurchaseOrderModel.id == po_id, PurchaseOrderModel.tenant_id == tenant_id).first()
     if db_po is None:
         raise HTTPException(status_code=404, detail="Purchase Order not found")
     
@@ -334,14 +346,15 @@ def add_item_to_purchase_order(
     if db_po.status == PurchaseOrderStatus.PAID:
         raise HTTPException(status_code=400, detail=f"Cannot add items to a purchase order with status '{db_po.status.value}'.")
 
-    db_inventory_item = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_request.inventory_item_id).first()
+    db_inventory_item = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_request.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).first()
     if not db_inventory_item:
         raise HTTPException(status_code=400, detail=f"Inventory Item with ID {item_request.inventory_item_id} not found.")
 
     # Check if item already exists in PO (optional: prevent duplicates or update existing)
     existing_item = db.query(PurchaseOrderItemModel).filter(
         PurchaseOrderItemModel.purchase_order_id == po_id,
-        PurchaseOrderItemModel.inventory_item_id == item_request.inventory_item_id
+        PurchaseOrderItemModel.inventory_item_id == item_request.inventory_item_id,
+        PurchaseOrderItemModel.tenant_id == tenant_id
     ).first()
     if existing_item:
         raise HTTPException(status_code=400, detail="This item already exists in this purchase order. Use PATCH to update quantity.")
@@ -352,14 +365,15 @@ def add_item_to_purchase_order(
         inventory_item_id=item_request.inventory_item_id,
         quantity=item_request.quantity,
         price_per_unit=item_request.price_per_unit,
-        line_total=line_total
+        line_total=line_total,
+        tenant_id=tenant_id
     )
     db.add(db_po_item)
     
     # Update total_amount on the PO
     db_po.total_amount += line_total
     # Immediately increase inventory for this PO item
-    inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_request.inventory_item_id).with_for_update().first()
+    inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_request.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).with_for_update().first()
     if inv is None:
         raise HTTPException(status_code=400, detail=f"Inventory Item with ID {item_request.inventory_item_id} not found when updating stock.")
 
@@ -385,7 +399,8 @@ def add_item_to_purchase_order(
         old_quantity=old_stock,
         new_quantity=inv.current_stock,
         changed_by=user.get('sub'),
-        note=f"Added via PO #{po_id}"
+        note=f"Added via PO #{po_id}",
+        tenant_id=tenant_id
     )
     db.add(audit)
     
@@ -396,9 +411,9 @@ def add_item_to_purchase_order(
     db_po = db.query(PurchaseOrderModel).options(
         selectinload(PurchaseOrderModel.items),
         selectinload(PurchaseOrderModel.payments)
-    ).filter(PurchaseOrderModel.id == po_id).first()
+    ).filter(PurchaseOrderModel.id == po_id, PurchaseOrderModel.tenant_id == tenant_id).first()
 
-    logger.info(f"Item added to Purchase Order (ID: {po_id}) by user {user.get('sub')}")
+    logger.info(f"Item added to Purchase Order (ID: {po_id}) by user {user.get('sub')} for tenant {tenant_id}")
     return db_po
 
 @router.patch("/{po_id}/items/{item_id}", response_model=PurchaseOrderSchema)
@@ -408,9 +423,10 @@ def update_item_in_purchase_order(
     item_update: PurchaseOrderItemUpdate,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
 ):
     """Update an item's quantity or price in a purchase order."""
-    db_po = db.query(PurchaseOrderModel).filter(PurchaseOrderModel.id == po_id).first()
+    db_po = db.query(PurchaseOrderModel).filter(PurchaseOrderModel.id == po_id, PurchaseOrderModel.tenant_id == tenant_id).first()
     if db_po is None:
         raise HTTPException(status_code=404, detail="Purchase Order not found")
     
@@ -419,7 +435,8 @@ def update_item_in_purchase_order(
 
     db_po_item = db.query(PurchaseOrderItemModel).filter(
         PurchaseOrderItemModel.id == item_id,
-        PurchaseOrderItemModel.purchase_order_id == po_id
+        PurchaseOrderItemModel.purchase_order_id == po_id,
+        PurchaseOrderItemModel.tenant_id == tenant_id
     ).first()
     if db_po_item is None:
         raise HTTPException(status_code=404, detail="Purchase Order Item not found in this PO.")
@@ -436,7 +453,7 @@ def update_item_in_purchase_order(
     # Adjust inventory by delta
     delta = db_po_item.quantity - old_qty
     if delta != 0:
-        inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == db_po_item.inventory_item_id).with_for_update().first()
+        inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == db_po_item.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).with_for_update().first()
         if inv is None:
             raise HTTPException(status_code=400, detail=f"Inventory Item with ID {db_po_item.inventory_item_id} not found when updating stock.")
         
@@ -462,7 +479,8 @@ def update_item_in_purchase_order(
                 old_quantity=old_stock,
                 new_quantity=inv.current_stock,
                 changed_by=user.get('sub'),
-                note=f"Increased via PO #{po_id} item update (Item ID: {item_id})"
+                note=f"Increased via PO #{po_id} item update (Item ID: {item_id})",
+                tenant_id=tenant_id
             )
             db.add(audit)
         else:
@@ -478,9 +496,9 @@ def update_item_in_purchase_order(
     db_po = db.query(PurchaseOrderModel).options(
         selectinload(PurchaseOrderModel.items),
         selectinload(PurchaseOrderModel.payments)
-    ).filter(PurchaseOrderModel.id == po_id).first()
+    ).filter(PurchaseOrderModel.id == po_id, PurchaseOrderModel.tenant_id == tenant_id).first()
 
-    logger.info(f"Item ID {item_id} in Purchase Order (ID: {po_id}) updated by user {user.get('sub')}")
+    logger.info(f"Item ID {item_id} in Purchase Order (ID: {po_id}) updated by user {user.get('sub')} for tenant {tenant_id}")
     return db_po
 
 @router.delete("/{po_id}/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -489,9 +507,10 @@ def remove_item_from_purchase_order(
     item_id: int,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
 ):
     """Remove an item from a purchase order."""
-    db_po = db.query(PurchaseOrderModel).filter(PurchaseOrderModel.id == po_id).first()
+    db_po = db.query(PurchaseOrderModel).filter(PurchaseOrderModel.id == po_id, PurchaseOrderModel.tenant_id == tenant_id).first()
     if db_po is None:
         raise HTTPException(status_code=404, detail="Purchase Order not found")
 
@@ -500,14 +519,15 @@ def remove_item_from_purchase_order(
         
     db_po_item = db.query(PurchaseOrderItemModel).filter(
         PurchaseOrderItemModel.id == item_id,
-        PurchaseOrderItemModel.purchase_order_id == po_id
+        PurchaseOrderItemModel.purchase_order_id == po_id,
+        PurchaseOrderItemModel.tenant_id == tenant_id
     ).first()
     if db_po_item is None:
         raise HTTPException(status_code=404, detail="Purchase Order Item not found in this PO.")
     
     # Adjust total_amount on the PO and reduce inventory
     db_po.total_amount -= db_po_item.line_total
-    inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == db_po_item.inventory_item_id).with_for_update().first()
+    inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == db_po_item.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).with_for_update().first()
     if inv:
         inv.current_stock = (inv.current_stock or 0) - db_po_item.quantity
         db.add(inv)
@@ -516,7 +536,7 @@ def remove_item_from_purchase_order(
     db.commit()
     db.refresh(db_po) # Refresh the PO to reflect updated total
 
-    logger.info(f"Item ID {item_id} removed from Purchase Order (ID: {po_id}) by user {user.get('sub')}")
+    logger.info(f"Item ID {item_id} removed from Purchase Order (ID: {po_id}) by user {user.get('sub')} for tenant {tenant_id}")
     return {"message": "Item removed successfully"}
 
 @router.post("/{po_id}/receipt")
@@ -525,9 +545,10 @@ def upload_payment_receipt(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
 ):
     """Upload payment receipt for a purchase order."""
-    db_po = db.query(PurchaseOrderModel).filter(PurchaseOrderModel.id == po_id).first()
+    db_po = db.query(PurchaseOrderModel).filter(PurchaseOrderModel.id == po_id, PurchaseOrderModel.tenant_id == tenant_id).first()
     if not db_po:
         raise HTTPException(status_code=404, detail="Purchase Order not found")
     
@@ -537,7 +558,7 @@ def upload_payment_receipt(
         raise HTTPException(status_code=400, detail="Only PDF and image files allowed")
     
     # Create uploads directory
-    upload_dir = "uploads/receipts"
+    upload_dir = f"uploads/receipts/{tenant_id}"
     os.makedirs(upload_dir, exist_ok=True)
     
     # Generate unique filename
@@ -550,7 +571,7 @@ def upload_payment_receipt(
     
     if os.getenv('AWS_ENVIRONMENT') and upload_receipt_to_s3:
         try:
-            s3_url = upload_receipt_to_s3(content, file.filename, po_id)
+            s3_url = upload_receipt_to_s3(content, file.filename, po_id, tenant_id)
             db_po.payment_receipt = s3_url
         except Exception:
             raise HTTPException(status_code=500, detail="Failed to upload to S3")

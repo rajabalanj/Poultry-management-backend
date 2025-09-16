@@ -11,6 +11,7 @@ class SalesOrderItem(BaseModel):
     quantity: Decimal
     price_per_unit: Decimal
     line_total: Decimal
+    tenant_id: str
 
     class Config:
         from_attributes = True

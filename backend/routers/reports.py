@@ -15,11 +15,13 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from sqlalchemy import and_
 import models
 from models.batch import Batch
+from utils.tenancy import get_tenant_id
 
-def get_daily_batches_by_date_range(db: Session, start_date: date, end_date: date):
+def get_daily_batches_by_date_range(db: Session, start_date: date, end_date: date, tenant_id: str):
     return db.query(models.DailyBatch).filter(
         and_(models.DailyBatch.batch_date >= start_date,
-             models.DailyBatch.batch_date <= end_date)
+             models.DailyBatch.batch_date <= end_date,
+             models.DailyBatch.tenant_id == tenant_id)
     ).all()
 
 router = APIRouter(
@@ -28,7 +30,7 @@ router = APIRouter(
 )
 
 @router.get("/snapshot")
-def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None, db: Session = Depends(get_db)):
+def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
     """
     Get a snapshot of batches between the specified start_date and end_date.
     If batch_id is provided, returns all rows for that batch.
@@ -46,7 +48,8 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
     query = db.query(DailyBatch).join(Batch).filter(
         DailyBatch.batch_date >= start_date_obj,
         DailyBatch.batch_date <= end_date_obj,
-        Batch.is_active
+        Batch.is_active,
+        Batch.tenant_id == tenant_id
     )
 
     if batch_id is not None:
@@ -125,11 +128,11 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
 
     return JSONResponse(content=result)
 
-def write_daily_report_excel(batches, report_date=None, file_path=None):
+def write_daily_report_excel(batches, report_date=None, file_path=None, tenant_id: str = None):
     if report_date is None:
         report_date = date.today()
     if file_path is None:
-        file_path = "daily_report_combined.xlsx"  # Using a single combined file
+        file_path = f"daily_report_combined_{tenant_id}.xlsx" if tenant_id else "daily_report_combined.xlsx"
 
     report_date_str = report_date.strftime("%d-%m-%Y")
     header1 = ["DATE", report_date_str, "", "", "DAILY REPORT", "", "", "", "", "", "", "","", ""]
@@ -148,7 +151,7 @@ def write_daily_report_excel(batches, report_date=None, file_path=None):
     found_row = None
     for i in range(ws.max_row, 0, -1):  # Start from last row to first
         row = [cell.value for cell in ws[i]]
-        if row[0] == "DATE" and row[1] == report_date_str:
+        if row and row[0] == "DATE" and row[1] == report_date_str:
             found_row = i
             break
 
@@ -256,5 +259,3 @@ def write_daily_report_excel(batches, report_date=None, file_path=None):
 
     wb.save(file_path)
     return file_path
-
-

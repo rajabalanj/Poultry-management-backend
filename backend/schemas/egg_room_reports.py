@@ -17,6 +17,7 @@ class EggRoomReportBase(BaseModel):
     jumbo_transfer: Optional[int]
     jumbo_waste: Optional[int]
     jumbo_out: Optional[int]
+    tenant_id: str
 
 class EggRoomReportCreate(EggRoomReportBase):
     report_date: date

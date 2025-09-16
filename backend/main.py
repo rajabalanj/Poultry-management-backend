@@ -41,6 +41,7 @@ import routers.inventory_items as inventory_items
 import routers.sales_orders as sales_orders
 import routers.sales_payments as sales_payments
 from utils.auth_utils import get_current_user, require_group
+from utils.tenancy import get_tenant_id
 
 
 from fastapi.staticfiles import StaticFiles
@@ -125,30 +126,30 @@ async def test_route():
     return {"message": "Welcome to the FastAPI application!"}
 
 @app.post("/compositions/", response_model=Composition)
-def create_composition(composition: CompositionCreate, db: Session = Depends(get_db), user: dict = Depends(require_group(["admin"]))):
-    return crud_composition.create_composition(db, composition)
+def create_composition(composition: CompositionCreate, db: Session = Depends(get_db), user: dict = Depends(require_group(["admin"])), tenant_id: str = Depends(get_tenant_id)):
+    return crud_composition.create_composition(db, composition, tenant_id)
 
 @app.get("/compositions/{composition_id}", response_model=Composition)
-def read_composition(composition_id: int, db: Session = Depends(get_db)):
-    db_composition = crud_composition.get_composition(db, composition_id)
+def read_composition(composition_id: int, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
+    db_composition = crud_composition.get_composition(db, composition_id, tenant_id)
     if db_composition is None:
         raise HTTPException(status_code=404, detail="Composition not found")
     return db_composition
 
 @app.get("/compositions/", response_model=List[Composition])
-def read_compositions(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    return crud_composition.get_compositions(db, skip=skip, limit=limit)
+def read_compositions(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
+    return crud_composition.get_compositions(db, skip=skip, limit=limit, tenant_id=tenant_id)
 
 @app.put("/compositions/{composition_id}", response_model=Composition)
-def update_composition(composition_id: int, composition: CompositionCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
-    db_composition = crud_composition.update_composition(db, composition_id, composition)
+def update_composition(composition_id: int, composition: CompositionCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user), tenant_id: str = Depends(get_tenant_id)):
+    db_composition = crud_composition.update_composition(db, composition_id, composition, tenant_id)
     if db_composition is None:
         raise HTTPException(status_code=404, detail="Composition not found")
     return db_composition
 
 @app.delete("/compositions/{composition_id}")
-def delete_composition(composition_id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
-    success = crud_composition.delete_composition(db, composition_id)
+def delete_composition(composition_id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user), tenant_id: str = Depends(get_tenant_id)):
+    success = crud_composition.delete_composition(db, composition_id, tenant_id)
     if not success:
         raise HTTPException(status_code=404, detail="Composition not found")
     return {"message": "Composition deleted"}
@@ -157,7 +158,8 @@ def delete_composition(composition_id: int, db: Session = Depends(get_db), user:
 def use_composition_endpoint(
     data: dict,
     db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
 ):
     composition_id = data["compositionId"]
     shed_no = data["shed_no"]
@@ -173,13 +175,13 @@ def use_composition_endpoint(
         used_at_dt = datetime.now()
 
     # Find the batch_id based on shed_no
-    batch = db.query(BatchModel).filter(BatchModel.shed_no == shed_no, BatchModel.is_active == True).first()
+    batch = db.query(BatchModel).filter(BatchModel.shed_no == shed_no, BatchModel.is_active == True, BatchModel.tenant_id == tenant_id).first()
     if not batch:
         raise HTTPException(status_code=404, detail=f"Active batch with shed_no '{shed_no}' not found.")
     batch_id = batch.id
 
     # Call use_composition and pass changed_by (user from token)
-    usage = use_composition(db, composition_id, batch_id, times, used_at_dt, changed_by=user.get('sub'))
+    usage = use_composition(db, composition_id, batch_id, times, used_at_dt, changed_by=user.get('sub'), tenant_id=tenant_id)
     
     # Now, 'usage' object should have its ID populated
     if usage and hasattr(usage, 'id'):
@@ -190,41 +192,44 @@ def use_composition_endpoint(
 
 @app.get("/compositions/usage-history", response_model=list[CompositionUsageHistory])
 def get_all_composition_usage_history(
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant_id)
 ):
-    return get_composition_usage_history(db)
+    return get_composition_usage_history(db, tenant_id=tenant_id)
 
 @app.get("/compositions/{composition_id}/usage-history", response_model=list[CompositionUsageHistory])
 def get_composition_usage_history_endpoint(
     composition_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant_id)
 ):
-    return get_composition_usage_history(db, composition_id)
+    return get_composition_usage_history(db, composition_id, tenant_id=tenant_id)
 
 @app.post("/compositions/revert-usage/{usage_id}")
 def revert_composition_usage_endpoint(
     usage_id: int,
     db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
 ):
     """
     Reverts a specific composition usage by ID.
     Adds back the quantities to feeds and deletes the usage history record.
     """
-    success, message = revert_composition_usage(db, usage_id, changed_by=user.get('sub'))
+    success, message = revert_composition_usage(db, usage_id, changed_by=user.get('sub'), tenant_id=tenant_id)
     if not success:
         raise HTTPException(status_code=404, detail=message)
     return {"message": message}
 
 @app.patch("/compositions/{composition_id}", response_model=Composition)
-def patch_composition(composition_id: int, composition: CompositionCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
-    db_composition = crud_composition.update_composition(db, composition_id, composition)
+def patch_composition(composition_id: int, composition: CompositionCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user), tenant_id: str = Depends(get_tenant_id)):
+    db_composition = crud_composition.update_composition(db, composition_id, composition, tenant_id)
     if db_composition is None:
         raise HTTPException(status_code=404, detail="Composition not found")
     return db_composition
 
 @app.post("/daily-batch/upload-excel/")
-def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends(get_db), user: dict = Depends(get_current_user), tenant_id: str = Depends(get_tenant_id)):
     """
     Upload and process an Excel file for daily batch data.
     This function processes multiple daily reports within a single Excel file.
@@ -235,7 +240,7 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
         df = pd.read_excel(io.BytesIO(contents), header=None)
 
         # Get all valid shed_nos from the batch table for validation
-        all_batches = db.query(BatchModel).all()
+        all_batches = db.query(BatchModel).filter(BatchModel.tenant_id == tenant_id).all()
         valid_shed_nos = {b.shed_no for b in all_batches}
 
         # Find all rows that contain 'DATE' in the first column
@@ -304,7 +309,7 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
                     continue
 
                 # Retrieve the internal batch_id from your database based on shed_no
-                batch_obj = db.query(BatchModel).filter(BatchModel.shed_no == shed_no_excel).first()
+                batch_obj = db.query(BatchModel).filter(BatchModel.shed_no == shed_no_excel, BatchModel.tenant_id == tenant_id).first()
                 batch_id_for_daily_batch = batch_obj.id if batch_obj else None
 
                 if not batch_id_for_daily_batch:
@@ -323,6 +328,7 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
                 # Create an instance of DailyBatchCreate schema
                 daily_batch_instance = DailyBatchCreate(
                     batch_id=batch_id_for_daily_batch,
+                    tenant_id=tenant_id,
                     shed_no=shed_no_excel,
                     batch_no=f"B-{batch_id_excel:04d}", # Format batch_id_excel with leading zeros
                     upload_date=date.today(),
@@ -470,8 +476,8 @@ def update_daily_batch(
     return daily_batch
 
 @app.post("/configurations/", response_model=AppConfigOut)
-def create_config(config: AppConfigCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
-    return crud_app_config.create_config(db, config)
+def create_config(config: AppConfigCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user), tenant_id: str = Depends(get_tenant_id)):
+    return crud_app_config.create_config(db, config, tenant_id)
 
 
 @app.get("/configurations/", response_model=List[AppConfigOut])
@@ -491,10 +497,12 @@ def update_config(name: str, config: AppConfigUpdate, db: Session = Depends(get_
 from typing import List
 from fastapi import Query
 
-@app.get("/daily-batch/", response_model=List[dict])
-def get_daily_batches(
+@app.post("/daily-batch/", response_model=List[dict])
+def create_or_get_daily_batches(
     batch_date: date = Query(..., description="Date for which to fetch daily batches"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
 ):
     """
     Fetch all daily_batch rows for a given batch_date.
@@ -504,25 +512,30 @@ def get_daily_batches(
     from models.daily_batch import DailyBatch as DailyBatchModel
     from models.batch import Batch as BatchModel
     from utils import calculate_age_progression
-    
+
+
     today = date.today()
-    
-    # Get all active batches, ordered by batch_no
-    active_batches = db.query(BatchModel).filter(BatchModel.is_active).order_by(BatchModel.batch_no).all()
-    
-    # Get existing daily batches for the given date and map them by batch_id
+
+    # Get all active batches for the tenant, ordered by batch_no
+    active_batches = db.query(BatchModel).filter(
+        BatchModel.is_active,
+        BatchModel.tenant_id == tenant_id
+    ).order_by(BatchModel.batch_no).all()
+
+    # Get existing daily batches for the given date and tenant, and map them by batch_id
     existing_daily_batches = db.query(DailyBatchModel).join(BatchModel).filter(
-        DailyBatchModel.batch_date == batch_date, BatchModel.is_active
+        DailyBatchModel.batch_date == batch_date,
+        BatchModel.tenant_id == tenant_id,
+        BatchModel.is_active
     ).all()
     existing_daily_batches_map = {db.batch_id: db for db in existing_daily_batches}
-    
+
     result_list = []
-    
+
     for batch in active_batches:
         if batch.id in existing_daily_batches_map:
             # Use existing daily batch
             daily = existing_daily_batches_map[batch.id]
-            # Manually construct dict to ensure all fields, including batch_no, are present
             d = {c.name: getattr(daily, c.name) for c in daily.__table__.columns}
             d['closing_count'] = daily.closing_count
             d['hd'] = daily.hd
@@ -542,7 +555,7 @@ def get_daily_batches(
                     "requested_date": batch_date.isoformat()
                 })
                 continue
-            
+
             # Find the most recent previous daily_batch for this batch
             prev_daily = db.query(DailyBatchModel).filter(
                 DailyBatchModel.batch_id == batch.id,
@@ -558,8 +571,6 @@ def get_daily_batches(
                 days_diff = (batch_date - prev_daily.batch_date).days
                 age = calculate_age_progression(prev_age, days_diff)
             else:
-                # This is the first daily record to be generated for this batch.
-                # Calculate age based on batch start date.
                 opening_count = batch.opening_count
                 try:
                     base_age = float(batch.age)
@@ -570,6 +581,7 @@ def get_daily_batches(
 
             db_daily = DailyBatchModel(
                 batch_id=batch.id,
+                tenant_id=tenant_id,
                 shed_no=batch.shed_no,
                 batch_no=batch.batch_no,
                 upload_date=today,
@@ -585,8 +597,7 @@ def get_daily_batches(
             db.add(db_daily)
             db.commit()
             db.refresh(db_daily)
-            
-            # Manually construct dict to ensure all fields are present
+
             d = {c.name: getattr(db_daily, c.name) for c in db_daily.__table__.columns}
             d['closing_count'] = db_daily.closing_count
             d['hd'] = db_daily.hd
@@ -594,8 +605,7 @@ def get_daily_batches(
             d['batch_type'] = db_daily.batch_type
             d['standard_hen_day_percentage'] = db_daily.standard_hen_day_percentage
             result_list.append(d)
-            
-    # Sort the final list by 'batch_no' before returning
+
     result_list.sort(key=lambda x: x.get('batch_no', float('inf')))
 
     return result_list
@@ -604,6 +614,7 @@ def get_daily_batches(
 def get_usage_by_date(
     usage_date: date,
     batch_id: Optional[int] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant_id)
 ):
-    return get_composition_usage_by_date(db, usage_date, batch_id)
+    return get_composition_usage_by_date(db, usage_date, batch_id, tenant_id=tenant_id)

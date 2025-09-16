@@ -4,6 +4,7 @@ from typing import Optional
 class AppConfigBase(BaseModel):
     name: str
     value: str
+    tenant_id: Optional[str] = None
 
 class AppConfigCreate(AppConfigBase):
     pass

@@ -7,7 +7,8 @@ class InventoryItem(Base):
     __tablename__ = "inventory_items"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, unique=True, nullable=False)
+    tenant_id = Column(String, index=True)
+    name = Column(String, nullable=False)
     unit = Column(String, nullable=False) # e.g., "kg", "tons", "liters", "units"
     category = Column(String, nullable=True) # e.g., "Feed", "Medicine", "Cleaning Supplies"
     current_stock = Column(Numeric(10, 3), default=0.0, nullable=False) # Increased precision

@@ -6,6 +6,7 @@ from decimal import Decimal
 import os
 import uuid
 from utils.auth_utils import get_current_user
+from utils.tenancy import get_tenant_id
 
 try:
     from utils.s3_upload import upload_receipt_to_s3
@@ -25,9 +26,10 @@ def create_payment(
     payment: PaymentCreate,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
 ):
     """Record a new payment for a purchase order."""
-    db_po = db.query(PurchaseOrderModel).filter(PurchaseOrderModel.id == payment.purchase_order_id).first()
+    db_po = db.query(PurchaseOrderModel).filter(PurchaseOrderModel.id == payment.purchase_order_id, PurchaseOrderModel.tenant_id == tenant_id).first()
     if db_po is None:
         raise HTTPException(status_code=404, detail="Purchase Order not found for this payment.")
 
@@ -41,7 +43,7 @@ def create_payment(
             detail=f"Payment amount ({payment.amount_paid}) exceeds remaining due amount ({remaining_amount}) for PO {db_po.id}."
         )
 
-    db_payment = PaymentModel(**payment.model_dump())
+    db_payment = PaymentModel(**payment.model_dump(), tenant_id=tenant_id)
     db.add(db_payment)
     db.commit()
     db.refresh(db_payment)
@@ -60,23 +62,23 @@ def create_payment(
     db.commit() # Commit PO status update
     db.refresh(db_payment) # Re-refresh payment to ensure everything is in sync for response
 
-    logger.info(f"Payment of {payment.amount_paid} recorded for Purchase Order ID {payment.purchase_order_id} by user {user.get('sub')}")
+    logger.info(f"Payment of {payment.amount_paid} recorded for Purchase Order ID {payment.purchase_order_id} by user {user.get('sub')} for tenant {tenant_id}")
     return db_payment
 
 @router.get("/by-po/{po_id}", response_model=List[Payment])
-def get_payments_for_po(po_id: int, db: Session = Depends(get_db)):
+def get_payments_for_po(po_id: int, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
     """Retrieve all payments for a specific purchase order."""
-    db_po = db.query(PurchaseOrderModel).filter(PurchaseOrderModel.id == po_id).first()
+    db_po = db.query(PurchaseOrderModel).filter(PurchaseOrderModel.id == po_id, PurchaseOrderModel.tenant_id == tenant_id).first()
     if db_po is None:
         raise HTTPException(status_code=404, detail="Purchase Order not found.")
     
-    payments = db.query(PaymentModel).filter(PaymentModel.purchase_order_id == po_id).order_by(PaymentModel.payment_date.asc()).all()
+    payments = db.query(PaymentModel).filter(PaymentModel.purchase_order_id == po_id, PaymentModel.tenant_id == tenant_id).order_by(PaymentModel.payment_date.asc()).all()
     return payments
 
 @router.get("/{payment_id}", response_model=Payment)
-def read_payment(payment_id: int, db: Session = Depends(get_db)):
+def read_payment(payment_id: int, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
     """Retrieve a single payment by ID."""
-    db_payment = db.query(PaymentModel).filter(PaymentModel.id == payment_id).first()
+    db_payment = db.query(PaymentModel).filter(PaymentModel.id == payment_id, PaymentModel.tenant_id == tenant_id).first()
     if db_payment is None:
         raise HTTPException(status_code=404, detail="Payment not found")
     return db_payment
@@ -87,9 +89,10 @@ def update_payment(
     payment_update: PaymentUpdate,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
 ):
     """Update an existing payment."""
-    db_payment = db.query(PaymentModel).filter(PaymentModel.id == payment_id).first()
+    db_payment = db.query(PaymentModel).filter(PaymentModel.id == payment_id, PaymentModel.tenant_id == tenant_id).first()
     if db_payment is None:
         raise HTTPException(status_code=404, detail="Payment not found")
 
@@ -118,7 +121,7 @@ def update_payment(
         db.commit()
         db.refresh(db_po)
 
-    logger.info(f"Payment ID {payment_id} updated for Purchase Order ID {db_payment.purchase_order_id} by user {user.get('sub')}")
+    logger.info(f"Payment ID {payment_id} updated for Purchase Order ID {db_payment.purchase_order_id} by user {user.get('sub')} for tenant {tenant_id}")
     return db_payment
 
 @router.delete("/{payment_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -126,9 +129,10 @@ def delete_payment(
     payment_id: int,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
 ):
     """Delete a payment."""
-    db_payment = db.query(PaymentModel).filter(PaymentModel.id == payment_id).first()
+    db_payment = db.query(PaymentModel).filter(PaymentModel.id == payment_id, PaymentModel.tenant_id == tenant_id).first()
     if db_payment is None:
         raise HTTPException(status_code=404, detail="Payment not found")
 
@@ -150,7 +154,7 @@ def delete_payment(
 
         db.commit()
 
-    logger.info(f"Payment ID {payment_id} deleted for Purchase Order ID {db_payment.purchase_order_id} by user {user.get('sub')}")
+    logger.info(f"Payment ID {payment_id} deleted for Purchase Order ID {db_payment.purchase_order_id} by user {user.get('sub')} for tenant {tenant_id}")
     return {"message": "Payment deleted successfully"}
 
 @router.post("/{payment_id}/receipt")
@@ -159,9 +163,10 @@ def upload_payment_receipt(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
 ):
     """Upload payment receipt for a payment."""
-    db_payment = db.query(PaymentModel).filter(PaymentModel.id == payment_id).first()
+    db_payment = db.query(PaymentModel).filter(PaymentModel.id == payment_id, PaymentModel.tenant_id == tenant_id).first()
     if not db_payment:
         raise HTTPException(status_code=404, detail="Payment not found")
     
@@ -171,7 +176,7 @@ def upload_payment_receipt(
         raise HTTPException(status_code=400, detail="Only PDF and image files allowed")
     
     # Create uploads directory
-    upload_dir = "uploads/payment_receipts"
+    upload_dir = f"uploads/payment_receipts/{tenant_id}"
     os.makedirs(upload_dir, exist_ok=True)
     
     # Generate unique filename
@@ -184,7 +189,7 @@ def upload_payment_receipt(
     
     if os.getenv('AWS_ENVIRONMENT') and upload_receipt_to_s3:
         try:
-            s3_url = upload_receipt_to_s3(content, file.filename, payment_id)
+            s3_url = upload_receipt_to_s3(content, file.filename, payment_id, tenant_id)
             db_payment.payment_receipt = s3_url
         except Exception:
             raise HTTPException(status_code=500, detail="Failed to upload to S3")

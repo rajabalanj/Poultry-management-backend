@@ -6,6 +6,7 @@ from decimal import Decimal
 import os
 import uuid
 from utils.auth_utils import get_current_user
+from utils.tenancy import get_tenant_id
 
 try:
     from utils.s3_upload import upload_receipt_to_s3
@@ -25,9 +26,10 @@ def create_sales_payment(
     payment: SalesPaymentCreate,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
 ):
     """Record a new payment for a sales order."""
-    db_so = db.query(SalesOrderModel).filter(SalesOrderModel.id == payment.sales_order_id).first()
+    db_so = db.query(SalesOrderModel).filter(SalesOrderModel.id == payment.sales_order_id, SalesOrderModel.tenant_id == tenant_id).first()
     if db_so is None:
         raise HTTPException(status_code=404, detail="Sales Order not found for this payment.")
 
@@ -40,7 +42,7 @@ def create_sales_payment(
             detail=f"Payment amount ({payment.amount_paid}) exceeds remaining due amount ({remaining_amount}) for SO {db_so.id}."
         )
 
-    db_payment = SalesPaymentModel(**payment.model_dump())
+    db_payment = SalesPaymentModel(**payment.model_dump(), tenant_id=tenant_id)
     db.add(db_payment)
     db.commit()
     db.refresh(db_payment)
@@ -59,23 +61,23 @@ def create_sales_payment(
     db.commit()
     db.refresh(db_payment)
 
-    logger.info(f"Payment of {payment.amount_paid} recorded for Sales Order ID {payment.sales_order_id} by user {user.get('sub')}")
+    logger.info(f"Payment of {payment.amount_paid} recorded for Sales Order ID {payment.sales_order_id} by user {user.get('sub')} for tenant {tenant_id}")
     return db_payment
 
 @router.get("/by-so/{so_id}", response_model=List[SalesPayment])
-def get_payments_for_so(so_id: int, db: Session = Depends(get_db)):
+def get_payments_for_so(so_id: int, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
     """Retrieve all payments for a specific sales order."""
-    db_so = db.query(SalesOrderModel).filter(SalesOrderModel.id == so_id).first()
+    db_so = db.query(SalesOrderModel).filter(SalesOrderModel.id == so_id, SalesOrderModel.tenant_id == tenant_id).first()
     if db_so is None:
         raise HTTPException(status_code=404, detail="Sales Order not found.")
     
-    payments = db.query(SalesPaymentModel).filter(SalesPaymentModel.sales_order_id == so_id).order_by(SalesPaymentModel.payment_date.asc()).all()
+    payments = db.query(SalesPaymentModel).filter(SalesPaymentModel.sales_order_id == so_id, SalesPaymentModel.tenant_id == tenant_id).order_by(SalesPaymentModel.payment_date.asc()).all()
     return payments
 
 @router.get("/{payment_id}", response_model=SalesPayment)
-def read_sales_payment(payment_id: int, db: Session = Depends(get_db)):
+def read_sales_payment(payment_id: int, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
     """Retrieve a single sales payment by ID."""
-    db_payment = db.query(SalesPaymentModel).filter(SalesPaymentModel.id == payment_id).first()
+    db_payment = db.query(SalesPaymentModel).filter(SalesPaymentModel.id == payment_id, SalesPaymentModel.tenant_id == tenant_id).first()
     if db_payment is None:
         raise HTTPException(status_code=404, detail="Sales Payment not found")
     return db_payment
@@ -86,9 +88,10 @@ def update_sales_payment(
     payment_update: SalesPaymentUpdate,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
 ):
     """Update an existing sales payment."""
-    db_payment = db.query(SalesPaymentModel).filter(SalesPaymentModel.id == payment_id).first()
+    db_payment = db.query(SalesPaymentModel).filter(SalesPaymentModel.id == payment_id, SalesPaymentModel.tenant_id == tenant_id).first()
     if db_payment is None:
         raise HTTPException(status_code=404, detail="Sales Payment not found")
 
@@ -117,7 +120,7 @@ def update_sales_payment(
         db.commit()
         db.refresh(db_so)
 
-    logger.info(f"Sales Payment ID {payment_id} updated for Sales Order ID {db_payment.sales_order_id} by user {user.get('sub')}")
+    logger.info(f"Sales Payment ID {payment_id} updated for Sales Order ID {db_payment.sales_order_id} by user {user.get('sub')} for tenant {tenant_id}")
     return db_payment
 
 @router.delete("/{payment_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -125,9 +128,10 @@ def delete_sales_payment(
     payment_id: int,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
 ):
     """Delete a sales payment."""
-    db_payment = db.query(SalesPaymentModel).filter(SalesPaymentModel.id == payment_id).first()
+    db_payment = db.query(SalesPaymentModel).filter(SalesPaymentModel.id == payment_id, SalesPaymentModel.tenant_id == tenant_id).first()
     if db_payment is None:
         raise HTTPException(status_code=404, detail="Sales Payment not found")
 
@@ -149,17 +153,18 @@ def delete_sales_payment(
 
         db.commit()
 
-    logger.info(f"Sales Payment ID {payment_id} deleted for Sales Order ID {db_payment.sales_order_id}  by user {user.get('sub')}")
+    logger.info(f"Sales Payment ID {payment_id} deleted for Sales Order ID {db_payment.sales_order_id}  by user {user.get('sub')} for tenant {tenant_id}")
     return {"message": "Sales Payment deleted successfully"}
 
 @router.post("/{payment_id}/receipt")
 def upload_payment_receipt(
     payment_id: int,
     file: UploadFile = File(...),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant_id)
 ):
     """Upload payment receipt for a sales payment."""
-    db_payment = db.query(SalesPaymentModel).filter(SalesPaymentModel.id == payment_id).first()
+    db_payment = db.query(SalesPaymentModel).filter(SalesPaymentModel.id == payment_id, SalesPaymentModel.tenant_id == tenant_id).first()
     if not db_payment:
         raise HTTPException(status_code=404, detail="Sales Payment not found")
     
@@ -167,7 +172,7 @@ def upload_payment_receipt(
     if file.content_type not in allowed_types:
         raise HTTPException(status_code=400, detail="Only PDF and image files allowed")
     
-    upload_dir = "uploads/sales_payment_receipts"
+    upload_dir = f"uploads/sales_payment_receipts/{tenant_id}"
     os.makedirs(upload_dir, exist_ok=True)
     
     file_extension = file.filename.split('.')[-1]
@@ -178,7 +183,7 @@ def upload_payment_receipt(
     
     if os.getenv('AWS_ENVIRONMENT') and upload_receipt_to_s3:
         try:
-            s3_url = upload_receipt_to_s3(content, file.filename, payment_id)
+            s3_url = upload_receipt_to_s3(content, file.filename, payment_id, tenant_id)
             db_payment.payment_receipt = s3_url
         except Exception:
             raise HTTPException(status_code=500, detail="Failed to upload to S3")

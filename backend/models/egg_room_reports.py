@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Date, Integer, DateTime, func
+from sqlalchemy import Column, Date, Integer, DateTime, func, String
 from sqlalchemy.orm import column_property, synonym
 from database import Base
 
@@ -6,6 +6,7 @@ class EggRoomReport(Base):
     __tablename__ = "egg_room_reports"
 
     report_date = Column(Date, primary_key=True)
+    tenant_id = Column(String, primary_key=True, index=True)
 
     # User-entered data
     table_received = Column(Integer, default=0)

@@ -8,6 +8,7 @@ class BovansPerformanceSchema(BaseModel):
     feed_intake_per_day_g: int
     feed_intake_cum_kg: float
     body_weight_g: int
+    tenant_id: str
 
     class Config:
         # This enables ORM mode, allowing Pydantic to read data directly from SQLAlchemy models.

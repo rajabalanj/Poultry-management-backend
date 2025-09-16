@@ -12,6 +12,7 @@ class InventoryItemUsageHistory(Base):
     used_at = Column(DateTime, default=datetime.utcnow)
     batch_id = Column(Integer, ForeignKey("batch.id"), nullable=False)
     changed_by = Column(String, nullable=True)
+    tenant_id = Column(String, index=True)
 
     inventory_item = relationship("InventoryItem", back_populates="usage_history")
     batch = relationship("Batch")

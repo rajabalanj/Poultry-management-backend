@@ -16,6 +16,7 @@ class Payment(Base):
     payment_receipt = Column(String(500), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, onupdate=func.now())
+    tenant_id = Column(String, index=True)
 
     # Relationships
     purchase_order = relationship("PurchaseOrder", back_populates="payments")

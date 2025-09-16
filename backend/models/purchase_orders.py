@@ -24,6 +24,7 @@ class PurchaseOrder(Base):
     created_by = Column(String, nullable=True) # Assuming a user ID string or name for auditing
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, onupdate=func.now())
+    tenant_id = Column(String, index=True)
 
     # Relationships
     vendor = relationship("BusinessPartner", back_populates="purchase_orders", foreign_keys=[vendor_id])

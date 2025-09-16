@@ -6,9 +6,10 @@ from models.batch import Batch as BatchModel
 from schemas.batch import BatchCreate, Batch as BatchSchema
 from datetime import date
 from typing import List, Optional
-import crud.batch as crud_batch  # Assuming BatchCreate and BatchSchema exist
+import crud.batch as crud_batch
 from database import get_db
 from schemas.bovanswhitelayerperformance import BovansPerformanceSchema, PaginatedBovansPerformanceResponse
+from utils.tenancy import get_tenant_id
 
 # --- Logging Configuration (import and get logger) ---
 import logging
@@ -24,28 +25,32 @@ router = APIRouter(
 def create_batch(
     batch: BatchCreate, 
     db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
 ):
     # Application-level uniqueness check for active batches
     existing = db.query(BatchModel).filter(
-        ((BatchModel.shed_no == batch.shed_no) | (BatchModel.batch_no == batch.batch_no)) & (BatchModel.is_active == True)
+        ((BatchModel.shed_no == batch.shed_no) | (BatchModel.batch_no == batch.batch_no)) & 
+        (BatchModel.is_active == True) &
+        (BatchModel.tenant_id == tenant_id)
     ).first()
     if existing:
         raise HTTPException(status_code=400, detail="An active batch with the same shed_no or batch_no already exists.")
-    return crud_batch.create_batch(db=db, batch=batch, changed_by=user.get('sub'))
+    return crud_batch.create_batch(db=db, batch=batch, tenant_id=tenant_id, changed_by=user.get('sub'))
 
 @router.get("/all/", response_model=List[BatchSchema])
 def get_all_batches(
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant_id)
 ):
     """
     Fetch all active batches with pagination.
     """
     try:
         # Filter by the is_active hybrid property
-        batches = db.query(BatchModel).filter(BatchModel.is_active == True).order_by(BatchModel.batch_no).offset(skip).limit(limit).all()
+        batches = db.query(BatchModel).filter(BatchModel.is_active == True, BatchModel.tenant_id == tenant_id).order_by(BatchModel.batch_no).offset(skip).limit(limit).all()
         result = []
         for batch in batches:
             d = batch.__dict__.copy()
@@ -57,16 +62,13 @@ def get_all_batches(
             result.append(d)
         return result
     except Exception as e:
-        # It's good practice to log the full exception for debugging
-        # Assuming you have a logger configured
-        # import logging
-        # logger = logging.getLogger(__name__)
         logger.exception(f"Error fetching active batches (skip={skip}, limit={limit}): {e}")
         raise HTTPException(status_code=500, detail="Internal server error while fetching active batches.")
+
 @router.get("/")
-def read_batches(batch_date: date, skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+def read_batches(batch_date: date, skip: int = 0, limit: int = 100, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
     logger.info("Fetching batches with skip=%d, limit=%d, batch_date=%s", skip, limit, batch_date)
-    batches = crud_batch.get_all_batches(db, skip=skip, limit=limit, batch_date=batch_date)
+    batches = crud_batch.get_all_batches(db, skip=skip, limit=limit, batch_date=batch_date, tenant_id=tenant_id)
     logger.info("Fetched %d batches", len(batches))
     result = []
     for batch in batches:
@@ -80,11 +82,11 @@ def read_batches(batch_date: date, skip: int = 0, limit: int = 100, db: Session 
     return result
 
 @router.get("/{batch_id}", response_model=BatchSchema)
-def read_batch(batch_id: int, db: Session = Depends(get_db)):
+def read_batch(batch_id: int, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
     logger.info("Fetching batch with batch_id=%d", batch_id)
-    db_batch = db.query(BatchModel).filter(BatchModel.id == batch_id).first()
+    db_batch = db.query(BatchModel).filter(BatchModel.id == batch_id, BatchModel.tenant_id == tenant_id).first()
     if db_batch is None:
-        logger.warning("Batch with batch_id=%d not found", batch_id)
+        logger.warning("Batch with batch_id=%d not found for tenant %s", batch_id, tenant_id)
         raise HTTPException(status_code=404, detail="Batch not found")
     logger.info("Fetched batch: %s", db_batch)
     d = db_batch.__dict__.copy()
@@ -100,13 +102,15 @@ def update_batch(
     batch_id: int,
     batch_data: dict,
     db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
 ):
     from utils import calculate_age_progression
-    db_batch = db.query(BatchModel).filter(BatchModel.id == batch_id).first()
+    db_batch = db.query(BatchModel).filter(BatchModel.id == batch_id, BatchModel.tenant_id == tenant_id).first()
     if db_batch is None:
         raise HTTPException(status_code=404, detail="Batch not found")
 
+    # ... (rest of the update logic remains the same)
     changes = {}
     old_date = db_batch.date
     new_date = batch_data.get("date")
@@ -213,26 +217,25 @@ def update_batch(
 
     return db_batch
 
-
-
 @router.delete("/{batch_id}")
 def delete_batch(
     batch_id: int, 
     db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
 ):
-    success = crud_batch.delete_batch(db, batch_id=batch_id, changed_by=user.get('sub'))
+    success = crud_batch.delete_batch(db, batch_id=batch_id, tenant_id=tenant_id, changed_by=user.get('sub'))
     if not success:
         raise HTTPException(status_code=404, detail="Batch not found")
     return {"message": "Batch deleted successfully"}
 
 @router.put("/{batch_id}/close")
-def close_batch(batch_id: int, db: Session = Depends(get_db)):
-    batch = db.query(BatchModel).get(batch_id)
+def close_batch(batch_id: int, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
+    batch = db.query(BatchModel).filter(BatchModel.id == batch_id, BatchModel.tenant_id == tenant_id).first()
     if batch:
         batch.closing_date = date.today()
         db.add(batch)
         db.commit()
         return {"message": "Batch closed successfully"}
     else:
-        return {"error": "Batch not found"}, 404
+        raise HTTPException(status_code=404, detail="Batch not found")

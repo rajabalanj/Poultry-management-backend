@@ -11,13 +11,14 @@ from models.egg_room_reports import EggRoomReport
 from models.app_config import AppConfig # Import AppConfig
 from datetime import datetime, date, timedelta # Import date for comparison
 from utils.auth_utils import get_current_user
+from utils.tenancy import get_tenant_id
 
 router = APIRouter(prefix="/egg-room-report", tags=["egg_room_reports"])
 logger = logging.getLogger("egg_room_reports")
 
-def get_system_start_date(db: Session) -> date:
+def get_system_start_date(db: Session, tenant_id: str) -> date:
     """Fetches the system start date from AppConfig."""
-    start_date_config = db.query(AppConfig).filter(AppConfig.name == 'system_start_date').first()
+    start_date_config = db.query(AppConfig).filter(AppConfig.name == 'system_start_date', AppConfig.tenant_id == tenant_id).first()
     if not start_date_config:
         # Define a default or raise an error if not configured
         # For production, it's better to ensure this is configured
@@ -30,10 +31,10 @@ def get_system_start_date(db: Session) -> date:
         return date(2000, 1, 1) # Fallback for malformed date
 
 @router.get("/{report_date}")
-def get_report(report_date: str, db: Session = Depends(get_db)):
+def get_report(report_date: str, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
     try:
         requested_date = datetime.strptime(report_date, "%Y-%m-%d").date()
-        system_start_date = get_system_start_date(db)
+        system_start_date = get_system_start_date(db, tenant_id)
 
         if requested_date < system_start_date:
             raise HTTPException(
@@ -41,11 +42,12 @@ def get_report(report_date: str, db: Session = Depends(get_db)):
                 detail=f"Report date {report_date} cannot be before the system start date of {system_start_date.isoformat()}."
             )
 
-        report = egg_crud.get_report_by_date(db, report_date)
+        report = egg_crud.get_report_by_date(db, report_date, tenant_id)
 
         # Get previous day's closing for opening balance calculation
         prev_report = db.query(EggRoomReport).filter(
-            EggRoomReport.report_date < requested_date
+            EggRoomReport.report_date < requested_date,
+            EggRoomReport.tenant_id == tenant_id
         ).order_by(EggRoomReport.report_date.desc()).first()
 
         if not report:
@@ -61,7 +63,7 @@ def get_report(report_date: str, db: Session = Depends(get_db)):
                 jumbo_received=0, jumbo_transfer=0, jumbo_waste=0, jumbo_out=0,
                 grade_c_shed_received=0, grade_c_transfer=0, grade_c_labour=0, grade_c_waste=0,
             )
-            report = egg_crud.create_report(db, dummy_data)
+            report = egg_crud.create_report(db, dummy_data, tenant_id)
         elif prev_report and (
             report.table_opening != prev_report.table_closing or
             report.jumbo_opening != prev_report.jumbo_closing or
@@ -112,10 +114,10 @@ def get_report(report_date: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
 @router.post("/", response_model=EggRoomReportResponse)
-def create_report(report: EggRoomReportCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def create_report(report: EggRoomReportCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user), tenant_id: str = Depends(get_tenant_id)):
     try:
         requested_date = report.report_date # Already a date object from Pydantic
-        system_start_date = get_system_start_date(db)
+        system_start_date = get_system_start_date(db, tenant_id)
 
         if requested_date < system_start_date:
             raise HTTPException(
@@ -129,14 +131,14 @@ def create_report(report: EggRoomReportCreate, db: Session = Depends(get_db), cu
             )
 
         # Check if a report for this date already exists to prevent duplicates via POST
-        existing_report = egg_crud.get_report_by_date(db, requested_date.isoformat())
+        existing_report = egg_crud.get_report_by_date(db, requested_date.isoformat(), tenant_id)
         if existing_report:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Report for date {requested_date.isoformat()} already exists. Use PUT to update."
             )
 
-        created_report = egg_crud.create_report(db, report)
+        created_report = egg_crud.create_report(db, report, tenant_id)
         if created_report:
             # ... (rest of your serialization logic remains the same) ...
             result = {
@@ -176,10 +178,10 @@ def create_report(report: EggRoomReportCreate, db: Session = Depends(get_db), cu
 
 
 @router.put("/{report_date}")
-def update_report(report_date: str, report: EggRoomReportUpdate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def update_report(report_date: str, report: EggRoomReportUpdate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user), tenant_id: str = Depends(get_tenant_id)):
     try:
         requested_date = datetime.strptime(report_date, "%Y-%m-%d").date()
-        system_start_date = get_system_start_date(db)
+        system_start_date = get_system_start_date(db, tenant_id)
 
         if requested_date < system_start_date:
             raise HTTPException(
@@ -192,7 +194,7 @@ def update_report(report_date: str, report: EggRoomReportUpdate, db: Session = D
                 detail=f"Cannot update reports for future dates ({report_date})."
             )
 
-        updated_report = egg_crud.update_report(db, report_date, report)
+        updated_report = egg_crud.update_report(db, report_date, report, tenant_id)
         if not updated_report:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
 
@@ -231,10 +233,10 @@ def update_report(report_date: str, report: EggRoomReportUpdate, db: Session = D
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
 @router.delete("/{report_date}")
-def delete_report(report_date: str, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def delete_report(report_date: str, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user), tenant_id: str = Depends(get_tenant_id)):
     try:
         requested_date = datetime.strptime(report_date, "%Y-%m-%d").date()
-        system_start_date = get_system_start_date(db)
+        system_start_date = get_system_start_date(db, tenant_id)
 
         if requested_date < system_start_date:
             raise HTTPException(
@@ -244,7 +246,7 @@ def delete_report(report_date: str, db: Session = Depends(get_db), current_user:
         # Also, consider if you want to prevent deletion of records from very early dates
         # to preserve historical data.
         
-        return egg_crud.delete_report(db, report_date)
+        return egg_crud.delete_report(db, report_date, tenant_id)
     except HTTPException:
         raise
     except Exception as e:
@@ -252,11 +254,11 @@ def delete_report(report_date: str, db: Session = Depends(get_db), current_user:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
 @router.get("/")
-def get_reports(start_date: str, end_date: str, db: Session = Depends(get_db)):
+def get_reports(start_date: str, end_date: str, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
     try:
         requested_start_date = datetime.strptime(start_date, "%Y-%m-%d").date()
         requested_end_date = datetime.strptime(end_date, "%Y-%m-%d").date()
-        system_start_date = get_system_start_date(db)
+        system_start_date = get_system_start_date(db, tenant_id)
 
         if requested_end_date < requested_start_date:
             raise HTTPException(
@@ -271,7 +273,7 @@ def get_reports(start_date: str, end_date: str, db: Session = Depends(get_db)):
             )
 
         # Fetch reports for the requested date range
-        reports = egg_crud.get_reports_by_date_range(db, start_date, end_date)
+        reports = egg_crud.get_reports_by_date_range(db, start_date, end_date, tenant_id)
 
         result = []
         for report in reports:
@@ -306,4 +308,4 @@ def get_reports(start_date: str, end_date: str, db: Session = Depends(get_db)):
         raise
     except Exception as e:
         logger.error(f"Error fetching egg room reports for {start_date} to {end_date}: {e}\n{traceback.format_exc()}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")    
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")

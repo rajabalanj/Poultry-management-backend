@@ -56,6 +56,7 @@ class DailyBatchBase(BaseModel):
 class DailyBatchCreate(DailyBatchBase):
     # This class is fine as is if it serves as a distinct type for creation.
     # If it's always identical to DailyBatchBase, you might reconsider its necessity.
+    tenant_id: Optional[str] = None
     notes: Optional[str] = None
     standard_hen_day_percentage: Optional[float] = 0.0
 
@@ -64,6 +65,12 @@ class DailyBatchUpdate(DailyBatchBase):
     notes: Optional[str] = None
     standard_hen_day_percentage: Optional[float] = 0.0
     
+
+    class Config:
+        from_attributes = True
+
+class DailyBatch(DailyBatchBase):
+    tenant_id: str
 
     class Config:
         from_attributes = True

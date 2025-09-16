@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, Float, ForeignKey
+from sqlalchemy import Column, Integer, Float, ForeignKey, String
 from sqlalchemy.orm import relationship
 from database import Base
 
@@ -8,5 +8,5 @@ class InventoryItemInComposition(Base):
     composition_id = Column(Integer, ForeignKey("composition.id"))
     inventory_item_id = Column(Integer, ForeignKey("inventory_items.id"))
     weight = Column(Float, nullable=False)
-
+    tenant_id = Column(String, index=True)
     inventory_item = relationship("InventoryItem")

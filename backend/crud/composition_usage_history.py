@@ -42,26 +42,27 @@ def _convert_quantity(quantity: Decimal, from_unit: str, to_unit: str) -> Decima
         raise ValueError(f"Unsupported 'to' unit for conversion: {to_unit}")
 
 
-def use_composition(db: Session, composition_id: int, batch_id: int, times: int, used_at: datetime, changed_by: str = None):
+def use_composition(db: Session, composition_id: int, batch_id: int, times: int, used_at: datetime, tenant_id: str, changed_by: str = None):
     # Store usage history
     usage = CompositionUsageHistory(
         composition_id=composition_id,
         batch_id=batch_id,
         times=times,
-        used_at=used_at
+        used_at=used_at,
+        tenant_id=tenant_id
     )
     db.add(usage)
 
-    batch_obj = db.query(Batch).filter(Batch.id == batch_id).first()
+    batch_obj = db.query(Batch).filter(Batch.id == batch_id, Batch.tenant_id == tenant_id).first()
     shed_no = batch_obj.shed_no if batch_obj else "N/A"
 
-    composition_obj = db.query(Composition).filter(Composition.id == composition_id).first()
+    composition_obj = db.query(Composition).filter(Composition.id == composition_id, Composition.tenant_id == tenant_id).first()
     composition_name = composition_obj.name if composition_obj else "N/A"
 
-    items_in_comp = db.query(InventoryItemInComposition).filter(InventoryItemInComposition.composition_id == composition_id).all()
+    items_in_comp = db.query(InventoryItemInComposition).filter(InventoryItemInComposition.composition_id == composition_id, InventoryItemInComposition.tenant_id == tenant_id).all()
 
     for iic in items_in_comp:
-        item = db.query(InventoryItem).filter(InventoryItem.id == iic.inventory_item_id).first()
+        item = db.query(InventoryItem).filter(InventoryItem.id == iic.inventory_item_id, InventoryItem.tenant_id == tenant_id).first()
         if item:
             old_item_quantity = item.current_stock
             old_item_unit = item.unit
@@ -95,7 +96,8 @@ def use_composition(db: Session, composition_id: int, batch_id: int, times: int,
                 old_quantity=old_quantity_for_audit_kg,
                 new_quantity=new_quantity_for_audit_kg,
                 changed_by=changed_by,
-                note=f"Used in composition '{composition_name}' for batch '{shed_no}' ({times} times)."
+                note=f"Used in composition '{composition_name}' for batch '{shed_no}' ({times} times).",
+                tenant_id=tenant_id
             )
             db.add(audit)
     
@@ -104,30 +106,29 @@ def use_composition(db: Session, composition_id: int, batch_id: int, times: int,
 
     return usage
 
-
-def create_composition_usage_history(db: Session, composition_id: int, times: int, used_at: datetime, batch_id: int = None):
+def create_composition_usage_history(db: Session, composition_id: int, times: int, used_at: datetime, tenant_id: str, batch_id: int = None):
     # import pdb; pdb.set_trace()
     usage = CompositionUsageHistory(
         composition_id=composition_id,
         times=times,
         used_at=used_at,
-        batch_id=batch_id
+        batch_id=batch_id,
+        tenant_id=tenant_id
     )
     db.add(usage)
     db.commit()
     db.refresh(usage)
     return usage
 
-
-def get_composition_usage_history(db: Session, composition_id: int = None):
-    query = db.query(CompositionUsageHistory)
+def get_composition_usage_history(db: Session, tenant_id: str, composition_id: int = None):
+    query = db.query(CompositionUsageHistory).filter(CompositionUsageHistory.tenant_id == tenant_id)
     if composition_id:
         query = query.filter(CompositionUsageHistory.composition_id == composition_id)
     usage_list = query.order_by(CompositionUsageHistory.used_at.desc()).all()
 
     result = []
     for usage in usage_list:
-        composition = db.query(Composition).filter(Composition.id == usage.composition_id).first()
+        composition = db.query(Composition).filter(Composition.id == usage.composition_id, Composition.tenant_id == tenant_id).first()
         usage_dict = usage.__dict__.copy()
         usage_dict.pop('_sa_instance_state', None) # Remove SQLAlchemy internal state
 
@@ -137,7 +138,7 @@ def get_composition_usage_history(db: Session, composition_id: int = None):
         # Check if 'batch_id' exists in the usage record and if a Batch can be found
         # This part ensures graceful handling if batch_id is missing or Batch not found.
         if hasattr(usage, 'batch_id') and usage.batch_id is not None:
-            batch = db.query(Batch).filter(Batch.id == usage.batch_id).first()
+            batch = db.query(Batch).filter(Batch.id == usage.batch_id, Batch.tenant_id == tenant_id).first()
             if batch:
                 usage_dict['shed_no'] = batch.shed_no
             else:
@@ -148,28 +149,27 @@ def get_composition_usage_history(db: Session, composition_id: int = None):
         result.append(usage_dict)
     return result
 
-
-def revert_composition_usage(db: Session, usage_id: int, changed_by: str = None):
+def revert_composition_usage(db: Session, usage_id: int, tenant_id: str, changed_by: str = None):
     """
     Reverts a specific composition usage, adding back item quantities and auditing the reversal.
     """
-    usage_to_revert = db.query(CompositionUsageHistory).filter(CompositionUsageHistory.id == usage_id).first()
+    usage_to_revert = db.query(CompositionUsageHistory).filter(CompositionUsageHistory.id == usage_id, CompositionUsageHistory.tenant_id == tenant_id).first()
     if not usage_to_revert:
         return False, "Composition usage record not found."
 
     composition_id = usage_to_revert.composition_id
     times = usage_to_revert.times
 
-    composition_obj = db.query(Composition).filter(Composition.id == composition_id).first()
+    composition_obj = db.query(Composition).filter(Composition.id == composition_id, Composition.tenant_id == tenant_id).first()
     composition_name = composition_obj.name if composition_obj else "N/A"
 
-    batch_obj = db.query(Batch).filter(Batch.id == usage_to_revert.batch_id).first()
+    batch_obj = db.query(Batch).filter(Batch.id == usage_to_revert.batch_id, Batch.tenant_id == tenant_id).first()
     shed_no = batch_obj.shed_no if batch_obj else "N/A"
 
-    items_in_comp = db.query(InventoryItemInComposition).filter(InventoryItemInComposition.composition_id == composition_id).all()
+    items_in_comp = db.query(InventoryItemInComposition).filter(InventoryItemInComposition.composition_id == composition_id, InventoryItemInComposition.tenant_id == tenant_id).all()
 
     for iic in items_in_comp:
-        item = db.query(InventoryItem).filter(InventoryItem.id == iic.inventory_item_id).first()
+        item = db.query(InventoryItem).filter(InventoryItem.id == iic.inventory_item_id, InventoryItem.tenant_id == tenant_id).first()
         if item:
             old_item_quantity = item.current_stock
             old_item_unit = item.unit
@@ -203,7 +203,8 @@ def revert_composition_usage(db: Session, usage_id: int, changed_by: str = None)
                 old_quantity=old_quantity_for_audit_kg,
                 new_quantity=new_quantity_for_audit_kg,
                 changed_by=changed_by,
-                note=f"Reverted usage of composition '{composition_name}' for batch '{shed_no}' ({times} times)."
+                note=f"Reverted usage of composition '{composition_name}' for batch '{shed_no}' ({times} times).",
+                tenant_id=tenant_id
             )
             db.add(audit)
 
@@ -211,14 +212,14 @@ def revert_composition_usage(db: Session, usage_id: int, changed_by: str = None)
     db.commit()
     return True, "Composition usage reverted successfully."
 
-
-def get_composition_usage_by_date(db: Session, usage_date: date, batch_id: int = None):
+def get_composition_usage_by_date(db: Session, usage_date: date, tenant_id: str, batch_id: int = None):
     start_of_day = datetime.combine(usage_date, datetime.min.time())
     end_of_day = datetime.combine(usage_date, datetime.max.time())
 
     query = db.query(CompositionUsageHistory).filter(
         CompositionUsageHistory.used_at >= start_of_day,
-        CompositionUsageHistory.used_at <= end_of_day
+        CompositionUsageHistory.used_at <= end_of_day,
+        CompositionUsageHistory.tenant_id == tenant_id
     )
 
     if batch_id:

@@ -8,6 +8,7 @@ class InventoryItemAudit(Base):
     __tablename__ = "inventory_item_audit"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(String, index=True)
     inventory_item_id = Column(Integer, ForeignKey("inventory_items.id"), nullable=False)
     change_type = Column(String, nullable=False)  # "manual", "composition", "usage" etc.
     change_amount = Column(Float, nullable=False) # Positive or negative

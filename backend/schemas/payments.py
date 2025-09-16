@@ -11,6 +11,7 @@ class PaymentBase(BaseModel):
     reference_number: Optional[str] = None
     notes: Optional[str] = None
     payment_receipt: Optional[str] = None
+    tenant_id: str
 
 class PaymentCreate(PaymentBase):
     pass

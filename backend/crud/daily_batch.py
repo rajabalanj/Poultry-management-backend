@@ -6,14 +6,14 @@ from datetime import date
 from typing import Optional
 from models.daily_batch import DailyBatch as DailyBatchORM
 
-def get_batch(db: Session, batch_id: int, date: date):
-    return db.query(DailyBatch).filter(DailyBatch.batch_id == batch_id, DailyBatch.batch_date == date).first()
+def get_batch(db: Session, batch_id: int, date: date, tenant_id: str):
+    return db.query(DailyBatch).filter(DailyBatch.batch_id == batch_id, DailyBatch.batch_date == date, DailyBatch.tenant_id == tenant_id).first()
 
-def get_all_batches(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(DailyBatch).offset(skip).limit(limit).all()
+def get_all_batches(db: Session, tenant_id: str, skip: int = 0, limit: int = 100):
+    return db.query(DailyBatch).filter(DailyBatch.tenant_id == tenant_id).offset(skip).limit(limit).all()
 
 
-def create_daily_batch(db: Session, daily_batch_data: DailyBatchCreate, changed_by: Optional[str] = None):
+def create_daily_batch(db: Session, daily_batch_data: DailyBatchCreate, tenant_id: str, changed_by: Optional[str] = None):
     """
     Creates a single daily batch record in the database.
     Expects a Pydantic DailyBatchCreate model instance.
@@ -22,6 +22,7 @@ def create_daily_batch(db: Session, daily_batch_data: DailyBatchCreate, changed_
     # No need for hasattr or getattr anymore!
     db_daily_batch = DailyBatchORM(
         batch_id=daily_batch_data.batch_id,
+        tenant_id=tenant_id,
         batch_date=daily_batch_data.batch_date,
         upload_date=daily_batch_data.upload_date,
         shed_no=daily_batch_data.shed_no,

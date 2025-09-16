@@ -7,6 +7,7 @@ from decimal import Decimal
 import os
 import uuid
 from utils.auth_utils import get_current_user
+from utils.tenancy import get_tenant_id
 
 try:
     from utils.s3_upload import upload_receipt_to_s3
@@ -36,10 +37,12 @@ def create_sales_order(
     so: SalesOrderCreate,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
 ):
     """Create a new sales order with associated items."""
     db_customer = db.query(BusinessPartnerModel).filter(
         BusinessPartnerModel.id == so.customer_id, 
+        BusinessPartnerModel.tenant_id == tenant_id,
         BusinessPartnerModel.status == 'ACTIVE',
         BusinessPartnerModel.is_customer == True
     ).first()
@@ -53,7 +56,7 @@ def create_sales_order(
         raise HTTPException(status_code=400, detail="Sales order must contain at least one item.")
 
     for item_data in so.items:
-        db_inventory_item = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_data.inventory_item_id).first()
+        db_inventory_item = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_data.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).first()
         if not db_inventory_item:
             raise HTTPException(status_code=400, detail=f"Inventory Item with ID {item_data.inventory_item_id} not found.")
         # Ensure there is enough stock to fulfill this sales order item
@@ -68,7 +71,8 @@ def create_sales_order(
                 inventory_item_id=item_data.inventory_item_id,
                 quantity=item_data.quantity,
                 price_per_unit=item_data.price_per_unit,
-                line_total=line_total
+                line_total=line_total,
+                tenant_id=tenant_id
             )
         )
     
@@ -78,7 +82,8 @@ def create_sales_order(
         status=so.status,
         notes=so.notes,
         total_amount=total_amount,
-        created_by=user.get('sub')
+        created_by=user.get('sub'),
+        tenant_id=tenant_id
     )
     db.add(db_so)
     db.flush()
@@ -88,7 +93,7 @@ def create_sales_order(
         db.add(item)
     # Deduct inventory immediately for each sales order item
     for item in db_so_items:
-        inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item.inventory_item_id).with_for_update().first()
+        inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).with_for_update().first()
         if inv is None:
             raise HTTPException(status_code=400, detail=f"Inventory Item with ID {item.inventory_item_id} not found when updating stock.")
         if inv.current_stock is None or inv.current_stock < item.quantity:
@@ -106,7 +111,8 @@ def create_sales_order(
             old_quantity=old_stock,
             new_quantity=inv.current_stock,
             changed_by=user.get('sub'),
-            note=f"Sold via SO #{db_so.id}"
+            note=f"Sold via SO #{db_so.id}",
+            tenant_id=tenant_id
         )
         db.add(audit)
     
@@ -116,9 +122,9 @@ def create_sales_order(
     db_so = db.query(SalesOrderModel).options(
         selectinload(SalesOrderModel.items),
         selectinload(SalesOrderModel.payments)
-    ).filter(SalesOrderModel.id == db_so.id).first()
+    ).filter(SalesOrderModel.id == db_so.id, SalesOrderModel.tenant_id == tenant_id).first()
 
-    logger.info(f"Sales Order (ID: {db_so.id}) created for Customer ID {db_so.customer_id} by User {user.get('sub')}")
+    logger.info(f"Sales Order (ID: {db_so.id}) created for Customer ID {db_so.customer_id} by User {user.get('sub')} for tenant {tenant_id}")
     return db_so
 
 @router.get("/", response_model=List[SalesOrderSchema])
@@ -129,10 +135,11 @@ def read_sales_orders(
     status: Optional[SalesOrderStatus] = None,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant_id)
 ):
     """Retrieve a list of sales orders with various filters."""
-    query = db.query(SalesOrderModel)
+    query = db.query(SalesOrderModel).filter(SalesOrderModel.tenant_id == tenant_id)
 
     if customer_id:
         query = query.filter(SalesOrderModel.customer_id == customer_id)
@@ -151,12 +158,12 @@ def read_sales_orders(
     return sales_orders
 
 @router.get("/{so_id}", response_model=SalesOrderSchema)
-def read_sales_order(so_id: int, db: Session = Depends(get_db)):
+def read_sales_order(so_id: int, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
     """Retrieve a single sales order by ID."""
     db_so = db.query(SalesOrderModel).options(
         selectinload(SalesOrderModel.items),
         selectinload(SalesOrderModel.payments)
-    ).filter(SalesOrderModel.id == so_id).first()
+    ).filter(SalesOrderModel.id == so_id, SalesOrderModel.tenant_id == tenant_id).first()
     if db_so is None:
         raise HTTPException(status_code=404, detail="Sales Order not found")
     return db_so
@@ -167,9 +174,10 @@ def update_sales_order(
     so_update: SalesOrderUpdate,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
 ):
     """Update an existing sales order."""
-    db_so = db.query(SalesOrderModel).filter(SalesOrderModel.id == so_id).first()
+    db_so = db.query(SalesOrderModel).filter(SalesOrderModel.id == so_id, SalesOrderModel.tenant_id == tenant_id).first()
     if db_so is None:
         raise HTTPException(status_code=404, detail="Sales Order not found")
     
@@ -189,9 +197,9 @@ def update_sales_order(
     db_so = db.query(SalesOrderModel).options(
         selectinload(SalesOrderModel.items),
         selectinload(SalesOrderModel.payments)
-    ).filter(SalesOrderModel.id == so_id).first()
+    ).filter(SalesOrderModel.id == so_id, SalesOrderModel.tenant_id == tenant_id).first()
     
-    logger.info(f"Sales Order (ID: {so_id}) updated by user {user.get('sub')}")
+    logger.info(f"Sales Order (ID: {so_id}) updated by user {user.get('sub')} for tenant {tenant_id}")
     return db_so
 
 
@@ -201,9 +209,10 @@ def add_item_to_sales_order(
     item_request: SalesOrderItemCreateRequest,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
 ):
     """Add a new item to an existing sales order."""
-    db_so = db.query(SalesOrderModel).filter(SalesOrderModel.id == so_id).first()
+    db_so = db.query(SalesOrderModel).filter(SalesOrderModel.id == so_id, SalesOrderModel.tenant_id == tenant_id).first()
     if not db_so:
         raise HTTPException(status_code=404, detail="Sales Order not found")
 
@@ -212,7 +221,7 @@ def add_item_to_sales_order(
         raise HTTPException(status_code=400, detail=f"Cannot add items to a sales order with status '{db_so.status.value}'.")
 
     # Validate that the inventory item exists
-    db_inventory_item = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_request.inventory_item_id).first()
+    db_inventory_item = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_request.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).first()
     if not db_inventory_item:
         raise HTTPException(status_code=400, detail=f"Inventory Item with ID {item_request.inventory_item_id} not found.")
 
@@ -223,7 +232,8 @@ def add_item_to_sales_order(
     # Check if item already exists in this SO to prevent duplicates
     existing_item = db.query(SalesOrderItemModel).filter(
         SalesOrderItemModel.sales_order_id == so_id,
-        SalesOrderItemModel.inventory_item_id == item_request.inventory_item_id
+        SalesOrderItemModel.inventory_item_id == item_request.inventory_item_id,
+        SalesOrderItemModel.tenant_id == tenant_id
     ).first()
     if existing_item:
         raise HTTPException(status_code=400, detail="This item already exists in this sales order. Use the update endpoint to change quantity.")
@@ -234,14 +244,15 @@ def add_item_to_sales_order(
         inventory_item_id=item_request.inventory_item_id,
         quantity=item_request.quantity,
         price_per_unit=item_request.price_per_unit,
-        line_total=line_total
+        line_total=line_total,
+        tenant_id=tenant_id
     )
     db.add(db_so_item)
     
     # Update the total_amount on the parent Sales Order
     db_so.total_amount += line_total
     # Deduct inventory for this added item
-    inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_request.inventory_item_id).with_for_update().first()
+    inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_request.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).with_for_update().first()
     if inv is None:
         raise HTTPException(status_code=400, detail=f"Inventory Item with ID {item_request.inventory_item_id} not found when updating stock.")
     if inv.current_stock is None or inv.current_stock < item_request.quantity:
@@ -259,7 +270,8 @@ def add_item_to_sales_order(
         old_quantity=old_stock,
         new_quantity=inv.current_stock,
         changed_by=user.get('sub'),
-        note=f"Added to SO #{so_id}"
+        note=f"Added to SO #{so_id}",
+        tenant_id=tenant_id
     )
     db.add(audit)
     
@@ -271,9 +283,9 @@ def add_item_to_sales_order(
         selectinload(SalesOrderModel.items).selectinload(SalesOrderItemModel.inventory_item),
         selectinload(SalesOrderModel.payments),
         selectinload(SalesOrderModel.customer)
-    ).filter(SalesOrderModel.id == so_id).first()
+    ).filter(SalesOrderModel.id == so_id, SalesOrderModel.tenant_id == tenant_id).first()
 
-    logger.info(f"Item {db_inventory_item.name} added to Sales Order (ID: {so_id}) by user {user.get('sub')}")
+    logger.info(f"Item {db_inventory_item.name} added to Sales Order (ID: {so_id}) by user {user.get('sub')} for tenant {tenant_id}")
     return db_so
 
 @router.patch("/{so_id}/items/{item_id}", response_model=SalesOrderSchema)
@@ -283,12 +295,13 @@ def update_sales_order_item(
     item_update: SalesOrderItemUpdate,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
 ):
     """Update a specific item in a sales order."""
     db_so = (
         db.query(SalesOrderModel)
         .options(selectinload(SalesOrderModel.items))
-        .filter(SalesOrderModel.id == so_id)
+        .filter(SalesOrderModel.id == so_id, SalesOrderModel.tenant_id == tenant_id)
         .first()
     )
     if not db_so:
@@ -319,7 +332,7 @@ def update_sales_order_item(
     new_qty = item_to_update.quantity
     delta = new_qty - old_qty
     if delta != 0:
-        inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_to_update.inventory_item_id).with_for_update().first()
+        inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_to_update.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).with_for_update().first()
         if inv is None:
             raise HTTPException(status_code=400, detail=f"Inventory Item with ID {item_to_update.inventory_item_id} not found when updating stock.")
         if delta > 0:
@@ -338,7 +351,8 @@ def update_sales_order_item(
                 old_quantity=old_stock,
                 new_quantity=inv.current_stock,
                 changed_by=user.get('sub'),
-                note=f"Increased quantity on SO #{so_id} (Item ID: {item_id})"
+                note=f"Increased quantity on SO #{so_id} (Item ID: {item_id})",
+                tenant_id=tenant_id
             )
             db.add(audit)
         else:
@@ -356,7 +370,7 @@ def update_sales_order_item(
     db.refresh(db_so)
 
     logger.info(
-        f"Sales Order Item (ID: {item_id}) of Sales Order (ID: {so_id}) updated by user {user.get('sub')}"
+        f"Sales Order Item (ID: {item_id}) of Sales Order (ID: {so_id}) updated by user {user.get('sub')} for tenant {tenant_id}"
     )
     return db_so
 
@@ -365,9 +379,10 @@ def delete_sales_order(
     so_id: int,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
 ):
     """Delete a sales order."""
-    db_so = db.query(SalesOrderModel).filter(SalesOrderModel.id == so_id).first()
+    db_so = db.query(SalesOrderModel).filter(SalesOrderModel.id == so_id, SalesOrderModel.tenant_id == tenant_id).first()
     if db_so is None:
         raise HTTPException(status_code=404, detail="Sales Order not found")
 
@@ -379,13 +394,13 @@ def delete_sales_order(
 
     # Restore inventory for items on the deleted sales order
     for item in db_so.items:
-        inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item.inventory_item_id).with_for_update().first()
+        inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).with_for_update().first()
         if inv:
             inv.current_stock = (inv.current_stock or 0) + item.quantity
             db.add(inv)
     db.delete(db_so)
     db.commit()
-    logger.info(f"Sales Order (ID: {so_id}) deleted by user {user.get('sub')}")
+    logger.info(f"Sales Order (ID: {so_id}) deleted by user {user.get('sub')} for tenant {tenant_id}")
     return {"message": "Sales Order deleted successfully"}
 
 @router.post("/{so_id}/receipt")
@@ -394,9 +409,10 @@ def upload_payment_receipt(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
 ):
     """Upload payment receipt for a sales order."""
-    db_so = db.query(SalesOrderModel).filter(SalesOrderModel.id == so_id).first()
+    db_so = db.query(SalesOrderModel).filter(SalesOrderModel.id == so_id, SalesOrderModel.tenant_id == tenant_id).first()
     if not db_so:
         raise HTTPException(status_code=404, detail="Sales Order not found")
     
@@ -404,7 +420,7 @@ def upload_payment_receipt(
     if file.content_type not in allowed_types:
         raise HTTPException(status_code=400, detail="Only PDF and image files allowed")
     
-    upload_dir = "uploads/sales_receipts"
+    upload_dir = f"uploads/sales_receipts/{tenant_id}"
     os.makedirs(upload_dir, exist_ok=True)
     
     file_extension = file.filename.split('.')[-1]
@@ -415,7 +431,7 @@ def upload_payment_receipt(
     
     if os.getenv('AWS_ENVIRONMENT') and upload_receipt_to_s3:
         try:
-            s3_url = upload_receipt_to_s3(content, file.filename, so_id)
+            s3_url = upload_receipt_to_s3(content, file.filename, so_id, tenant_id)
             db_so.payment_receipt = s3_url
         except Exception:
             raise HTTPException(status_code=500, detail="Failed to upload to S3")

@@ -4,6 +4,8 @@ from .inventory_item_in_composition import InventoryItemInComposition, Inventory
 
 class CompositionBase(BaseModel):
     name: str
+    tenant_id: str
+
 
 class CompositionCreate(CompositionBase):
     inventory_items: List[InventoryItemInCompositionCreate]

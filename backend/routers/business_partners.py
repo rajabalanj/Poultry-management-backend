@@ -9,6 +9,7 @@ from models.purchase_orders import PurchaseOrder as PurchaseOrderModel
 from models.sales_orders import SalesOrder as SalesOrderModel
 from schemas.business_partners import BusinessPartner, BusinessPartnerCreate, BusinessPartnerUpdate, PartnerStatus
 from utils.auth_utils import get_current_user
+from utils.tenancy import get_tenant_id
 
 router = APIRouter(prefix="/business-partners", tags=["Business Partners"])
 logger = logging.getLogger("business_partners")
@@ -17,17 +18,18 @@ logger = logging.getLogger("business_partners")
 def create_business_partner(
     partner: BusinessPartnerCreate,
     db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
 ):
-    db_partner = db.query(BusinessPartnerModel).filter(BusinessPartnerModel.name == partner.name).first()
+    db_partner = db.query(BusinessPartnerModel).filter(BusinessPartnerModel.name == partner.name, BusinessPartnerModel.tenant_id == tenant_id).first()
     if db_partner:
         raise HTTPException(status_code=400, detail="Business partner with this name already exists")
     
-    db_partner = BusinessPartnerModel(**partner.model_dump())
+    db_partner = BusinessPartnerModel(**partner.model_dump(), tenant_id=tenant_id)
     db.add(db_partner)
     db.commit()
     db.refresh(db_partner)
-    logger.info(f"Business partner '{db_partner.name}' created by user {user.get('sub')}")
+    logger.info(f"Business partner '{db_partner.name}' created by user {user.get('sub')} for tenant {tenant_id}")
     return db_partner
 
 @router.get("/", response_model=List[BusinessPartner])
@@ -37,9 +39,10 @@ def read_business_partners(
     status: Optional[PartnerStatus] = None,
     is_vendor: Optional[bool] = Query(None),
     is_customer: Optional[bool] = Query(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant_id)
 ):
-    query = db.query(BusinessPartnerModel)
+    query = db.query(BusinessPartnerModel).filter(BusinessPartnerModel.tenant_id == tenant_id)
     if status:
         query = query.filter(BusinessPartnerModel.status == status)
     if is_vendor is not None:
@@ -49,8 +52,8 @@ def read_business_partners(
     return query.offset(skip).limit(limit).all()
 
 @router.get("/{partner_id}", response_model=BusinessPartner)
-def read_business_partner(partner_id: int, db: Session = Depends(get_db)):
-    db_partner = db.query(BusinessPartnerModel).filter(BusinessPartnerModel.id == partner_id).first()
+def read_business_partner(partner_id: int, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
+    db_partner = db.query(BusinessPartnerModel).filter(BusinessPartnerModel.id == partner_id, BusinessPartnerModel.tenant_id == tenant_id).first()
     if db_partner is None:
         raise HTTPException(status_code=404, detail="Business partner not found")
     return db_partner
@@ -60,14 +63,15 @@ def update_business_partner(
     partner_id: int,
     partner: BusinessPartnerUpdate,
     db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
 ):
-    db_partner = db.query(BusinessPartnerModel).filter(BusinessPartnerModel.id == partner_id).first()
+    db_partner = db.query(BusinessPartnerModel).filter(BusinessPartnerModel.id == partner_id, BusinessPartnerModel.tenant_id == tenant_id).first()
     if db_partner is None:
         raise HTTPException(status_code=404, detail="Business partner not found")
     
     if partner.name is not None and partner.name != db_partner.name:
-        existing_partner = db.query(BusinessPartnerModel).filter(BusinessPartnerModel.name == partner.name).first()
+        existing_partner = db.query(BusinessPartnerModel).filter(BusinessPartnerModel.name == partner.name, BusinessPartnerModel.tenant_id == tenant_id).first()
         if existing_partner:
             raise HTTPException(status_code=400, detail="Business partner with this name already exists")
 
@@ -77,16 +81,17 @@ def update_business_partner(
     
     db.commit()
     db.refresh(db_partner)
-    logger.info(f"Business partner '{db_partner.name}' (ID: {partner_id}) updated by user {user.get('sub')}")
+    logger.info(f"Business partner '{db_partner.name}' (ID: {partner_id}) updated by user {user.get('sub')} for tenant {tenant_id}")
     return db_partner
 
 @router.delete("/{partner_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_business_partner(
     partner_id: int,
     db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
 ):
-    db_partner = db.query(BusinessPartnerModel).filter(BusinessPartnerModel.id == partner_id).first()
+    db_partner = db.query(BusinessPartnerModel).filter(BusinessPartnerModel.id == partner_id, BusinessPartnerModel.tenant_id == tenant_id).first()
     if db_partner is None:
         raise HTTPException(status_code=404, detail="Business partner not found")
 
@@ -97,7 +102,7 @@ def delete_business_partner(
     if has_purchases or has_sales:
         db_partner.status = PartnerStatus.INACTIVE
         db.commit()
-        logger.warning(f"Business partner '{db_partner.name}' (ID: {partner_id}) set to INACTIVE due to associated orders by user {user.get('sub')}")
+        logger.warning(f"Business partner '{db_partner.name}' (ID: {partner_id}) set to INACTIVE due to associated orders by user {user.get('sub')} for tenant {tenant_id}")
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Business partner '{db_partner.name}' has associated orders. Status changed to Inactive."
@@ -105,4 +110,4 @@ def delete_business_partner(
     
     db.delete(db_partner)
     db.commit()
-    logger.info(f"Business partner '{db_partner.name}' (ID: {partner_id}) deleted by user {user.get('sub')}")
+    logger.info(f"Business partner '{db_partner.name}' (ID: {partner_id}) deleted by user {user.get('sub')} for tenant {tenant_id}")

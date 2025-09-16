@@ -13,11 +13,12 @@ class BusinessPartner(Base):
     __tablename__ = "business_partners"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, unique=True, nullable=False)
+    tenant_id = Column(String, index=True)
+    name = Column(String, nullable=False)
     contact_name = Column(String, nullable=False)
     phone = Column(String, nullable=False)
     address = Column(Text, nullable=False)
-    email = Column(String, unique=True, nullable=True)
+    email = Column(String, nullable=True)
     status = Column(Enum(PartnerStatus), default=PartnerStatus.ACTIVE, nullable=False)
     is_vendor = Column(Boolean, default=True, nullable=False)
     is_customer = Column(Boolean, default=True, nullable=False)

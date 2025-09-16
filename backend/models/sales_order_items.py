@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, Numeric, ForeignKey
+from sqlalchemy import Column, Integer, Numeric, ForeignKey, String
 from sqlalchemy.orm import relationship
 from database import Base
 
@@ -11,6 +11,7 @@ class SalesOrderItem(Base):
     quantity = Column(Numeric(10, 3), nullable=False)
     price_per_unit = Column(Numeric(10, 3), nullable=False)
     line_total = Column(Numeric(10, 3), nullable=False)
+    tenant_id = Column(String, index=True)
 
     # Relationships
     sales_order = relationship("SalesOrder", back_populates="items")

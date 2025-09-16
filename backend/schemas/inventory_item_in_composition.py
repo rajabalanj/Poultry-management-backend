@@ -3,6 +3,8 @@ from pydantic import BaseModel
 class InventoryItemInCompositionBase(BaseModel):
     inventory_item_id: int
     weight: float
+    tenant_id: str
+
 
 class InventoryItemInCompositionCreate(InventoryItemInCompositionBase):
     pass

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, Numeric, ForeignKey
+from sqlalchemy import Column, Integer, Numeric, ForeignKey, String
 from sqlalchemy.orm import relationship
 from database import Base # Assuming Base is imported from your database setup
 
@@ -11,6 +11,7 @@ class PurchaseOrderItem(Base):
     quantity = Column(Numeric(10, 3), nullable=False) # Increased precision
     price_per_unit = Column(Numeric(10, 3), nullable=False) # Increased precision
     line_total = Column(Numeric(10, 3), nullable=False) # quantity * price_per_unit, stored for convenience
+    tenant_id = Column(String, index=True)
 
     # Relationships
     purchase_order = relationship("PurchaseOrder", back_populates="items")

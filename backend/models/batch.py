@@ -9,6 +9,7 @@ class Batch(Base):
     __tablename__ = "batch"
 
     id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(String, index=True)
     shed_no = Column(String)
     batch_no = Column(String)
     date = Column(Date, default=date.today)

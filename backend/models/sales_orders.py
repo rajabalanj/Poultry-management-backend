@@ -24,6 +24,7 @@ class SalesOrder(Base):
     created_by = Column(String, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, onupdate=func.now())
+    tenant_id = Column(String, index=True)
 
     # Relationships
     customer = relationship("BusinessPartner", back_populates="sales_orders", foreign_keys=[customer_id])
