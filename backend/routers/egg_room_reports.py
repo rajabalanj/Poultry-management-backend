@@ -62,6 +62,7 @@ def get_report(report_date: str, db: Session = Depends(get_db), tenant_id: str =
                 table_received=0, table_transfer=0, table_damage=0, table_out=0,
                 jumbo_received=0, jumbo_transfer=0, jumbo_waste=0, jumbo_out=0,
                 grade_c_shed_received=0, grade_c_transfer=0, grade_c_labour=0, grade_c_waste=0,
+                tenant_id=tenant_id
             )
             report = egg_crud.create_report(db, dummy_data, tenant_id)
         elif prev_report and (
