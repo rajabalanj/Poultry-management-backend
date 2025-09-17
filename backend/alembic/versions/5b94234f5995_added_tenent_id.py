@@ -1,4 +1,4 @@
-"""added tenent id
+"""added tenant id
 
 Revision ID: 5b94234f5995
 Revises: 97d72cc32ca6

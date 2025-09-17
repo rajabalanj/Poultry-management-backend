@@ -623,4 +623,4 @@ def get_usage_by_date(
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_tenant_id)
 ):
-    return get_composition_usage_by_date(db, usage_date, batch_id, tenant_id=tenant_id)
+    return get_composition_usage_by_date(db, usage_date, tenant_id, batch_id=batch_id)
