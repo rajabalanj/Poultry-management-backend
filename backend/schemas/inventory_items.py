@@ -24,7 +24,7 @@ class InventoryItemUpdate(BaseModel):
 
 class InventoryItem(InventoryItemBase):
     id: int
-    tenant_id: str
+    tenant_id: Optional[str] = None
     current_stock: Decimal # Included in response to show current stock
     average_cost: Decimal # Included in response
     created_at: datetime

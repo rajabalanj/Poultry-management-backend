@@ -149,7 +149,7 @@ def delete_sales_payment(
         elif db_so.total_amount_paid > 0:
             db_so.status = SalesOrderStatus.PARTIALLY_PAID
         else:
-            db_so.status = SalesOrderStatus.APPROVED
+            db_so.status = SalesOrderStatus.DRAFT
 
         db.commit()
 

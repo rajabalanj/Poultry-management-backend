@@ -1,10 +1,10 @@
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 from .inventory_item_in_composition import InventoryItemInComposition, InventoryItemInCompositionCreate
 
 class CompositionBase(BaseModel):
     name: str
-    tenant_id: str
+    tenant_id: Optional[str] = None
 
 
 class CompositionCreate(CompositionBase):

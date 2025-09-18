@@ -106,114 +106,125 @@ def update_batch(
     tenant_id: str = Depends(get_tenant_id)
 ):
     from utils import calculate_age_progression
+    from dateutil import parser
+
     db_batch = db.query(BatchModel).filter(BatchModel.id == batch_id, BatchModel.tenant_id == tenant_id).first()
     if db_batch is None:
         raise HTTPException(status_code=404, detail="Batch not found")
 
-    # ... (rest of the update logic remains the same)
+    # --- 1. Calculate changes and update the master Batch object ---
     changes = {}
     old_date = db_batch.date
-    new_date = batch_data.get("date")
-    date_changed_and_increased = False
-    if new_date:
-        # Convert to date if string
-        if isinstance(new_date, str):
-            from dateutil import parser
-            new_date = parser.parse(new_date).date()
-        if new_date > old_date:
-            date_changed_and_increased = True
-
     for key, value in batch_data.items():
         if hasattr(db_batch, key):
             old_value = getattr(db_batch, key)
+            if key == 'date' and isinstance(value, str):
+                value = parser.parse(value).date()
             if old_value != value:
                 changes[key] = {"old": old_value, "new": value}
                 setattr(db_batch, key, value)
 
-    if changes:
-        # If date increased, delete old daily_batch entries and create one for new_date if not present
-        if date_changed_and_increased:
-            db.query(DailyBatchModel).filter(
+    if not changes:
+        return db_batch
+
+    new_date = db_batch.date
+
+    # --- 2. Handle date change: delete old daily entries ---
+    # Use a bulk delete with synchronize_session=False to avoid stale session state
+    if 'date' in changes and new_date > old_date:
+        # Use 'fetch' to synchronize the session with the rows that will be deleted.
+        # This issues a SELECT to find affected identities and removes them from the session
+        # which prevents stale/duplicate objects later when we re-query/update rows.
+        deleted_count = db.query(DailyBatchModel).filter(
+            DailyBatchModel.batch_id == batch_id,
+            DailyBatchModel.batch_date < new_date,
+            DailyBatchModel.tenant_id == tenant_id
+        ).delete(synchronize_session='fetch')
+        logger.info("Deleted %d old daily_batch rows for batch_id=%s, tenant=%s", deleted_count, batch_id, tenant_id)
+
+    # --- 3. Propagation Logic ---
+    if any(key in changes for key in ['date', 'age', 'opening_count', 'shed_no', 'batch_no']):
+        
+        # Get all daily_batch rows from the new start date onwards
+        all_rows = db.query(DailyBatchModel).filter(
+            DailyBatchModel.batch_id == batch_id,
+            DailyBatchModel.batch_date >= new_date,
+            DailyBatchModel.tenant_id == tenant_id
+        ).order_by(DailyBatchModel.batch_date.asc()).all()
+
+        # Find or create the row for the exact new start date
+        start_row = None
+        if all_rows and all_rows[0].batch_date == new_date:
+            start_row = all_rows[0]
+        else:
+            start_row = DailyBatchModel(batch_id=batch_id, tenant_id=tenant_id, batch_date=new_date)
+            db.add(start_row)
+            db.flush()  # Flush the new row first
+            # Re-query to get fresh instances and ensure the session identity map matches DB
+            # expire_all ensures any cached instances are expired and reloaded from DB
+            db.expire_all()
+            all_rows = db.query(DailyBatchModel).filter(
                 DailyBatchModel.batch_id == batch_id,
-                DailyBatchModel.batch_date < new_date
-            ).delete(synchronize_session=False)
-            db.commit()
-            exists = db.query(DailyBatchModel).filter(
-                DailyBatchModel.batch_id == batch_id,
-                DailyBatchModel.batch_date == new_date
-            ).first()
-            if not exists:
-                db_daily = DailyBatchModel(
-                    batch_id=batch_id,
-                    shed_no=db_batch.shed_no,
-                    batch_no=db_batch.batch_no,
-                    upload_date=new_date,
-                    batch_date=new_date,
-                    age=db_batch.age,
-                    opening_count=db_batch.opening_count,
-                    mortality=0,
-                    culls=0,
-                    table_eggs=0,
-                    jumbo=0,
-                    cr=0,
-                )
-                db.add(db_daily)
-                db.commit()
-        # Example: update daily_batch if certain fields changed
-        if "shed_no" in changes or "batch_no" in changes:
-            related_batches = db.query(DailyBatchModel).filter(DailyBatchModel.batch_id == batch_id).all()
-            for rel in related_batches:
-                if "shed_no" in changes:
-                    rel.shed_no = changes["shed_no"]["new"]
-                if "batch_no" in changes:
-                    rel.batch_no = changes["batch_no"]["new"]
-        # Age update logic for daily_batch
-        if "age" in batch_data and new_date:
-            target_row = db.query(DailyBatchModel).filter(
-                DailyBatchModel.batch_id == batch_id,
-                DailyBatchModel.batch_date == new_date
-            ).first()
-            if target_row:
-                try:
-                    new_age = float(batch_data["age"])
-                except Exception:
-                    new_age = 0.0
-                target_row.age = str(round(new_age, 1))
-                subsequent_rows = db.query(DailyBatchModel).filter(
-                    DailyBatchModel.batch_id == batch_id,
-                    DailyBatchModel.batch_date > new_date
-                ).order_by(DailyBatchModel.batch_date.asc()).all()
-                prev_date = new_date
-                prev_age = new_age
-                for row in subsequent_rows:
-                    days_diff = (row.batch_date - prev_date).days
-                    prev_age = calculate_age_progression(prev_age, days_diff)
-                    row.age = str(round(prev_age, 1))
-                    prev_date = row.batch_date
-        # Opening count update logic for daily_batch
-        if "opening_count" in batch_data and new_date:
-            # Update opening_count for the given batch_id and batch_date
-            target_row = db.query(DailyBatchModel).filter(
-                DailyBatchModel.batch_id == batch_id,
-                DailyBatchModel.batch_date == new_date
-            ).first()
-            if target_row:
-                target_row.opening_count = batch_data["opening_count"]
-                # Fetch all daily_batch rows for this batch_id ordered by batch_date
-                all_rows = db.query(DailyBatchModel).filter(
-                    DailyBatchModel.batch_id == batch_id
-                ).order_by(DailyBatchModel.batch_date.asc()).all()
-                # Find the index of the updated row
-                idx = next((i for i, row in enumerate(all_rows) if row.batch_date == new_date), None)
-                if idx is not None:
-                    prev_row = all_rows[idx]
-                    for next_row in all_rows[idx+1:]:
-                        next_row.opening_count = prev_row.closing_count  # closing_count is a hybrid property
-                        prev_row = next_row
-        # Optional: insert change logs into audit table here
-        # insert_audit_logs(batch_id, changes, user.get('sub'))
+                DailyBatchModel.batch_date >= new_date,
+                DailyBatchModel.tenant_id == tenant_id
+            ).order_by(DailyBatchModel.batch_date.asc()).all()
+            # start_row should now be the first element
+            if all_rows:
+                start_row = all_rows[0]
+
+        # --- 4. Loop through all affected rows and apply changes ---
+        prev_row = None
+        for i, current_row in enumerate(all_rows):
+            # Always update shed_no and batch_no from the master batch record
+            current_row.shed_no = db_batch.shed_no
+            current_row.batch_no = db_batch.batch_no
+
+            if i == 0: # This is the start_row
+                current_row.age = db_batch.age
+                current_row.opening_count = db_batch.opening_count
+                if not current_row.upload_date: current_row.upload_date = new_date
+            else: # This is a subsequent row, propagate from prev_row
+                current_row.opening_count = prev_row.closing_count
+
+                days_diff = (current_row.batch_date - prev_row.batch_date).days
+                prev_age = float(prev_row.age)
+                new_age = calculate_age_progression(prev_age, days_diff)
+                current_row.age = str(round(new_age, 1))
+            
+            prev_row = current_row
+
+    # --- 5. Commit the transaction ---
+    # Log some session state before attempting to commit to help diagnose
+    try:
+        new_objs = list(db.new)
+        dirty_objs = list(db.dirty)
+        deleted_objs = list(db.deleted)
+        logger.debug("Session before commit: new=%d dirty=%d deleted=%d", len(new_objs), len(dirty_objs), len(deleted_objs))
+        # Log identity keys for dirty objects (helps map to SQL UPDATEs)
+        try:
+            dirty_keys = [obj.__table__.name + str(tuple(getattr(obj, k.name) for k in obj.__table__.primary_key)) for obj in dirty_objs]
+        except Exception:
+            dirty_keys = [str(obj) for obj in dirty_objs]
+        logger.debug("Dirty objects keys: %s", dirty_keys)
+
         db.commit()
-        db.refresh(db_batch)
+    except Exception as e:
+        # Specific handling for SQLAlchemy stale data errors to capture more context
+        from sqlalchemy.orm.exc import StaleDataError
+        if isinstance(e, StaleDataError):
+            logger.exception("StaleDataError committing batch update for batch_id=%s: %s", batch_id, e)
+        else:
+            logger.exception("Error committing batch update for batch_id=%s: %s", batch_id, e)
+        # Log a little more DB state to help debugging
+        try:
+            logger.debug("Session new objects: %s", [repr(x) for x in list(db.new)])
+            logger.debug("Session dirty objects: %s", [repr(x) for x in list(db.dirty)])
+            logger.debug("Session deleted objects: %s", [repr(x) for x in list(db.deleted)])
+        except Exception:
+            pass
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to update batch (commit error). Please retry")
+    db.refresh(db_batch)
 
     return db_batch
 

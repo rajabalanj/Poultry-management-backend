@@ -6,7 +6,7 @@ class SalesOrderItemBase(BaseModel):
     inventory_item_id: int
     quantity: Decimal
     price_per_unit: Decimal
-    tenant_id: str
+    tenant_id: Optional[str] = None
 
 class SalesOrderItemCreateRequest(SalesOrderItemBase):
     pass

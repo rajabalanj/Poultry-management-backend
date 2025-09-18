@@ -70,7 +70,7 @@ class DailyBatchUpdate(DailyBatchBase):
         from_attributes = True
 
 class DailyBatch(DailyBatchBase):
-    tenant_id: str
+    tenant_id: Optional[str] = None
 
     class Config:
         from_attributes = True

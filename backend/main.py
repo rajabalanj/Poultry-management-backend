@@ -203,7 +203,7 @@ def get_composition_usage_history_endpoint(
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_tenant_id)
 ):
-    return get_composition_usage_history(db, composition_id, tenant_id=tenant_id)
+    return get_composition_usage_history(db, tenant_id, composition_id=composition_id)
 
 @app.post("/compositions/revert-usage/{usage_id}")
 def revert_composition_usage_endpoint(
@@ -397,85 +397,65 @@ def update_daily_batch(
         db.query(DailyBatchModel).filter(
             DailyBatchModel.batch_id == batch_id,
             DailyBatchModel.tenant_id == tenant_id
-        ).update({DailyBatchModel.shed_no: new_shed_no})
+        ).update({DailyBatchModel.shed_no: new_shed_no}, synchronize_session=False)
         daily_batch.shed_no = new_shed_no
 
-    # Propagate age update if present
+    # Update fields on the current daily_batch from payload
     if "age" in payload:
         try:
-            from utils import calculate_age_progression  # Adjust import as needed
+            from utils import calculate_age_progression
             new_age = float(payload["age"])
+            daily_batch.age = str(round(new_age, 1))
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid age value")
-
-        daily_batch.age = str(round(new_age, 1))
-
-        subsequent_rows = db.query(DailyBatchModel).filter(
-            DailyBatchModel.batch_id == batch_id,
-            DailyBatchModel.batch_date > daily_batch.batch_date,
-            DailyBatchModel.tenant_id == tenant_id
-        ).order_by(DailyBatchModel.batch_date.asc()).all()
-
-        prev_date = daily_batch.batch_date
-        prev_age = new_age
-
-        for row in subsequent_rows:
-            days_diff = (row.batch_date - prev_date).days
-            prev_age = calculate_age_progression(prev_age, days_diff)
-            row.age = str(prev_age)
-            prev_date = row.batch_date
-
-
-    # Propagate mortality/culls change if either is present
-    if "mortality" in payload or "culls" in payload:
-        if "mortality" in payload:
-            daily_batch.mortality = payload["mortality"]
-        if "culls" in payload:
-            daily_batch.culls = payload["culls"]
-        # Do NOT assign to closing_count (hybrid property)
-
-        # Propagate to subsequent rows
-        subsequent_rows = db.query(DailyBatchModel).filter(
-            DailyBatchModel.batch_id == batch_id,
-            DailyBatchModel.batch_date > daily_batch.batch_date,
-            DailyBatchModel.tenant_id == tenant_id
-        ).order_by(DailyBatchModel.batch_date.asc()).all()
-
-        prev_closing = daily_batch.opening_count - (daily_batch.mortality + daily_batch.culls)
-        for row in subsequent_rows:
-            row.opening_count = prev_closing
-            row_closing = row.opening_count - (row.mortality + row.culls)
-            prev_closing = row_closing
-            # Do NOT assign to row.closing_count
-
-    # Propagate opening_count change if present
+    
+    if "mortality" in payload:
+        daily_batch.mortality = payload["mortality"]
+    if "culls" in payload:
+        daily_batch.culls = payload["culls"]
     if "opening_count" in payload:
         daily_batch.opening_count = payload["opening_count"]
-        # Do NOT assign to closing_count (hybrid property)
-
-        subsequent_rows = db.query(DailyBatchModel).filter(
-            DailyBatchModel.batch_id == batch_id,
-            DailyBatchModel.batch_date > daily_batch.batch_date,
-            DailyBatchModel.tenant_id == tenant_id
-        ).order_by(DailyBatchModel.batch_date.asc()).all()
-
-        prev_closing = daily_batch.opening_count - (daily_batch.mortality + daily_batch.culls)
-        for row in subsequent_rows:
-            row.opening_count = prev_closing
-            row_closing = row.opening_count - (row.mortality + row.culls)
-            prev_closing = row_closing
-            # Do NOT assign to row.closing_count
 
     # Update simple fields (no propagation)
     for key in ("table_eggs", "cr", "jumbo"):
         if key in payload:
             setattr(daily_batch, key, payload[key])
 
-    # Update other allowed fields dynamically (excluding ones already handled)
+    # Update other allowed fields dynamically
     excluded_fields = {"shed_no", "age", "mortality", "culls", "opening_count", "table_eggs", "cr", "jumbo", "closing_count", "total_eggs", "hd", "standard_hen_day_percentage"}
     for key, value in payload.items():
         if key not in excluded_fields and hasattr(daily_batch, key):
             setattr(daily_batch, key, value)
+
+    # Propagation logic if any of the relevant fields were in the payload
+    if any(key in payload for key in ["age", "mortality", "culls", "opening_count"]):
+        subsequent_rows = db.query(DailyBatchModel).filter(
+            DailyBatchModel.batch_id == batch_id,
+            DailyBatchModel.batch_date > daily_batch.batch_date,
+            DailyBatchModel.tenant_id == tenant_id
+        ).order_by(DailyBatchModel.batch_date.asc()).all()
+
+        prev_closing = daily_batch.closing_count
+        prev_date = daily_batch.batch_date
+        try:
+            prev_age = float(daily_batch.age)
+        except (ValueError, TypeError):
+            prev_age = 0.0
+        
+        from utils import calculate_age_progression
+
+        for row in subsequent_rows:
+            # Propagate opening_count based on previous closing_count
+            row.opening_count = prev_closing
+            
+            # Propagate age
+            days_diff = (row.batch_date - prev_date).days
+            prev_age = calculate_age_progression(prev_age, days_diff)
+            row.age = str(prev_age)
+            
+            # Update for next iteration
+            prev_closing = row.closing_count
+            prev_date = row.batch_date
 
     db.commit()
     db.refresh(daily_batch)

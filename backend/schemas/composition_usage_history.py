@@ -7,7 +7,7 @@ class CompositionUsageHistoryBase(BaseModel):
     times: int
     used_at: datetime
     batch_id: Optional[int] = None # New field to track the batch associated with the usage
-    tenant_id: str
+    tenant_id: Optional[str] = None
     # shed_no: str = None  # Optional field to track the shed number
 
 class CompositionUsageHistoryCreate(CompositionUsageHistoryBase):

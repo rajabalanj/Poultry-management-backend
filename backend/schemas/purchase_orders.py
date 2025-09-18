@@ -12,7 +12,7 @@ class PurchaseOrderItem(BaseModel): # Defined below properly, but needed for Lis
     quantity: Decimal
     price_per_unit: Decimal
     line_total: Decimal
-    tenant_id: str
+    tenant_id: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -51,6 +51,7 @@ class PurchaseOrderUpdate(BaseModel):
 
 class PurchaseOrder(PurchaseOrderBase):
     id: int
+    tenant_id: Optional[str] = None
     total_amount: Decimal
     total_amount_paid: Decimal
     created_by: Optional[str] = None

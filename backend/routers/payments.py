@@ -150,7 +150,7 @@ def delete_payment(
         elif db_po.total_amount_paid > 0:
             db_po.status = PurchaseOrderStatus.PARTIALLY_PAID
         else:
-            db_po.status = PurchaseOrderStatus.APPROVED
+            db_po.status = PurchaseOrderStatus.DRAFT
 
         db.commit()
 

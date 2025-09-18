@@ -23,7 +23,7 @@ class BatchCreate(BatchBase):
 
 class Batch(BatchBase):
     id: int
-    tenant_id: str
+    tenant_id: Optional[str] = None
     batch_type: Optional[str] = None
 
     class Config:

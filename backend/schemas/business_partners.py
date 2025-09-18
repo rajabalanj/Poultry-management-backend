@@ -28,7 +28,7 @@ class BusinessPartnerUpdate(BaseModel):
 
 class BusinessPartner(BusinessPartnerBase):
     id: int
-    tenant_id: str
+    tenant_id: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
 

@@ -10,7 +10,7 @@ class InventoryItemAuditBase(BaseModel):
     new_quantity: float
     changed_by: Optional[str] = None
     note: Optional[str] = None
-    tenant_id: str
+    tenant_id: Optional[str] = None
 
 class InventoryItemAuditCreate(InventoryItemAuditBase):
     pass

@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel
 class BovansPerformanceSchema(BaseModel):
     age_weeks: int
@@ -8,7 +8,7 @@ class BovansPerformanceSchema(BaseModel):
     feed_intake_per_day_g: int
     feed_intake_cum_kg: float
     body_weight_g: int
-    tenant_id: str
+    tenant_id: Optional[str] = None
 
     class Config:
         # This enables ORM mode, allowing Pydantic to read data directly from SQLAlchemy models.

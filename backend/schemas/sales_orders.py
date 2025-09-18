@@ -11,7 +11,7 @@ class SalesOrderItem(BaseModel):
     quantity: Decimal
     price_per_unit: Decimal
     line_total: Decimal
-    tenant_id: str
+    tenant_id: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -46,6 +46,7 @@ class SalesOrderUpdate(BaseModel):
 
 class SalesOrder(SalesOrderBase):
     id: int
+    tenant_id: Optional[str] = None
     total_amount: Decimal
     total_amount_paid: Decimal
     created_by: Optional[str] = None

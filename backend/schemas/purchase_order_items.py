@@ -6,7 +6,7 @@ class PurchaseOrderItemBase(BaseModel):
     inventory_item_id: int
     quantity: Decimal
     price_per_unit: Decimal
-    tenant_id: str
+    tenant_id: Optional[str] = None
 
 class PurchaseOrderItemCreateRequest(PurchaseOrderItemBase):
     # Used when creating/adding items to a PO in a request body

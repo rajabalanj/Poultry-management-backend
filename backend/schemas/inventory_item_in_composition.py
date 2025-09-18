@@ -1,9 +1,10 @@
 from pydantic import BaseModel
+from typing import Optional
 
 class InventoryItemInCompositionBase(BaseModel):
     inventory_item_id: int
     weight: float
-    tenant_id: str
+    tenant_id: Optional[str] = None
 
 
 class InventoryItemInCompositionCreate(InventoryItemInCompositionBase):
