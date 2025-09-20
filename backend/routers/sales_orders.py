@@ -1,12 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, Header, status, UploadFile, File
 from sqlalchemy.orm import Session, selectinload
+from sqlalchemy import desc
 from typing import List, Optional
 import logging
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 import os
 import uuid
-from utils.auth_utils import get_current_user
+from utils.auth_utils import get_current_user, get_user_identifier
 from utils.tenancy import get_tenant_id
 
 try:
@@ -21,11 +22,12 @@ from models.inventory_items import InventoryItem as InventoryItemModel
 from models.business_partners import BusinessPartner as BusinessPartnerModel
 from models.sales_payments import SalesPayment as SalesPaymentModel
 from models.inventory_item_audit import InventoryItemAudit
+from models.egg_room_reports import EggRoomReport as EggRoomReportModel
 from schemas.sales_orders import (
     SalesOrder as SalesOrderSchema,
     SalesOrderCreate,
     SalesOrderUpdate,
-    SalesOrderItem as SalesOrderItemSchema,
+    SalesOrderItem as SalesOrderItemSchema
 )
 from schemas.sales_order_items import SalesOrderItemCreateRequest, SalesOrderItemUpdate
 
@@ -82,7 +84,7 @@ def create_sales_order(
         status=so.status,
         notes=so.notes,
         total_amount=total_amount,
-        created_by=user.get('sub'),
+        created_by=get_user_identifier(user),
         tenant_id=tenant_id
     )
     db.add(db_so)
@@ -110,7 +112,7 @@ def create_sales_order(
             change_amount=item.quantity,
             old_quantity=old_stock,
             new_quantity=inv.current_stock,
-            changed_by=user.get('sub'),
+            changed_by=get_user_identifier(user),
             note=f"Sold via SO #{db_so.id}",
             tenant_id=tenant_id
         )
@@ -124,7 +126,7 @@ def create_sales_order(
         selectinload(SalesOrderModel.payments)
     ).filter(SalesOrderModel.id == db_so.id, SalesOrderModel.tenant_id == tenant_id).first()
 
-    logger.info(f"Sales Order (ID: {db_so.id}) created for Customer ID {db_so.customer_id} by User {user.get('sub')} for tenant {tenant_id}")
+    logger.info(f"Sales Order (ID: {db_so.id}) created for Customer ID {db_so.customer_id} by User {get_user_identifier(user)} for tenant {tenant_id}")
     return db_so
 
 @router.get("/", response_model=List[SalesOrderSchema])
@@ -150,7 +152,7 @@ def read_sales_orders(
     if end_date:
         query = query.filter(SalesOrderModel.order_date <= end_date)
 
-    sales_orders = query.options(
+    sales_orders = query.order_by(SalesOrderModel.order_date.desc(), SalesOrderModel.id.desc()).options(
         selectinload(SalesOrderModel.items),
         selectinload(SalesOrderModel.payments)
     ).offset(skip).limit(limit).all()
@@ -199,7 +201,7 @@ def update_sales_order(
         selectinload(SalesOrderModel.payments)
     ).filter(SalesOrderModel.id == so_id, SalesOrderModel.tenant_id == tenant_id).first()
     
-    logger.info(f"Sales Order (ID: {so_id}) updated by user {user.get('sub')} for tenant {tenant_id}")
+    logger.info(f"Sales Order (ID: {so_id}) updated by user {get_user_identifier(user)} for tenant {tenant_id}")
     return db_so
 
 
@@ -269,7 +271,7 @@ def add_item_to_sales_order(
         change_amount=item_request.quantity,
         old_quantity=old_stock,
         new_quantity=inv.current_stock,
-        changed_by=user.get('sub'),
+        changed_by=get_user_identifier(user),
         note=f"Added to SO #{so_id}",
         tenant_id=tenant_id
     )
@@ -285,7 +287,7 @@ def add_item_to_sales_order(
         selectinload(SalesOrderModel.customer)
     ).filter(SalesOrderModel.id == so_id, SalesOrderModel.tenant_id == tenant_id).first()
 
-    logger.info(f"Item {db_inventory_item.name} added to Sales Order (ID: {so_id}) by user {user.get('sub')} for tenant {tenant_id}")
+    logger.info(f"Item {db_inventory_item.name} added to Sales Order (ID: {so_id}) by user {get_user_identifier(user)} for tenant {tenant_id}")
     return db_so
 
 @router.patch("/{so_id}/items/{item_id}", response_model=SalesOrderSchema)
@@ -350,7 +352,7 @@ def update_sales_order_item(
                 change_amount=delta,
                 old_quantity=old_stock,
                 new_quantity=inv.current_stock,
-                changed_by=user.get('sub'),
+                changed_by=get_user_identifier(user),
                 note=f"Increased quantity on SO #{so_id} (Item ID: {item_id})",
                 tenant_id=tenant_id
             )
@@ -370,7 +372,7 @@ def update_sales_order_item(
     db.refresh(db_so)
 
     logger.info(
-        f"Sales Order Item (ID: {item_id}) of Sales Order (ID: {so_id}) updated by user {user.get('sub')} for tenant {tenant_id}"
+        f"Sales Order Item (ID: {item_id}) of Sales Order (ID: {so_id}) updated by user {get_user_identifier(user)} for tenant {tenant_id}"
     )
     return db_so
 
@@ -400,7 +402,7 @@ def delete_sales_order(
             db.add(inv)
     db.delete(db_so)
     db.commit()
-    logger.info(f"Sales Order (ID: {so_id}) deleted by user {user.get('sub')} for tenant {tenant_id}")
+    logger.info(f"Sales Order (ID: {so_id}) deleted by user {get_user_identifier(user)} for tenant {tenant_id}")
     return {"message": "Sales Order deleted successfully"}
 
 @router.post("/{so_id}/receipt")

@@ -34,13 +34,13 @@ class EggRoomReport(Base):
 
     # Closing balances (calculated for single row)
     table_closing = column_property(
-        table_opening + table_received - table_transfer - table_damage - table_out + jumbo_out
+        func.coalesce(table_opening, 0) + func.coalesce(table_received, 0) - func.coalesce(table_transfer, 0) - func.coalesce(table_damage, 0) - func.coalesce(table_out, 0) + func.coalesce(jumbo_out, 0)
     )
     jumbo_closing = column_property(
-        jumbo_opening + jumbo_received - jumbo_transfer - jumbo_waste + table_out - jumbo_out
+        func.coalesce(jumbo_opening, 0) + func.coalesce(jumbo_received, 0) - func.coalesce(jumbo_transfer, 0) - func.coalesce(jumbo_waste, 0) + func.coalesce(table_out, 0) - func.coalesce(jumbo_out, 0)
     )
     grade_c_closing = column_property(
-        grade_c_opening + grade_c_shed_received + table_damage - grade_c_transfer - grade_c_labour - grade_c_waste
+        func.coalesce(grade_c_opening, 0) + func.coalesce(grade_c_shed_received, 0) + func.coalesce(table_damage, 0) - func.coalesce(grade_c_transfer, 0) - func.coalesce(grade_c_labour, 0) - func.coalesce(grade_c_waste, 0)
     )
 
     # Synonyms for aliased columns

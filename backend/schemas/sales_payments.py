@@ -11,7 +11,6 @@ class SalesPaymentBase(BaseModel):
     reference_number: Optional[str] = None
     notes: Optional[str] = None
     payment_receipt: Optional[str] = None
-    tenant_id: Optional[str] = None
 
 class SalesPaymentCreate(SalesPaymentBase):
     pass
@@ -28,6 +27,7 @@ class SalesPayment(SalesPaymentBase):
     id: int
     created_at: datetime
     updated_at: Optional[datetime] = None
+    tenant_id: Optional[str] = None
 
     class Config:
         from_attributes = True

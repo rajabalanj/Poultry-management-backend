@@ -6,7 +6,6 @@ class SalesOrderItemBase(BaseModel):
     inventory_item_id: int
     quantity: Decimal
     price_per_unit: Decimal
-    tenant_id: Optional[str] = None
 
 class SalesOrderItemCreateRequest(SalesOrderItemBase):
     pass
@@ -14,6 +13,7 @@ class SalesOrderItemCreateRequest(SalesOrderItemBase):
 class SalesOrderItemCreate(SalesOrderItemBase):
     sales_order_id: int
     line_total: Decimal
+    tenant_id: Optional[str] = None
 
 class SalesOrderItemUpdate(BaseModel):
     quantity: Optional[Decimal] = None
@@ -23,6 +23,7 @@ class SalesOrderItem(SalesOrderItemBase):
     id: int
     sales_order_id: int
     line_total: Decimal
+    tenant_id: Optional[str] = None
 
     class Config:
         from_attributes = True

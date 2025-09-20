@@ -23,6 +23,7 @@ class SalesPayment(BaseModel):
     payment_mode: Optional[str] = None
     reference_number: Optional[str] = None
     notes: Optional[str] = None
+    tenant_id: Optional[str] = None
 
     class Config:
         from_attributes = True

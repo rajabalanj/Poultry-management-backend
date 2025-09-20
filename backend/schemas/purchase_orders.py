@@ -25,6 +25,7 @@ class Payment(BaseModel): # Defined below properly, but needed for List type hin
     reference_number: Optional[str] = None
     notes: Optional[str] = None
     payment_receipt: Optional[str] = None
+    tenant_id: Optional[str] = None
 
     class Config:
         from_attributes = True
