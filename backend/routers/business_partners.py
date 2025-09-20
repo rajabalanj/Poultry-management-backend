@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Header, status, Query
 from sqlalchemy.orm import Session, selectinload
 from typing import List, Optional
 import logging
+from utils.auth_utils import get_current_user, get_user_identifier
 
 from database import get_db
 from models.business_partners import BusinessPartner as BusinessPartnerModel
@@ -29,7 +30,7 @@ def create_business_partner(
     db.add(db_partner)
     db.commit()
     db.refresh(db_partner)
-    logger.info(f"Business partner '{db_partner.name}' created by user {user.get('sub')} for tenant {tenant_id}")
+    logger.info(f"Business partner '{db_partner.name}' created by user {get_user_identifier(user)} for tenant {tenant_id}")
     return db_partner
 
 @router.get("/", response_model=List[BusinessPartner])
@@ -81,7 +82,7 @@ def update_business_partner(
     
     db.commit()
     db.refresh(db_partner)
-    logger.info(f"Business partner '{db_partner.name}' (ID: {partner_id}) updated by user {user.get('sub')} for tenant {tenant_id}")
+    logger.info(f"Business partner '{db_partner.name}' (ID: {partner_id}) updated by user {get_user_identifier(user)} for tenant {tenant_id}")
     return db_partner
 
 @router.delete("/{partner_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -102,7 +103,7 @@ def delete_business_partner(
     if has_purchases or has_sales:
         db_partner.status = PartnerStatus.INACTIVE
         db.commit()
-        logger.warning(f"Business partner '{db_partner.name}' (ID: {partner_id}) set to INACTIVE due to associated orders by user {user.get('sub')} for tenant {tenant_id}")
+        logger.warning(f"Business partner '{db_partner.name}' (ID: {partner_id}) set to INACTIVE due to associated orders by user {get_user_identifier(user)} for tenant {tenant_id}")
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Business partner '{db_partner.name}' has associated orders. Status changed to Inactive."
@@ -110,4 +111,4 @@ def delete_business_partner(
     
     db.delete(db_partner)
     db.commit()
-    logger.info(f"Business partner '{db_partner.name}' (ID: {partner_id}) deleted by user {user.get('sub')} for tenant {tenant_id}")
+    logger.info(f"Business partner '{db_partner.name}' (ID: {partner_id}) deleted by user {get_user_identifier(user)} for tenant {tenant_id}")

@@ -5,7 +5,7 @@ import logging
 from decimal import Decimal
 import os
 import uuid
-from utils.auth_utils import get_current_user
+from utils.auth_utils import get_current_user, get_user_identifier
 from utils.tenancy import get_tenant_id
 
 try:
@@ -62,7 +62,7 @@ def create_payment(
     db.commit() # Commit PO status update
     db.refresh(db_payment) # Re-refresh payment to ensure everything is in sync for response
 
-    logger.info(f"Payment of {payment.amount_paid} recorded for Purchase Order ID {payment.purchase_order_id} by user {user.get('sub')} for tenant {tenant_id}")
+    logger.info(f"Payment of {payment.amount_paid} recorded for Purchase Order ID {payment.purchase_order_id} by user {get_user_identifier(user)} for tenant {tenant_id}")
     return db_payment
 
 @router.get("/by-po/{po_id}", response_model=List[Payment])
@@ -121,7 +121,7 @@ def update_payment(
         db.commit()
         db.refresh(db_po)
 
-    logger.info(f"Payment ID {payment_id} updated for Purchase Order ID {db_payment.purchase_order_id} by user {user.get('sub')} for tenant {tenant_id}")
+    logger.info(f"Payment ID {payment_id} updated for Purchase Order ID {db_payment.purchase_order_id} by user {get_user_identifier(user)} for tenant {tenant_id}")
     return db_payment
 
 @router.delete("/{payment_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -154,7 +154,7 @@ def delete_payment(
 
         db.commit()
 
-    logger.info(f"Payment ID {payment_id} deleted for Purchase Order ID {db_payment.purchase_order_id} by user {user.get('sub')} for tenant {tenant_id}")
+    logger.info(f"Payment ID {payment_id} deleted for Purchase Order ID {db_payment.purchase_order_id} by user {get_user_identifier(user)} for tenant {tenant_id}")
     return {"message": "Payment deleted successfully"}
 
 @router.post("/{payment_id}/receipt")

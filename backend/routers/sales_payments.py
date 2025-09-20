@@ -6,6 +6,7 @@ from decimal import Decimal
 import os
 import uuid
 from utils.auth_utils import get_current_user
+from utils.auth_utils import get_user_identifier
 from utils.tenancy import get_tenant_id
 
 try:
@@ -61,7 +62,7 @@ def create_sales_payment(
     db.commit()
     db.refresh(db_payment)
 
-    logger.info(f"Payment of {payment.amount_paid} recorded for Sales Order ID {payment.sales_order_id} by user {user.get('sub')} for tenant {tenant_id}")
+    logger.info(f"Payment of {payment.amount_paid} recorded for Sales Order ID {payment.sales_order_id} by user {get_user_identifier(user)} for tenant {tenant_id}")
     return db_payment
 
 @router.get("/by-so/{so_id}", response_model=List[SalesPayment])
@@ -120,7 +121,7 @@ def update_sales_payment(
         db.commit()
         db.refresh(db_so)
 
-    logger.info(f"Sales Payment ID {payment_id} updated for Sales Order ID {db_payment.sales_order_id} by user {user.get('sub')} for tenant {tenant_id}")
+    logger.info(f"Sales Payment ID {payment_id} updated for Sales Order ID {db_payment.sales_order_id} by user {get_user_identifier(user)} for tenant {tenant_id}")
     return db_payment
 
 @router.delete("/{payment_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -153,7 +154,7 @@ def delete_sales_payment(
 
         db.commit()
 
-    logger.info(f"Sales Payment ID {payment_id} deleted for Sales Order ID {db_payment.sales_order_id}  by user {user.get('sub')} for tenant {tenant_id}")
+    logger.info(f"Sales Payment ID {payment_id} deleted for Sales Order ID {db_payment.sales_order_id}  by user {get_user_identifier(user)} for tenant {tenant_id}")
     return {"message": "Sales Payment deleted successfully"}
 
 @router.post("/{payment_id}/receipt")

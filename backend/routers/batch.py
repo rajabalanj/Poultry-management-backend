@@ -1,6 +1,6 @@
 from models.daily_batch import DailyBatch as DailyBatchModel
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
-from utils.auth_utils import get_current_user
+from utils.auth_utils import get_current_user, get_user_identifier
 from sqlalchemy.orm import Session
 from models.batch import Batch as BatchModel
 from schemas.batch import BatchCreate, Batch as BatchSchema
@@ -36,7 +36,7 @@ def create_batch(
     ).first()
     if existing:
         raise HTTPException(status_code=400, detail="An active batch with the same shed_no or batch_no already exists.")
-    return crud_batch.create_batch(db=db, batch=batch, tenant_id=tenant_id, changed_by=user.get('sub'))
+    return crud_batch.create_batch(db=db, batch=batch, tenant_id=tenant_id, changed_by=get_user_identifier(user))
 
 @router.get("/all/", response_model=List[BatchSchema])
 def get_all_batches(
@@ -235,7 +235,7 @@ def delete_batch(
     user: dict = Depends(get_current_user),
     tenant_id: str = Depends(get_tenant_id)
 ):
-    success = crud_batch.delete_batch(db, batch_id=batch_id, tenant_id=tenant_id, changed_by=user.get('sub'))
+    success = crud_batch.delete_batch(db, batch_id=batch_id, tenant_id=tenant_id, changed_by=get_user_identifier(user))
     if not success:
         raise HTTPException(status_code=404, detail="Batch not found")
     return {"message": "Batch deleted successfully"}

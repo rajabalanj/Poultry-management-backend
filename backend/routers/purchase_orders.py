@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 import os
 import uuid
-from utils.auth_utils import get_current_user
+from utils.auth_utils import get_current_user, get_user_identifier
 from utils.tenancy import get_tenant_id
 
 try:
@@ -112,7 +112,7 @@ def create_purchase_order(
         status=po.status,
         notes=po.notes,
         total_amount=total_amount,
-        created_by=user.get('sub'),
+        created_by=get_user_identifier(user),
         tenant_id=tenant_id
     )
     db.add(db_po)
@@ -147,7 +147,7 @@ def create_purchase_order(
             change_amount=new_quantity,
             old_quantity=old_stock,
             new_quantity=inv.current_stock,
-            changed_by=user.get('sub'),
+            changed_by=get_user_identifier(user),
             note=f"Received from PO #{db_po.id}",
             tenant_id=tenant_id
         )
@@ -163,7 +163,7 @@ def create_purchase_order(
         selectinload(PurchaseOrderModel.payments)
     ).filter(PurchaseOrderModel.id == db_po.id, PurchaseOrderModel.tenant_id == tenant_id).first()
 
-    logger.info(f"Purchase Order (ID: {db_po.id}) created for Vendor ID {db_po.vendor_id} by user {user.get('sub')} for tenant {tenant_id}")
+    logger.info(f"Purchase Order (ID: {db_po.id}) created for Vendor ID {db_po.vendor_id} by user {get_user_identifier(user)} for tenant {tenant_id}")
     return db_po
 
 @router.get("/", response_model=List[PurchaseOrderSchema])
@@ -252,7 +252,7 @@ def update_purchase_order(
                 change_amount=new_quantity,
                 old_quantity=old_stock,
                 new_quantity=inv.current_stock,
-                changed_by=user.get('sub'),
+                changed_by=get_user_identifier(user),
                 note=f"Marked PAID - Received from PO #{po_id}",
                 tenant_id=tenant_id
             )
@@ -285,7 +285,7 @@ def update_purchase_order(
         selectinload(PurchaseOrderModel.payments)
     ).filter(PurchaseOrderModel.id == po_id, PurchaseOrderModel.tenant_id == tenant_id).first()
     
-    logger.info(f"Purchase Order (ID: {po_id}) updated by user {user.get('sub')} for tenant {tenant_id}")
+    logger.info(f"Purchase Order (ID: {po_id}) updated by user {get_user_identifier(user)} for tenant {tenant_id}")
     return db_po
 
 @router.delete("/{po_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -324,7 +324,7 @@ def delete_purchase_order(
 
     db.delete(db_po)
     db.commit()
-    logger.info(f"Purchase Order (ID: {po_id}) hard deleted by user {user.get('sub')} for tenant {tenant_id}")
+    logger.info(f"Purchase Order (ID: {po_id}) hard deleted by user {get_user_identifier(user)} for tenant {tenant_id}")
     return {"message": "Purchase Order deleted successfully"}
 
 # --- Purchase Order Item Endpoints (Nested for managing items within a PO) ---
@@ -398,7 +398,7 @@ def add_item_to_purchase_order(
         change_amount=new_quantity,
         old_quantity=old_stock,
         new_quantity=inv.current_stock,
-        changed_by=user.get('sub'),
+        changed_by=get_user_identifier(user),
         note=f"Added via PO #{po_id}",
         tenant_id=tenant_id
     )
@@ -413,7 +413,7 @@ def add_item_to_purchase_order(
         selectinload(PurchaseOrderModel.payments)
     ).filter(PurchaseOrderModel.id == po_id, PurchaseOrderModel.tenant_id == tenant_id).first()
 
-    logger.info(f"Item added to Purchase Order (ID: {po_id}) by user {user.get('sub')} for tenant {tenant_id}")
+    logger.info(f"Item added to Purchase Order (ID: {po_id}) by user {get_user_identifier(user)} for tenant {tenant_id}")
     return db_po
 
 @router.patch("/{po_id}/items/{item_id}", response_model=PurchaseOrderSchema)
@@ -478,7 +478,7 @@ def update_item_in_purchase_order(
                 change_amount=delta,
                 old_quantity=old_stock,
                 new_quantity=inv.current_stock,
-                changed_by=user.get('sub'),
+                changed_by=get_user_identifier(user),
                 note=f"Increased via PO #{po_id} item update (Item ID: {item_id})",
                 tenant_id=tenant_id
             )
@@ -498,7 +498,7 @@ def update_item_in_purchase_order(
         selectinload(PurchaseOrderModel.payments)
     ).filter(PurchaseOrderModel.id == po_id, PurchaseOrderModel.tenant_id == tenant_id).first()
 
-    logger.info(f"Item ID {item_id} in Purchase Order (ID: {po_id}) updated by user {user.get('sub')} for tenant {tenant_id}")
+    logger.info(f"Item ID {item_id} in Purchase Order (ID: {po_id}) updated by user {get_user_identifier(user)} for tenant {tenant_id}")
     return db_po
 
 @router.delete("/{po_id}/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -536,7 +536,7 @@ def remove_item_from_purchase_order(
     db.commit()
     db.refresh(db_po) # Refresh the PO to reflect updated total
 
-    logger.info(f"Item ID {item_id} removed from Purchase Order (ID: {po_id}) by user {user.get('sub')} for tenant {tenant_id}")
+    logger.info(f"Item ID {item_id} removed from Purchase Order (ID: {po_id}) by user {get_user_identifier(user)} for tenant {tenant_id}")
     return {"message": "Item removed successfully"}
 
 @router.post("/{po_id}/receipt")

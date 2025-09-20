@@ -126,6 +126,7 @@ def get_current_user(request: Request) -> Dict[str, any]:
             audience=COGNITO_APP_CLIENT_ID,
             issuer=COGNITO_ISSUER,
         )
+        print(payload)
         return payload
     except jwt.ExpiredSignatureError:
         raise HTTPException(
@@ -161,3 +162,34 @@ def require_group(allowed_groups: List[str]):
             )
         return user
     return dependency
+
+
+def get_user_identifier(user: Dict[str, any]) -> str:
+    """
+    Return a readable identifier for the user dict returned by Cognito JWT payload.
+
+    Preference order:
+      - name
+      - email
+      - cognito:username
+      - username
+      - masked sub (first 6 and last 4 chars) if available
+      - 'unknown' otherwise
+
+    This avoids logging full sensitive identifiers like the raw `sub` claim.
+    """
+    if not user or not isinstance(user, dict):
+        return "unknown"
+
+    for key in ("name", "email", "cognito:username", "username"):
+        val = user.get(key)
+        if val:
+            return val
+
+    sub = user.get("sub")
+    if isinstance(sub, str) and len(sub) > 10:
+        return f"{sub[:6]}...{sub[-4:]}"
+    if sub:
+        return str(sub)
+
+    return "unknown"

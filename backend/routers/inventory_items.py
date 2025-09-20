@@ -7,7 +7,7 @@ from database import get_db
 from models.inventory_items import InventoryItem as InventoryItemModel
 from schemas.inventory_items import InventoryItem, InventoryItemCreate, InventoryItemUpdate
 from schemas.inventory_item_audit import InventoryItemAudit
-from utils.auth_utils import get_current_user
+from utils.auth_utils import get_current_user, get_user_identifier
 from crud import inventory_items as crud_inventory_items
 from crud import inventory_item_audit as crud_inventory_item_audit
 from utils.tenancy import get_tenant_id
@@ -28,7 +28,7 @@ def create_inventory_item(
         raise HTTPException(status_code=400, detail="Inventory item with this name already exists")
     
     new_item = crud_inventory_items.create_inventory_item(db=db, item=item, tenant_id=tenant_id)
-    logger.info(f"Inventory item '{new_item.name}' created by user {user.get('sub')} for tenant {tenant_id}")
+    logger.info(f"Inventory item '{new_item.name}' created by user {get_user_identifier(user)} for tenant {tenant_id}")
     return new_item
 
 @router.get("/", response_model=List[InventoryItem])
@@ -75,7 +75,7 @@ def update_inventory_item(
             raise HTTPException(status_code=400, detail="Inventory item with this name already exists")
 
     updated_item = crud_inventory_items.update_inventory_item(db=db, item_id=item_id, item=item, tenant_id=tenant_id)
-    logger.info(f"Inventory item '{updated_item.name}' (ID: {item_id}) updated by user {user.get('sub')} for tenant {tenant_id}")
+    logger.info(f"Inventory item '{updated_item.name}' (ID: {item_id}) updated by user {get_user_identifier(user)} for tenant {tenant_id}")
     return updated_item
 
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -100,7 +100,7 @@ def delete_inventory_item(
         )
     
     crud_inventory_items.delete_inventory_item(db=db, item_id=item_id, tenant_id=tenant_id)
-    logger.info(f"Inventory item '{db_item.name}' (ID: {item_id}) deleted by user {user.get('sub')} for tenant {tenant_id}")
+    logger.info(f"Inventory item '{db_item.name}' (ID: {item_id}) deleted by user {get_user_identifier(user)} for tenant {tenant_id}")
     return {"message": "Inventory item deleted successfully"}
 
 @router.get("/{item_id}/audit", response_model=List[InventoryItemAudit])

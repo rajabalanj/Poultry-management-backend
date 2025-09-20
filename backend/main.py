@@ -40,7 +40,7 @@ import routers.payments as payments
 import routers.inventory_items as inventory_items
 import routers.sales_orders as sales_orders
 import routers.sales_payments as sales_payments
-from utils.auth_utils import get_current_user, require_group
+from utils.auth_utils import get_current_user, get_user_identifier, require_group
 from utils.tenancy import get_tenant_id
 
 
@@ -181,7 +181,7 @@ def use_composition_endpoint(
     batch_id = batch.id
 
     # Call use_composition and pass changed_by (user from token)
-    usage = use_composition(db, composition_id, batch_id, times, used_at_dt, changed_by=user.get('sub'), tenant_id=tenant_id)
+    usage = use_composition(db, composition_id, batch_id, times, used_at_dt, changed_by=get_user_identifier(user), tenant_id=tenant_id)
     
     # Now, 'usage' object should have its ID populated
     if usage and hasattr(usage, 'id'):
@@ -216,7 +216,7 @@ def revert_composition_usage_endpoint(
     Reverts a specific composition usage by ID.
     Adds back the quantities to feeds and deletes the usage history record.
     """
-    success, message = revert_composition_usage(db, usage_id, changed_by=user.get('sub'), tenant_id=tenant_id)
+    success, message = revert_composition_usage(db, usage_id, changed_by=get_user_identifier(user), tenant_id=tenant_id)
     if not success:
         raise HTTPException(status_code=404, detail=message)
     return {"message": message}
