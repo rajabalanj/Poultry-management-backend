@@ -563,6 +563,90 @@ def update_sales_order_item(
     )
     return db_so
 
+@router.delete("/{so_id}/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_sales_order_item(
+    so_id: int,
+    item_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """Delete a specific item from a sales order."""
+    db_so = db.query(SalesOrderModel).options(
+        selectinload(SalesOrderModel.items).selectinload(SalesOrderItemModel.inventory_item)
+    ).filter(SalesOrderModel.id == so_id, SalesOrderModel.tenant_id == tenant_id).first()
+    if not db_so:
+        raise HTTPException(status_code=404, detail="Sales Order not found")
+
+    item_to_delete = None
+    for item in db_so.items:
+        if item.id == item_id:
+            item_to_delete = item
+            break
+
+    if not item_to_delete:
+        raise HTTPException(status_code=404, detail="Sales Order Item not found")
+
+    # Do not allow item deletion for finalized sales orders
+    if db_so.status == SalesOrderStatus.PAID:
+        raise HTTPException(status_code=400, detail=f"Cannot delete items from a sales order with status '{db_so.status.value}'.")
+
+    # Restore inventory for the deleted item
+    inv = db.query(InventoryItemModel).filter(
+        InventoryItemModel.id == item_to_delete.inventory_item_id,
+        InventoryItemModel.tenant_id == tenant_id
+    ).with_for_update().first()
+
+    if inv:
+        # --- Stock restoration logic --- 
+        if inv.name in EGG_ITEM_NAMES:
+            # For eggs, stock is managed via EggRoomReport, so no direct update to InventoryItem.current_stock
+            # Update egg room report by subtracting the quantity from transfer
+            egg_room_report = db.query(EggRoomReportModel).filter(
+                EggRoomReportModel.report_date == db_so.order_date,
+                EggRoomReportModel.tenant_id == tenant_id
+            ).first()
+
+            if egg_room_report:
+                if inv.name == "Table Egg":
+                    egg_room_report.table_transfer -= item_to_delete.quantity
+                elif inv.name == "Jumbo Egg":
+                    egg_room_report.jumbo_transfer -= item_to_delete.quantity
+                elif inv.name == "Grade C Egg":
+                    egg_room_report.grade_c_transfer -= item_to_delete.quantity
+                db.add(egg_room_report)
+        else:
+            # For non-egg items, restore current_stock
+            old_stock = inv.current_stock or 0
+            inv.current_stock = (inv.current_stock or 0) + item_to_delete.quantity
+            db.add(inv)
+
+            # Create audit record for inventory increase (item deleted from SO)
+            audit = InventoryItemAudit(
+                inventory_item_id=inv.id,
+                change_type="return", # Or "sales_order_item_deleted"
+                change_amount=item_to_delete.quantity,
+                old_quantity=old_stock,
+                new_quantity=inv.current_stock,
+                changed_by=get_user_identifier(user),
+                note=f"Item deleted from SO #{so_id} (Item ID: {item_id})",
+                tenant_id=tenant_id
+            )
+            db.add(audit)
+        # --- End stock restoration logic ---
+
+    # Update the total_amount on the parent Sales Order
+    db_so.total_amount -= item_to_delete.line_total
+
+    db.delete(item_to_delete)
+    db.commit()
+    db.refresh(db_so)
+
+    logger.info(
+        f"Sales Order Item (ID: {item_id}) deleted from Sales Order (ID: {so_id}) by user {get_user_identifier(user)} for tenant {tenant_id}"
+    )
+    return {"message": "Sales Order Item deleted successfully"}
+
 @router.delete("/{so_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_sales_order(
     so_id: int,
