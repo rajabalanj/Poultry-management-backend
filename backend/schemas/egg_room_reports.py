@@ -4,15 +4,12 @@ from typing import Optional
 
 
 class EggRoomReportBase(BaseModel):
-    table_transfer: Optional[int]
     table_damage: Optional[int]
     table_out: Optional[int]
 
-    grade_c_transfer: Optional[int]
     grade_c_labour: Optional[int]
     grade_c_waste: Optional[int]
 
-    jumbo_transfer: Optional[int]
     jumbo_waste: Optional[int]
     jumbo_out: Optional[int]
     tenant_id: Optional[str] = None
@@ -22,7 +19,16 @@ class EggRoomReportCreate(EggRoomReportBase):
     report_date: date
 
 
-class EggRoomReportUpdate(EggRoomReportBase):
+class EggRoomReportUpdate(BaseModel):
+    table_damage: Optional[int]
+    table_out: Optional[int]
+
+    grade_c_labour: Optional[int]
+    grade_c_waste: Optional[int]
+
+    jumbo_waste: Optional[int]
+    jumbo_out: Optional[int]
+
     table_opening: Optional[int] = None
     jumbo_opening: Optional[int] = None
     grade_c_opening: Optional[int] = None

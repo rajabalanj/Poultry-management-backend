@@ -126,7 +126,6 @@ def get_current_user(request: Request) -> Dict[str, any]:
             audience=COGNITO_APP_CLIENT_ID,
             issuer=COGNITO_ISSUER,
         )
-        print(payload)
         return payload
     except jwt.ExpiredSignatureError:
         raise HTTPException(

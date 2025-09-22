@@ -4,6 +4,8 @@ from schemas.egg_room_reports import EggRoomReportCreate, EggRoomReportUpdate
 from typing import List
 from models.daily_batch import DailyBatch
 from sqlalchemy import func
+from crud import app_config as crud_app_config # Import app_config crud
+from models.app_config import AppConfig # Import AppConfig model
 
 
 def get_report_by_date(db: Session, report_date: str, tenant_id: str):
@@ -69,10 +71,7 @@ def update_report(db: Session, report_date: str, report: EggRoomReportUpdate, te
     if not db_report:
         return None
 
-    for key, value in report.dict(exclude_unset=True).items():
-        setattr(db_report, key, value)
-
-    # Recalculate sums from daily_batch
+    # Recalculate sums from daily_batch to get the correct received amount
     daily_batch_sums = db.query(
         func.sum(DailyBatch.table_eggs).label("table_received"),
         func.sum(DailyBatch.jumbo).label("jumbo_received"),
@@ -82,9 +81,52 @@ def update_report(db: Session, report_date: str, report: EggRoomReportUpdate, te
         DailyBatch.tenant_id == tenant_id
     ).first()
 
-    db_report.table_received = daily_batch_sums.table_received or 0
-    db_report.jumbo_received = daily_batch_sums.jumbo_received or 0
-    db_report.grade_c_shed_received = daily_batch_sums.grade_c_shed_received or 0
+    table_received = daily_batch_sums.table_received or 0
+    jumbo_received = daily_batch_sums.jumbo_received or 0
+    grade_c_shed_received = daily_batch_sums.grade_c_shed_received or 0
+
+    report_data = report.dict(exclude_unset=True)
+
+    # Retrieve EGG_STOCK_TOLERANCE from app_config
+    # This allows for a configurable buffer for egg stock, acknowledging in-house production.
+    egg_stock_tolerance_config = crud_app_config.get_config(db, tenant_id, name="EGG_STOCK_TOLERANCE")
+    egg_stock_tolerance = float(egg_stock_tolerance_config.value) if egg_stock_tolerance_config else 0.0
+
+    # Check for sufficient stock before applying updates
+    new_table_damage = report_data.get('table_damage', db_report.table_damage)
+    new_table_out = report_data.get('table_out', db_report.table_out)
+    new_jumbo_out = report_data.get('jumbo_out', db_report.jumbo_out)
+
+    table_consumption = (new_table_damage or 0) + (new_table_out or 0)
+    table_inflow = db_report.table_opening + table_received + (new_jumbo_out or 0)
+
+    # Apply egg_stock_tolerance to table egg validation
+    if table_consumption > (table_inflow + egg_stock_tolerance):
+        raise ValueError(f"Insufficient stock for Table Egg. Available: {table_inflow}, Requested: {table_consumption}. (Tolerance: {egg_stock_tolerance})")
+
+    new_jumbo_waste = report_data.get('jumbo_waste', db_report.jumbo_waste)
+    jumbo_consumption = (new_jumbo_waste or 0) + (new_jumbo_out or 0)
+    jumbo_inflow = db_report.jumbo_opening + jumbo_received + (new_table_out or 0)
+
+    # Apply egg_stock_tolerance to jumbo egg validation
+    if jumbo_consumption > (jumbo_inflow + egg_stock_tolerance):
+        raise ValueError(f"Insufficient stock for Jumbo Egg. Available: {jumbo_inflow}, Requested: {jumbo_consumption}. (Tolerance: {egg_stock_tolerance})")
+
+    new_grade_c_labour = report_data.get('grade_c_labour', db_report.grade_c_labour)
+    new_grade_c_waste = report_data.get('grade_c_waste', db_report.grade_c_waste)
+    grade_c_consumption = (new_grade_c_labour or 0) + (new_grade_c_waste or 0)
+    grade_c_inflow = db_report.grade_c_opening + grade_c_shed_received + (new_table_damage or 0)
+
+    # Apply egg_stock_tolerance to grade c egg validation
+    if grade_c_consumption > (grade_c_inflow + egg_stock_tolerance):
+        raise ValueError(f"Insufficient stock for Grade C Egg. Available: {grade_c_inflow}, Requested: {grade_c_consumption}. (Tolerance: {egg_stock_tolerance})")
+
+    for key, value in report_data.items():
+        setattr(db_report, key, value)
+
+    db_report.table_received = table_received
+    db_report.jumbo_received = jumbo_received
+    db_report.grade_c_shed_received = grade_c_shed_received
 
     db.commit()
     db.refresh(db_report)

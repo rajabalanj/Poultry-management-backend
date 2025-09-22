@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from database import get_db
 from schemas.egg_room_reports import EggRoomReportCreate, EggRoomReportUpdate, EggRoomReportResponse
 from crud import egg_room_reports as egg_crud
@@ -8,27 +9,34 @@ import traceback
 from typing import List
 from fastapi.responses import JSONResponse
 from models.egg_room_reports import EggRoomReport
-from models.app_config import AppConfig # Import AppConfig
-from datetime import datetime, date, timedelta # Import date for comparison
+from models.daily_batch import DailyBatch
+from models.app_config import AppConfig  # Import AppConfig
+from datetime import datetime, date, timedelta  # Import date for comparison
 from utils.auth_utils import get_current_user
 from utils.tenancy import get_tenant_id
 
 router = APIRouter(prefix="/egg-room-report", tags=["egg_room_reports"])
 logger = logging.getLogger("egg_room_reports")
 
+
 def get_system_start_date(db: Session, tenant_id: str) -> date:
     """Fetches the system start date from AppConfig."""
-    start_date_config = db.query(AppConfig).filter(AppConfig.name == 'system_start_date', AppConfig.tenant_id == tenant_id).first()
+    start_date_config = db.query(AppConfig).filter(
+        AppConfig.name == 'system_start_date', AppConfig.tenant_id == tenant_id).first()
     if not start_date_config:
         # Define a default or raise an error if not configured
         # For production, it's better to ensure this is configured
-        logger.warning("system_start_date not found in AppConfig. Defaulting to 2000-01-01.")
-        return date(2000, 1, 1) # A very old default if not set
+        logger.warning(
+            "system_start_date not found in AppConfig. Defaulting to 2000-01-01.")
+        return date(2000, 1, 1)  # A very old default if not set
     try:
         return datetime.strptime(start_date_config.value, "%Y-%m-%d").date()
     except ValueError:
-        logger.error(f"Invalid system_start_date format in AppConfig: {start_date_config.value}. Defaulting to 2000-01-01.")
-        return date(2000, 1, 1) # Fallback for malformed date
+        logger.error(
+            f"Invalid system_start_date format in AppConfig: {start_date_config.value}. Defaulting to 2000-01-01.")
+        # Fallback for malformed date
+        return date(2000, 1, 1)
+
 
 @router.get("/{report_date}")
 def get_report(report_date: str, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
@@ -59,22 +67,49 @@ def get_report(report_date: str, db: Session = Depends(get_db), tenant_id: str =
 
             dummy_data = EggRoomReportCreate(
                 report_date=requested_date,
-                table_received=0, table_transfer=0, table_damage=0, table_out=0,
-                jumbo_received=0, jumbo_transfer=0, jumbo_waste=0, jumbo_out=0,
-                grade_c_shed_received=0, grade_c_transfer=0, grade_c_labour=0, grade_c_waste=0,
+                table_transfer=0, table_damage=0, table_out=0,
+                jumbo_transfer=0, jumbo_waste=0, jumbo_out=0,
+                grade_c_transfer=0, grade_c_labour=0, grade_c_waste=0,
                 tenant_id=tenant_id
             )
             report = egg_crud.create_report(db, dummy_data, tenant_id)
-        elif prev_report and (
-            report.table_opening != prev_report.table_closing or
-            report.jumbo_opening != prev_report.jumbo_closing or
-            report.grade_c_opening != prev_report.grade_c_closing
-        ):
-            report.table_opening = prev_report.table_closing
-            report.jumbo_opening = prev_report.jumbo_closing
-            report.grade_c_opening = prev_report.grade_c_closing
-            db.commit()
-            db.refresh(report)
+        else:
+            # Always update received values from daily_batch
+            daily_batch_sums = db.query(
+                func.sum(DailyBatch.table_eggs).label("table_received"),
+                func.sum(DailyBatch.jumbo).label("jumbo_received"),
+                func.sum(DailyBatch.cr).label("grade_c_shed_received")
+            ).filter(
+                DailyBatch.batch_date == requested_date,
+                DailyBatch.tenant_id == tenant_id
+            ).first()
+
+            update_required = False
+            if report.table_received != (daily_batch_sums.table_received or 0):
+                report.table_received = daily_batch_sums.table_received or 0
+                update_required = True
+
+            if report.jumbo_received != (daily_batch_sums.jumbo_received or 0):
+                report.jumbo_received = daily_batch_sums.jumbo_received or 0
+                update_required = True
+
+            if report.grade_c_shed_received != (daily_batch_sums.grade_c_shed_received or 0):
+                report.grade_c_shed_received = daily_batch_sums.grade_c_shed_received or 0
+                update_required = True
+
+            if prev_report and (
+                report.table_opening != prev_report.table_closing or
+                report.jumbo_opening != prev_report.jumbo_closing or
+                report.grade_c_opening != prev_report.grade_c_closing
+            ):
+                report.table_opening = prev_report.table_closing
+                report.jumbo_opening = prev_report.jumbo_closing
+                report.grade_c_opening = prev_report.grade_c_closing
+                update_required = True
+
+            if update_required:
+                db.commit()
+                db.refresh(report)
 
         # Manually serialize the report including hybrid properties
         if report:
@@ -107,17 +142,21 @@ def get_report(report_date: str, db: Session = Depends(get_db), tenant_id: str =
             }
             return JSONResponse(content=result)
         else:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found after creation attempt")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Report not found after creation attempt")
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error fetching egg room report for {report_date}: {e}\n{traceback.format_exc()}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
+        logger.error(
+            f"Error fetching egg room report for {report_date}: {e}\n{traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
+
 
 @router.post("/", response_model=EggRoomReportResponse)
 def create_report(report: EggRoomReportCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user), tenant_id: str = Depends(get_tenant_id)):
     try:
-        requested_date = report.report_date # Already a date object from Pydantic
+        requested_date = report.report_date  # Already a date object from Pydantic
         system_start_date = get_system_start_date(db, tenant_id)
 
         if requested_date < system_start_date:
@@ -126,19 +165,24 @@ def create_report(report: EggRoomReportCreate, db: Session = Depends(get_db), cu
                 detail=f"Report date {requested_date.isoformat()} cannot be before the system start date of {system_start_date.isoformat()}."
             )
         if requested_date > date.today():
-             raise HTTPException(
+            raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Cannot create reports for future dates ({requested_date.isoformat()})."
             )
 
         # Check if a report for this date already exists to prevent duplicates via POST
-        existing_report = egg_crud.get_report_by_date(db, requested_date.isoformat(), tenant_id)
+        existing_report = egg_crud.get_report_by_date(
+            db, requested_date.isoformat(), tenant_id)
         if existing_report:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Report for date {requested_date.isoformat()} already exists. Use PUT to update."
             )
 
+        report.table_transfer = 0
+        report.jumbo_transfer = 0
+        report.grade_c_transfer = 0
+        
         created_report = egg_crud.create_report(db, report, tenant_id)
         if created_report:
             # ... (rest of your serialization logic remains the same) ...
@@ -170,12 +214,15 @@ def create_report(report: EggRoomReportCreate, db: Session = Depends(get_db), cu
             }
             return JSONResponse(content=result)
         else:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create report")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create report")
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error creating egg room report: {e}\n{traceback.format_exc()}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
+        logger.error(
+            f"Error creating egg room report: {e}\n{traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
 
 @router.put("/{report_date}")
@@ -187,17 +234,19 @@ def update_report(report_date: str, report: EggRoomReportUpdate, db: Session = D
         if requested_date < system_start_date:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Report date {report_date} cannot be before the system start date of {system_start_date.isoformat()}."
+                detail=f"Report date {report_date} cannot be before the system start date of {system_start_date.isoformat()}"
             )
         if requested_date > date.today():
-             raise HTTPException(
+            raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Cannot update reports for future dates ({report_date})."
             )
 
-        updated_report = egg_crud.update_report(db, report_date, report, tenant_id)
+        updated_report = egg_crud.update_report(
+            db, report_date, report, tenant_id)
         if not updated_report:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
 
         # Manually serialize the updated report to include hybrid properties
         result = {
@@ -227,11 +276,17 @@ def update_report(report_date: str, report: EggRoomReportUpdate, db: Session = D
             "grade_c_closing": updated_report.grade_c_closing,
         }
         return JSONResponse(content=result)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error updating egg room report for {report_date}: {e}\n{traceback.format_exc()}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
+        logger.error(
+            f"Error updating egg room report for {report_date}: {e}\n{traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
+
+
 
 @router.delete("/{report_date}")
 def delete_report(report_date: str, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user), tenant_id: str = Depends(get_tenant_id)):
@@ -246,13 +301,16 @@ def delete_report(report_date: str, db: Session = Depends(get_db), current_user:
             )
         # Also, consider if you want to prevent deletion of records from very early dates
         # to preserve historical data.
-        
+
         return egg_crud.delete_report(db, report_date, tenant_id)
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error deleting egg room report for {report_date}: {e}\n{traceback.format_exc()}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
+        logger.error(
+            f"Error deleting egg room report for {report_date}: {e}\n{traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
+
 
 @router.get("/")
 def get_reports(start_date: str, end_date: str, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
@@ -274,7 +332,8 @@ def get_reports(start_date: str, end_date: str, db: Session = Depends(get_db), t
             )
 
         # Fetch reports for the requested date range
-        reports = egg_crud.get_reports_by_date_range(db, start_date, end_date, tenant_id)
+        reports = egg_crud.get_reports_by_date_range(
+            db, start_date, end_date, tenant_id)
 
         result = []
         for report in reports:
@@ -308,5 +367,7 @@ def get_reports(start_date: str, end_date: str, db: Session = Depends(get_db), t
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error fetching egg room reports for {start_date} to {end_date}: {e}\n{traceback.format_exc()}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
+        logger.error(
+            f"Error fetching egg room reports for {start_date} to {end_date}: {e}\n{traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
