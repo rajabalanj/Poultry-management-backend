@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, DateTime, ForeignKey, String
+from sqlalchemy import Column, Integer, DateTime, ForeignKey, String, JSON
 from sqlalchemy.orm import relationship
 from database import Base
 from datetime import datetime
@@ -8,6 +8,8 @@ class CompositionUsageHistory(Base):
     __tablename__ = "composition_usage_history"
     id = Column(Integer, primary_key=True, index=True)
     composition_id = Column(Integer, ForeignKey("composition.id"), nullable=False)
+    composition_name = Column(String, nullable=False)  # Snapshot of composition name
+    composition_items = Column(JSON, nullable=False)  # Snapshot of items and quantities
     times = Column(Integer, nullable=False)
     used_at = Column(DateTime, default=datetime.utcnow)
     composition = relationship("Composition")

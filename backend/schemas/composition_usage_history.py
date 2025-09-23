@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
 from datetime import datetime
 
@@ -15,7 +15,8 @@ class CompositionUsageHistoryCreate(CompositionUsageHistoryBase):
 
 class CompositionUsageHistory(CompositionUsageHistoryBase):
     id: int
-    composition_name: Optional[str] = None # Add this line
-    shed_no: Optional[str] = None        # Add this line
+    composition_name: Optional[str] = None
+    composition_items: Optional[List[Dict[str, Any]]] = None
+    shed_no: Optional[str] = None
     class Config:
         from_attributes = True

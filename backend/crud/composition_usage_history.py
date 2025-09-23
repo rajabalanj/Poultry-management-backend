@@ -43,9 +43,27 @@ def _convert_quantity(quantity: Decimal, from_unit: str, to_unit: str) -> Decima
 
 
 def use_composition(db: Session, composition_id: int, batch_id: int, times: int, used_at: datetime, tenant_id: str, changed_by: str = None):
-    # Store usage history
+    # Get composition data for snapshot
+    composition_obj = db.query(Composition).filter(Composition.id == composition_id, Composition.tenant_id == tenant_id).first()
+    items_in_comp = db.query(InventoryItemInComposition).filter(InventoryItemInComposition.composition_id == composition_id, InventoryItemInComposition.tenant_id == tenant_id).all()
+    
+    # Create snapshot of composition items
+    composition_items = []
+    for iic in items_in_comp:
+        item = db.query(InventoryItem).filter(InventoryItem.id == iic.inventory_item_id, InventoryItem.tenant_id == tenant_id).first()
+        if item:
+            composition_items.append({
+                "inventory_item_id": iic.inventory_item_id,
+                "inventory_item_name": item.name,
+                "weight": float(iic.weight),
+                "unit": "kg"
+            })
+    
+    # Store usage history with snapshot
     usage = CompositionUsageHistory(
         composition_id=composition_id,
+        composition_name=composition_obj.name if composition_obj else "N/A",
+        composition_items=composition_items,
         batch_id=batch_id,
         times=times,
         used_at=used_at,
@@ -55,11 +73,7 @@ def use_composition(db: Session, composition_id: int, batch_id: int, times: int,
 
     batch_obj = db.query(Batch).filter(Batch.id == batch_id, Batch.tenant_id == tenant_id).first()
     shed_no = batch_obj.shed_no if batch_obj else "N/A"
-
-    composition_obj = db.query(Composition).filter(Composition.id == composition_id, Composition.tenant_id == tenant_id).first()
     composition_name = composition_obj.name if composition_obj else "N/A"
-
-    items_in_comp = db.query(InventoryItemInComposition).filter(InventoryItemInComposition.composition_id == composition_id, InventoryItemInComposition.tenant_id == tenant_id).all()
 
     for iic in items_in_comp:
         item = db.query(InventoryItem).filter(InventoryItem.id == iic.inventory_item_id, InventoryItem.tenant_id == tenant_id).first()
@@ -107,9 +121,26 @@ def use_composition(db: Session, composition_id: int, batch_id: int, times: int,
     return usage
 
 def create_composition_usage_history(db: Session, composition_id: int, times: int, used_at: datetime, tenant_id: str, batch_id: int = None):
-    # import pdb; pdb.set_trace()
+    # Get composition data for snapshot
+    composition_obj = db.query(Composition).filter(Composition.id == composition_id, Composition.tenant_id == tenant_id).first()
+    items_in_comp = db.query(InventoryItemInComposition).filter(InventoryItemInComposition.composition_id == composition_id, InventoryItemInComposition.tenant_id == tenant_id).all()
+    
+    # Create snapshot of composition items
+    composition_items = []
+    for iic in items_in_comp:
+        item = db.query(InventoryItem).filter(InventoryItem.id == iic.inventory_item_id, InventoryItem.tenant_id == tenant_id).first()
+        if item:
+            composition_items.append({
+                "inventory_item_id": iic.inventory_item_id,
+                "inventory_item_name": item.name,
+                "weight": float(iic.weight),
+                "unit": "kg"
+            })
+    
     usage = CompositionUsageHistory(
         composition_id=composition_id,
+        composition_name=composition_obj.name if composition_obj else "N/A",
+        composition_items=composition_items,
         times=times,
         used_at=used_at,
         batch_id=batch_id,
@@ -128,23 +159,25 @@ def get_composition_usage_history(db: Session, tenant_id: str, composition_id: i
 
     result = []
     for usage in usage_list:
-        composition = db.query(Composition).filter(Composition.id == usage.composition_id, Composition.tenant_id == tenant_id).first()
-        usage_dict = usage.__dict__.copy()
-        usage_dict.pop('_sa_instance_state', None) # Remove SQLAlchemy internal state
+        usage_dict = {
+            "id": usage.id,
+            "composition_id": usage.composition_id,
+            "composition_name": usage.composition_name,
+            "composition_items": usage.composition_items,
+            "times": usage.times,
+            "used_at": usage.used_at,
+            "batch_id": usage.batch_id,
+            "tenant_id": usage.tenant_id
+        }
 
-        usage_dict['composition_name'] = composition.name if composition else None
-
-        # Safely fetch shed_no from Batch
-        # Check if 'batch_id' exists in the usage record and if a Batch can be found
-        # This part ensures graceful handling if batch_id is missing or Batch not found.
         if hasattr(usage, 'batch_id') and usage.batch_id is not None:
             batch = db.query(Batch).filter(Batch.id == usage.batch_id, Batch.tenant_id == tenant_id).first()
             if batch:
                 usage_dict['shed_no'] = batch.shed_no
             else:
-                usage_dict['shed_no'] = None # Set to None if batch not found for a given batch_id
+                usage_dict['shed_no'] = None 
         else:
-            usage_dict['shed_no'] = None # Set to None if batch_id is missing from usage record
+            usage_dict['shed_no'] = None
 
         result.append(usage_dict)
     return result
@@ -157,26 +190,25 @@ def revert_composition_usage(db: Session, usage_id: int, tenant_id: str, changed
     if not usage_to_revert:
         return False, "Composition usage record not found."
 
-    composition_id = usage_to_revert.composition_id
     times = usage_to_revert.times
-
-    composition_obj = db.query(Composition).filter(Composition.id == composition_id, Composition.tenant_id == tenant_id).first()
-    composition_name = composition_obj.name if composition_obj else "N/A"
-
+    composition_name = usage_to_revert.composition_name
+    
     batch_obj = db.query(Batch).filter(Batch.id == usage_to_revert.batch_id, Batch.tenant_id == tenant_id).first()
     shed_no = batch_obj.shed_no if batch_obj else "N/A"
 
-    items_in_comp = db.query(InventoryItemInComposition).filter(InventoryItemInComposition.composition_id == composition_id, InventoryItemInComposition.tenant_id == tenant_id).all()
+    # Use the snapshot of items from the history
+    items_in_comp = usage_to_revert.composition_items
 
     for iic in items_in_comp:
-        item = db.query(InventoryItem).filter(InventoryItem.id == iic.inventory_item_id, InventoryItem.tenant_id == tenant_id).first()
+        item = db.query(InventoryItem).filter(InventoryItem.id == iic['inventory_item_id'], InventoryItem.tenant_id == tenant_id).first()
         if item:
             old_item_quantity = item.current_stock
             old_item_unit = item.unit
 
             old_quantity_for_audit_kg = _convert_quantity(old_item_quantity, old_item_unit, 'kg')
 
-            total_iic_quantity_kg = Decimal(str(iic.weight)) * Decimal(str(times))
+            # The weight in snapshot is already float, no need for str conversion
+            total_iic_quantity_kg = Decimal(iic['weight']) * Decimal(times)
 
             try:
                 quantity_to_add_in_items_unit = _convert_quantity(
@@ -231,14 +263,19 @@ def get_composition_usage_by_date(db: Session, usage_date: date, tenant_id: str,
     feed_breakdown = {}
 
     for usage in usage_history:
-        composition = usage.composition
         feed_quantity = 0
-        for item_in_comp in composition.inventory_items:
-            if item_in_comp.inventory_item and item_in_comp.inventory_item.category == 'Feed':
-                feed_quantity += item_in_comp.weight * usage.times
+        # Iterate over the stored items in the snapshot
+        for item_in_comp in usage.composition_items:
+            # We need to check the category of the item.
+            # The item name is in the snapshot, but not the category.
+            # We can either store the category in the snapshot, or fetch the item.
+            # Fetching the item is more robust if item categories can change.
+            item = db.query(InventoryItem).filter(InventoryItem.id == item_in_comp['inventory_item_id']).first()
+            if item and item.category == 'Feed':
+                feed_quantity += Decimal(item_in_comp['weight']) * usage.times
         
         total_feed += feed_quantity
-        composition_name = composition.name
+        composition_name = usage.composition_name
         if composition_name in feed_breakdown:
             feed_breakdown[composition_name] += feed_quantity
         else:
