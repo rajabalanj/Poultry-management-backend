@@ -92,6 +92,9 @@ def create_purchase_order(
         if not db_inventory_item:
             raise HTTPException(status_code=400, detail=f"Inventory Item with ID {item_data.inventory_item_id} not found.")
         
+        if db_inventory_item.category and db_inventory_item.category.lower() == 'supplies':
+            raise HTTPException(status_code=400, detail=f"Item '{db_inventory_item.name}' belongs to the 'Supplies' category and cannot be purchased.")
+        
         line_total = item_data.quantity * item_data.price_per_unit
         total_amount += line_total
         
@@ -349,6 +352,9 @@ def add_item_to_purchase_order(
     db_inventory_item = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_request.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).first()
     if not db_inventory_item:
         raise HTTPException(status_code=400, detail=f"Inventory Item with ID {item_request.inventory_item_id} not found.")
+
+    if db_inventory_item.category and db_inventory_item.category.lower() == 'supplies':
+        raise HTTPException(status_code=400, detail=f"Item '{db_inventory_item.name}' belongs to the 'Supplies' category and cannot be purchased.")
 
     # Check if item already exists in PO (optional: prevent duplicates or update existing)
     existing_item = db.query(PurchaseOrderItemModel).filter(

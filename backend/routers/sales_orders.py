@@ -186,14 +186,14 @@ def _get_available_egg_stock(db: Session, tenant_id: str, order_date: date, egg_
 
     available_stock = Decimal("0.0")
     if egg_type == "Table Egg":
-        available_stock = egg_room_report.table_opening + egg_room_report.table_received - egg_room_report.table_transfer
-        logger.info(f"Table Egg: opening={egg_room_report.table_opening}, received={egg_room_report.table_received}, transfer={egg_room_report.table_transfer}")
+        available_stock = Decimal(str(egg_room_report.table_closing))
+        logger.info(f"Table Egg closing stock: {available_stock}")
     elif egg_type == "Jumbo Egg":
-        available_stock = egg_room_report.jumbo_opening + egg_room_report.jumbo_received - egg_room_report.jumbo_transfer
-        logger.info(f"Jumbo Egg: opening={egg_room_report.jumbo_opening}, received={egg_room_report.jumbo_received}, transfer={egg_room_report.jumbo_transfer}")
+        available_stock = Decimal(str(egg_room_report.jumbo_closing))
+        logger.info(f"Jumbo Egg closing stock: {available_stock}")
     elif egg_type == "Grade C Egg":
-        available_stock = egg_room_report.grade_c_opening + egg_room_report.grade_c_shed_received - egg_room_report.grade_c_transfer
-        logger.info(f"Grade C Egg: opening={egg_room_report.grade_c_opening}, received={egg_room_report.grade_c_shed_received}, transfer={egg_room_report.grade_c_transfer}")
+        available_stock = Decimal(str(egg_room_report.grade_c_closing))
+        logger.info(f"Grade C Egg closing stock: {available_stock}")
     
     # Retrieve EGG_STOCK_TOLERANCE from app_config
     egg_stock_tolerance_config = crud_app_config.get_config(db, tenant_id, name="EGG_STOCK_TOLERANCE")
