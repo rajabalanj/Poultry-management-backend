@@ -29,6 +29,42 @@ router = APIRouter(
     tags=["reports"],
 )
 
+def _calculate_summary(batches: list[DailyBatch]):
+    """Helper function to calculate summary statistics for a list of daily batches."""
+    if not batches:
+        return None
+
+    # Sort batches by date to correctly get first and latest
+    batches.sort(key=lambda x: x.batch_date)
+    
+    # Sum totals
+    total_opening_count = sum(b.opening_count for b in batches)
+    total_mortality = sum(b.mortality for b in batches)
+    total_culls = sum(b.culls for b in batches)
+    total_closing_count = sum(b.closing_count for b in batches)
+    total_table_eggs = sum(b.table_eggs for b in batches)
+    total_jumbo = sum(b.jumbo for b in batches)
+    total_cr = sum(b.cr for b in batches)
+    total_eggs = total_table_eggs + total_jumbo + total_cr
+
+    # Calculate averages
+    avg_hd = sum(b.hd for b in batches) / len(batches)
+    standard_hd_values = [float(b.standard_hen_day_percentage) for b in batches if b.standard_hen_day_percentage is not None]
+    avg_standard_hd = sum(standard_hd_values) / len(standard_hd_values) if standard_hd_values else 0
+
+    return {
+        "opening_count": total_opening_count,
+        "mortality": total_mortality,
+        "culls": total_culls,
+        "closing_count": total_closing_count,
+        "table_eggs": total_table_eggs,
+        "jumbo": total_jumbo,
+        "cr": total_cr,
+        "total_eggs": total_eggs,
+        "hd": round(avg_hd, 4),
+        "standard_hen_day_percentage": round(avg_standard_hd, 4),
+    }
+
 @router.get("/snapshot")
 def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
     """
@@ -52,81 +88,41 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
         Batch.tenant_id == tenant_id
     )
 
+    summary_data = None
     if batch_id is not None:
         query = query.filter(DailyBatch.batch_id == batch_id)
-        daily_batches = query.order_by(DailyBatch.batch_date.asc()).all()
-        
-        result = [
-            {
-                "batch_id": batch.batch_id,
-                "batch_no": batch.batch_no,
-                "batch_date": batch.batch_date.strftime("%d-%m-%Y"),
-                "shed_no": batch.shed_no,
-                "age": batch.age,
-                "opening_count": batch.opening_count,
-                "mortality": batch.mortality,
-                "culls": batch.culls,
-                "closing_count": batch.closing_count,
-                "table_eggs": batch.table_eggs,
-                "jumbo": batch.jumbo,
-                "cr": batch.cr,
-                "total_eggs": batch.total_eggs,
-                "hd": batch.hd,
-                "standard_hen_day_percentage": float(batch.standard_hen_day_percentage) if batch.standard_hen_day_percentage is not None else batch.standard_hen_day_percentage,
-            }
-            for batch in daily_batches
-        ]
-    else:
-        daily_batches = query.all()
-        
-        # Group by batch_id and consolidate
-        batch_groups = {}
-        for batch in daily_batches:
-            if batch.batch_id not in batch_groups:
-                batch_groups[batch.batch_id] = []
-            batch_groups[batch.batch_id].append(batch)
-        
-        result = []
-        for batch_id, batches in batch_groups.items():
-            # Sum totals
-            total_mortality = sum(b.mortality for b in batches)
-            total_culls = sum(b.culls for b in batches)
-            total_table_eggs = sum(b.table_eggs for b in batches)
-            total_jumbo = sum(b.jumbo for b in batches)
-            total_cr = sum(b.cr for b in batches)
-            total_eggs = total_table_eggs + total_jumbo + total_cr
-            
-            # Get latest values
-            latest_batch = max(batches, key=lambda x: x.batch_date)
-            first_batch = min(batches, key=lambda x: x.batch_date)
-            
-            # Calculate averages
-            avg_hd = sum(b.hd for b in batches) / len(batches)
-            standard_hd_values = [float(b.standard_hen_day_percentage) for b in batches if b.standard_hen_day_percentage is not None]
-            avg_standard_hd = sum(standard_hd_values) / len(standard_hd_values) if standard_hd_values else 0
-            
-            result.append({
-                "batch_id": batch_id,
-                "batch_no": latest_batch.batch_no,
-                "shed_no": latest_batch.shed_no,
-                "age": latest_batch.age,
-                "opening_count": first_batch.opening_count,
-                "closing_count": latest_batch.closing_count,
-                "mortality": total_mortality,
-                "culls": total_culls,
-                "table_eggs": total_table_eggs,
-                "jumbo": total_jumbo,
-                "cr": total_cr,
-                "total_eggs": total_eggs,
-                "hd": round(avg_hd, 4),
-                "standard_hen_day_percentage": round(avg_standard_hd, 4),
-                "date_range": f"{first_batch.batch_date.strftime('%d-%m-%Y')} to {latest_batch.batch_date.strftime('%d-%m-%Y')}",
-                "days_count": len(batches)
-            })
-        
-        result.sort(key=lambda x: x["batch_id"])
+    
+    daily_batches = query.order_by(DailyBatch.batch_date.asc()).all()
+    summary_data = _calculate_summary(daily_batches)
 
-    return JSONResponse(content=result)
+    # Prepare detailed results
+    detailed_result = [
+        {
+            "batch_id": batch.batch_id,
+            "batch_no": batch.batch_no,
+            "batch_date": batch.batch_date.strftime("%d-%m-%Y"),
+            "shed_no": batch.shed_no,
+            "age": batch.age,
+            "opening_count": batch.opening_count,
+            "mortality": batch.mortality,
+            "culls": batch.culls,
+            "closing_count": batch.closing_count,
+            "table_eggs": batch.table_eggs,
+            "jumbo": batch.jumbo,
+            "cr": batch.cr,
+            "total_eggs": batch.total_eggs,
+            "hd": batch.hd,
+            "standard_hen_day_percentage": float(batch.standard_hen_day_percentage) if batch.standard_hen_day_percentage is not None else None,
+        }
+        for batch in daily_batches
+    ]
+
+    response_content = {
+        "details": detailed_result,
+        "summary": summary_data
+    }
+
+    return JSONResponse(content=response_content)
 
 def write_daily_report_excel(batches, report_date=None, file_path=None, tenant_id: str = None):
     if report_date is None:
