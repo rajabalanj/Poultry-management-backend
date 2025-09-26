@@ -74,14 +74,17 @@ def create_sales_order(
                 raise HTTPException(status_code=400, detail=f"Insufficient stock for item '{db_inventory_item.name}'. Available: {db_inventory_item.current_stock}, Requested: {item_data.quantity}")
         # --- End stock validation logic --- 
         
-        line_total = item_data.quantity * item_data.price_per_unit
+        # Price is now optional at creation. Default to 0 if not provided.
+        price_per_unit = item_data.price_per_unit if item_data.price_per_unit is not None else Decimal("0.0")
+        
+        line_total = item_data.quantity * price_per_unit
         total_amount += line_total
         
         db_so_items.append(
             SalesOrderItemModel(
                 inventory_item_id=item_data.inventory_item_id,
                 quantity=item_data.quantity,
-                price_per_unit=item_data.price_per_unit,
+                price_per_unit=price_per_unit,
                 line_total=line_total,
                 tenant_id=tenant_id
             )
@@ -90,7 +93,7 @@ def create_sales_order(
     db_so = SalesOrderModel(
         customer_id=so.customer_id,
         order_date=so.order_date,
-        status=so.status,
+        status=SalesOrderStatus.DRAFT, # Force status to Draft on creation
         notes=so.notes,
         total_amount=total_amount,
         created_by=get_user_identifier(user),

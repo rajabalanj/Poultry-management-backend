@@ -136,11 +136,11 @@ def create_purchase_order(
         new_quantity = item.quantity
         purchase_price = item.price_per_unit
         current_avg_cost = inv.average_cost or 0
-
-        if old_stock + new_quantity > 0:
+        
+        if purchase_price > 0 and old_stock + new_quantity > 0:
             new_avg_cost = ((old_stock * current_avg_cost) + (new_quantity * purchase_price)) / (old_stock + new_quantity)
             inv.average_cost = new_avg_cost
-
+        
         inv.current_stock = old_stock + new_quantity
         
         # Create audit record
