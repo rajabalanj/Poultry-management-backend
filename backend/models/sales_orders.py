@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, Numeric, Date, DateTime, ForeignKey, Enum
+from sqlalchemy import Column, Integer, String, Text, Numeric, Date, DateTime, ForeignKey, Enum, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
@@ -12,8 +12,10 @@ class SalesOrderStatus(enum.Enum):
 
 class SalesOrder(Base):
     __tablename__ = "sales_orders"
+    __table_args__ = (UniqueConstraint('tenant_id', 'so_number', name='_tenant_so_number_uc'),)
 
     id = Column(Integer, primary_key=True, index=True)
+    so_number = Column(Integer, index=True) # Tenant-specific sequential number
     customer_id = Column(Integer, ForeignKey("business_partners.id"), nullable=False)
     order_date = Column(Date, nullable=False)
     total_amount = Column(Numeric(10, 3), default=0.0, nullable=False)

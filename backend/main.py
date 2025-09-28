@@ -207,6 +207,33 @@ def get_composition_usage_history_endpoint(
 ):
     return get_composition_usage_history(db, tenant_id, composition_id=composition_id)
 
+@app.get("/compositions/usage-history/filtered", response_model=list[CompositionUsageHistory])
+def get_filtered_composition_usage_history(
+    batch_date: date,
+    batch_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """
+    Get composition usage history for a specific date, with an optional filter for batch_id.
+    """
+    from models.composition_usage_history import CompositionUsageHistory as CompositionUsageHistoryModel
+
+    # Define the time range for the given date
+    start_of_day = datetime.combine(batch_date, datetime.min.time())
+    end_of_day = datetime.combine(batch_date, datetime.max.time())
+
+    query = db.query(CompositionUsageHistoryModel).filter(CompositionUsageHistoryModel.tenant_id == tenant_id)
+    
+    # Filter by date range (start and end of the given day)
+    query = query.filter(CompositionUsageHistoryModel.used_at >= start_of_day)
+    query = query.filter(CompositionUsageHistoryModel.used_at <= end_of_day)
+
+    if batch_id:
+        query = query.filter(CompositionUsageHistoryModel.batch_id == batch_id)
+
+    return query.order_by(CompositionUsageHistoryModel.used_at.desc()).all()
+
 @app.post("/compositions/revert-usage/{usage_id}")
 def revert_composition_usage_endpoint(
     usage_id: int,

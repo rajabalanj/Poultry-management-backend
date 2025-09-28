@@ -52,6 +52,7 @@ class PurchaseOrderUpdate(BaseModel):
 
 class PurchaseOrder(PurchaseOrderBase):
     id: int
+    po_number: Optional[int] = None
     tenant_id: Optional[str] = None
     total_amount: Decimal
     total_amount_paid: Decimal

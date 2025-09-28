@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Header, status, UploadFile, File
 from sqlalchemy.orm import Session, selectinload
-from sqlalchemy import desc
+from sqlalchemy import desc, func
 from typing import List, Optional
 import logging
 from datetime import date, datetime, timedelta
@@ -90,7 +90,11 @@ def create_sales_order(
             )
         )
     
+    last_so_number = db.query(func.max(SalesOrderModel.so_number)).filter(SalesOrderModel.tenant_id == tenant_id).scalar() or 0
+    next_so_number = last_so_number + 1
+
     db_so = SalesOrderModel(
+        so_number=next_so_number,
         customer_id=so.customer_id,
         order_date=so.order_date,
         status=SalesOrderStatus.DRAFT, # Force status to Draft on creation

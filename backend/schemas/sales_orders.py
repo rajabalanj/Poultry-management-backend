@@ -47,6 +47,7 @@ class SalesOrderUpdate(BaseModel):
 
 class SalesOrder(SalesOrderBase):
     id: int
+    so_number: Optional[int] = None
     tenant_id: Optional[str] = None
     total_amount: Decimal
     total_amount_paid: Decimal

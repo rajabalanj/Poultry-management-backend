@@ -1,6 +1,7 @@
 # backend/routers/purchase_orders.py
 
 from fastapi import APIRouter, Depends, HTTPException, Header, status, UploadFile, File
+from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload # <-- import selectinload
 from typing import List, Optional
 import logging
@@ -109,7 +110,11 @@ def create_purchase_order(
         )
     
     # 4. Create the Purchase Order
+    last_po_number = db.query(func.max(PurchaseOrderModel.po_number)).filter(PurchaseOrderModel.tenant_id == tenant_id).scalar() or 0
+    next_po_number = last_po_number + 1
+
     db_po = PurchaseOrderModel(
+        po_number=next_po_number,
         vendor_id=po.vendor_id,
         order_date=po.order_date,
         status=po.status,
