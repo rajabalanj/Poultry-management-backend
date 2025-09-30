@@ -48,9 +48,11 @@ def get_total_feed_for_day(db: Session, batch_id: int, batch_date: date, tenant_
 
     total_feed_grams = 0.0
     for usage in usages:
-        # For each usage, sum the quantities of all items in the composition
-        composition_items = db.query(Composition).filter(Composition.composition_id == usage.composition_id).all()
-        total_feed_grams += sum(item.quantity_kg for item in composition_items) * usage.times
+        # For each usage, get the composition
+        composition = db.query(Composition).filter(Composition.id == usage.composition_id).first()
+        if composition:
+            # Sum the weights of all items in the composition
+            total_feed_grams += sum(item.weight for item in composition.inventory_items) * usage.times
     return total_feed_grams * 1000 # Convert kg to grams
 
 def get_daily_batches_by_date_range(db: Session, start_date: date, end_date: date, tenant_id: str):
