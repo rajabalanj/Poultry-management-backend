@@ -8,9 +8,6 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.worksheet.cell_range import CellRange
 from openpyxl.utils import get_column_letter
-from models.bovanswhitelayerperformance import BovansWhiteLayerPerformance
-from models.composition_usage_history import CompositionUsageHistory as CompositionUsageHistoryModel
-from models.composition import Composition
 from database import get_db
 import pandas as pd
 from io import BytesIO
@@ -19,39 +16,6 @@ from sqlalchemy import and_
 import models
 from models.batch import Batch
 from utils.tenancy import get_tenant_id
-from functools import lru_cache
-
-@lru_cache()
-def get_bovans_standards(db: Session, tenant_id: str) -> Dict[int, BovansWhiteLayerPerformance]:
-    """
-    Fetches all Bovans White Layer Performance standards for a tenant
-    and returns them as a dictionary keyed by age in weeks.
-    Uses lru_cache to avoid repeated database calls.
-    """
-    standards = db.query(BovansWhiteLayerPerformance).filter(BovansWhiteLayerPerformance.tenant_id == tenant_id).all()
-    return {standard.age_weeks: standard for standard in standards}
-
-def get_total_feed_for_day(db: Session, batch_id: int, batch_date: date, tenant_id: str) -> float:
-    """
-    Calculates the total feed consumed (in grams) for a specific batch on a given date.
-    """
-    start_of_day = datetime.combine(batch_date, datetime.min.time())
-    end_of_day = datetime.combine(batch_date, datetime.max.time())
-
-    # Get all composition usages for the batch on the given day
-    usages = db.query(CompositionUsageHistoryModel).filter(
-        CompositionUsageHistoryModel.batch_id == batch_id,
-        CompositionUsageHistoryModel.tenant_id == tenant_id,
-        CompositionUsageHistoryModel.used_at >= start_of_day,
-        CompositionUsageHistoryModel.used_at <= end_of_day
-    ).all()
-
-    total_feed_grams = 0.0
-    for usage in usages:
-        # For each usage, sum the quantities of all items in the composition
-        composition_items = db.query(Composition).filter(Composition.composition_id == usage.composition_id).all()
-        total_feed_grams += sum(item.quantity_kg for item in composition_items) * usage.times
-    return total_feed_grams * 1000 # Convert kg to grams
 
 def get_daily_batches_by_date_range(db: Session, start_date: date, end_date: date, tenant_id: str):
     return db.query(models.DailyBatch).filter(
@@ -165,9 +129,6 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
         Batch.is_active,
         Batch.tenant_id == tenant_id
     )
-    
-    # Fetch performance standards once
-    bovans_standards = get_bovans_standards(db, tenant_id)
 
     summary_data = None
     detailed_result = []
@@ -177,29 +138,19 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
         daily_batches = query.order_by(DailyBatch.batch_date.asc()).all()
         summary_data = _calculate_summary(daily_batches, start_date_obj, end_date_obj, is_single_batch=True)
 
+        if summary_data:
+            total_actual_feed_consumed = sum(record.feed_in_kg for record in daily_batches if record.feed_in_kg is not None)
+            total_standard_feed_consumption = sum(record.standard_feed_in_kg * record.opening_count for record in daily_batches if record.standard_feed_in_kg is not None and record.opening_count is not None)
+            
+            summary_data["actual_feed_consumed"] = total_actual_feed_consumed
+            summary_data["standard_feed_consumption"] = total_standard_feed_consumption
+
         # For a single batch, the details are the daily records
         for batch in daily_batches:
-            age_weeks = 0
-            try:
-                age_weeks = int(float(batch.age))
-            except (ValueError, TypeError):
-                pass
-
-            feed_sufficiency = "N/A"
-            egg_laying_performance = "N/A"
-            standard = bovans_standards.get(age_weeks)
-
-            if standard:
-                # Feed Sufficiency Calculation
-                actual_feed_g = get_total_feed_for_day(db, batch.batch_id, batch.batch_date, tenant_id)
-                standard_feed_g = standard.feed_intake_per_day_g * batch.opening_count
-                if standard_feed_g > 0:
-                    feed_sufficiency = "Sufficient" if actual_feed_g >= standard_feed_g else "Insufficient"
-
-                # Egg Laying Performance Calculation
-                if batch.hd is not None and standard.lay_percent is not None:
-                    actual_hd_percent = batch.hd * 100
-                    egg_laying_performance = "Met" if actual_hd_percent >= float(standard.lay_percent) else "Not Met"
+            actual_feed_consumed = batch.feed_in_kg
+            standard_feed_consumption = None
+            if batch.standard_feed_in_kg is not None and batch.opening_count is not None:
+                standard_feed_consumption = batch.standard_feed_in_kg * batch.opening_count
 
             detailed_result.append({
                 "batch_id": batch.batch_id,
@@ -217,8 +168,8 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
                 "total_eggs": batch.total_eggs,
                 "hd": batch.hd,
                 "standard_hen_day_percentage": float(batch.standard_hen_day_percentage) if batch.standard_hen_day_percentage is not None else None,
-                "feed_sufficiency": feed_sufficiency,
-                "egg_laying_performance": egg_laying_performance,
+                "actual_feed_consumed": actual_feed_consumed,
+                "standard_feed_consumption": standard_feed_consumption,
             })
 
     else:
@@ -227,6 +178,13 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
         
         # First, calculate the grand summary over all batches
         summary_data = _calculate_summary(all_daily_batches, start_date_obj, end_date_obj, is_single_batch=False)
+
+        if summary_data:
+            total_actual_feed_consumed = sum(record.feed_in_kg for record in all_daily_batches if record.feed_in_kg is not None)
+            total_standard_feed_consumption = sum(record.standard_feed_in_kg * record.opening_count for record in all_daily_batches if record.standard_feed_in_kg is not None and record.opening_count is not None)
+            
+            summary_data["actual_feed_consumed"] = total_actual_feed_consumed
+            summary_data["standard_feed_consumption"] = total_standard_feed_consumption
 
         # Group batches by batch_id for detailed consolidation
         from itertools import groupby
@@ -239,6 +197,12 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
             batch_summary = _calculate_summary(batch_records, batch_records[0].batch_date, batch_records[-1].batch_date, is_single_batch=True)
             
             if batch_summary:
+                # Calculate feed consumption for the batch
+                total_actual_feed_consumed = sum(record.feed_in_kg for record in batch_records if record.feed_in_kg is not None)
+                total_standard_feed_consumption = sum(record.standard_feed_in_kg * record.opening_count for record in batch_records if record.standard_feed_in_kg is not None and record.opening_count is not None)
+                
+                batch_summary["actual_feed_consumed"] = total_actual_feed_consumed
+                batch_summary["standard_feed_consumption"] = total_standard_feed_consumption
                 # Add batch-specific info to the summary
                 batch_summary["batch_id"] = b_id
                 batch_summary["batch_no"] = batch_records[0].batch_no

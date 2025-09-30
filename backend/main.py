@@ -606,6 +606,8 @@ def create_or_get_daily_batches(
             d['total_eggs'] = daily.total_eggs
             d['batch_type'] = daily.batch_type
             d['standard_hen_day_percentage'] = daily.standard_hen_day_percentage
+            d['feed_in_kg'] = daily.feed_in_kg
+            d['standard_feed_in_kg'] = daily.standard_feed_in_kg * daily.opening_count if daily.standard_feed_in_kg and daily.opening_count else 0
             result_list.append(d)
         else:
             # Generate missing daily batch
@@ -668,6 +670,8 @@ def create_or_get_daily_batches(
             d['total_eggs'] = db_daily.total_eggs
             d['batch_type'] = db_daily.batch_type
             d['standard_hen_day_percentage'] = db_daily.standard_hen_day_percentage
+            d['feed_in_kg'] = db_daily.feed_in_kg
+            d['standard_feed_in_kg'] = db_daily.standard_feed_in_kg * db_daily.opening_count if db_daily.standard_feed_in_kg and db_daily.opening_count else 0
             result_list.append(d)
 
     result_list.sort(key=lambda x: x.get('batch_no', float('inf')))

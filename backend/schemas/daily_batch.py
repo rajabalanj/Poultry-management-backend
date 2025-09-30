@@ -64,6 +64,8 @@ class DailyBatchUpdate(DailyBatchBase):
     batch_id: int
     notes: Optional[str] = None
     standard_hen_day_percentage: Optional[float] = 0.0
+    feed_in_kg: Optional[float] = None
+    standard_feed_in_kg: Optional[float] = None
     
 
     class Config:
@@ -71,6 +73,8 @@ class DailyBatchUpdate(DailyBatchBase):
 
 class DailyBatch(DailyBatchBase):
     tenant_id: Optional[str] = None
+    feed_in_kg: Optional[float] = None
+    standard_feed_in_kg: Optional[float] = None
 
     class Config:
         from_attributes = True
