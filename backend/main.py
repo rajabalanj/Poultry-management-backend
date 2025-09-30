@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, Header, UploadFile, File
+from fastapi import FastAPI, HTTPException, Depends, Header, UploadFile, File, status
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -27,6 +27,7 @@ from schemas.daily_batch import DailyBatchCreate, DailyBatchUpdate
 import crud.daily_batch as crud_daily_batch
 import pandas as pd
 from models.batch import Batch as BatchModel
+from models.app_config import AppConfig as AppConfigModel
 from schemas.app_config import AppConfigCreate, AppConfigUpdate, AppConfigOut
 from crud import app_config as crud_app_config
 from typing import List, Optional
@@ -131,12 +132,6 @@ async def test_route():
 def create_composition(composition: CompositionCreate, db: Session = Depends(get_db), user: dict = Depends(require_group(["admin"])), tenant_id: str = Depends(get_tenant_id)):
     return crud_composition.create_composition(db, composition, tenant_id)
 
-@app.get("/compositions/{composition_id}", response_model=Composition)
-def read_composition(composition_id: int, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
-    db_composition = crud_composition.get_composition(db, composition_id, tenant_id)
-    if db_composition is None:
-        raise HTTPException(status_code=404, detail="Composition not found")
-    return db_composition
 
 @app.get("/compositions/", response_model=List[Composition])
 def read_compositions(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
@@ -192,12 +187,6 @@ def use_composition_endpoint(
         # This fallback is for unexpected cases, indicating an issue in use_composition
         raise HTTPException(status_code=500, detail="Failed to retrieve usage ID after processing composition.")
 
-@app.get("/compositions/usage-history", response_model=list[CompositionUsageHistory])
-def get_all_composition_usage_history(
-    db: Session = Depends(get_db),
-    tenant_id: str = Depends(get_tenant_id)
-):
-    return get_composition_usage_history(db, tenant_id=tenant_id)
 
 @app.get("/compositions/{composition_id}/usage-history", response_model=list[CompositionUsageHistory])
 def get_composition_usage_history_endpoint(
@@ -206,6 +195,13 @@ def get_composition_usage_history_endpoint(
     tenant_id: str = Depends(get_tenant_id)
 ):
     return get_composition_usage_history(db, tenant_id, composition_id=composition_id)
+
+@app.get("/compositions/usage-history", response_model=list[CompositionUsageHistory])
+def get_all_composition_usage_history(
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    return get_composition_usage_history(db, tenant_id=tenant_id)
 
 @app.get("/compositions/usage-history/filtered", response_model=list[CompositionUsageHistory])
 def get_filtered_composition_usage_history(
@@ -253,6 +249,13 @@ def revert_composition_usage_endpoint(
 @app.patch("/compositions/{composition_id}", response_model=Composition)
 def patch_composition(composition_id: int, composition: CompositionCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user), tenant_id: str = Depends(get_tenant_id)):
     db_composition = crud_composition.update_composition(db, composition_id, composition, tenant_id)
+    if db_composition is None:
+        raise HTTPException(status_code=404, detail="Composition not found")
+    return db_composition
+
+@app.get("/compositions/{composition_id}", response_model=Composition)
+def read_composition(composition_id: int, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
+    db_composition = crud_composition.get_composition(db, composition_id, tenant_id)
     if db_composition is None:
         raise HTTPException(status_code=404, detail="Composition not found")
     return db_composition
@@ -507,6 +510,52 @@ def update_config(name: str, config: AppConfigUpdate, db: Session = Depends(get_
     if not updated:
         raise HTTPException(status_code=404, detail="Configuration not found")
     return updated
+
+
+@app.post("/tenants/initialize-configs", status_code=status.HTTP_201_CREATED, tags=["Tenants"])
+def initialize_tenant_configurations(
+    tenant_id: str,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_group(["admin"]))
+):
+    """
+    Initializes a new tenant with a default set of application configurations.
+    This is idempotent; it will not overwrite existing configurations for the tenant.
+    """
+    # Define your default configurations here
+    default_configs = [
+        {"name": "system_start_date", "value": "2024-01-01"},
+        {"name": "EGG_STOCK_TOLERANCE", "value": "100"},
+        {"name": "table_opening", "value": "0"},
+        {"name": "jumbo_opening", "value": "0"},
+        {"name": "grade_c_opening", "value": "0"},
+        {"name": "lowKgThreshold", "value": "4000"},
+        {"name": "lowTonThreshold", "value": "4"},
+        {"name": "medicineLowKgThreshold", "value": "10"},
+        {"name": "medicineLowGramThreshold", "value": "10000"},
+        {"name": "henDayDeviation", "value": "10"},
+
+        # Add other default configurations as needed
+        # {"name": "some_other_setting", "value": "default_value"},
+    ]
+
+    # Check which configs already exist for this tenant
+    existing_configs_query = db.query(AppConfigModel.name).filter(AppConfigModel.tenant_id == tenant_id)
+    existing_config_names = {name for (name,) in existing_configs_query}
+
+    new_configs_created = []
+    for config_data in default_configs:
+        if config_data["name"] not in existing_config_names:
+            config = AppConfigCreate(**config_data)
+            crud_app_config.create_config(db, config, tenant_id)
+            new_configs_created.append(config_data["name"])
+
+    if not new_configs_created:
+        return {"message": f"All default configurations already exist for tenant '{tenant_id}'."}
+
+    logger.info(f"Initialized default configs for tenant '{tenant_id}' by user {get_user_identifier(user)}. New configs: {new_configs_created}")
+    return {"message": f"Successfully initialized default configurations for tenant '{tenant_id}'.", "new_configs": new_configs_created}
+
 
 
 from typing import List
