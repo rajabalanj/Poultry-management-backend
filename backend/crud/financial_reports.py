@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from models import sales_orders, purchase_orders, inventory_items, payments, sales_payments, composition_usage_history
+from models import sales_orders, purchase_orders, inventory_items, payments, sales_payments, composition_usage_history, operational_expenses
 from schemas.financial_reports import ProfitAndLoss, BalanceSheet, Assets, CurrentAssets, Liabilities, CurrentLiabilities
 from datetime import date
 from decimal import Decimal
@@ -34,11 +34,10 @@ def get_profit_and_loss(db: Session, start_date: date, end_date: date, tenant_id
     gross_profit = total_revenue - cogs
 
     # 4. Calculate Operating Expenses
-    operating_expenses = db.query(func.sum(purchase_orders.PurchaseOrder.total_amount)).join(purchase_orders.PurchaseOrder.items).join(inventory_items.InventoryItem).filter(
-        purchase_orders.PurchaseOrder.tenant_id == tenant_id,
-        purchase_orders.PurchaseOrder.order_date >= start_date,
-        purchase_orders.PurchaseOrder.order_date <= end_date,
-        ~inventory_items.InventoryItem.category.in_(['Feed', 'Medicine'])
+    operating_expenses = db.query(func.sum(operational_expenses.OperationalExpense.amount)).filter(
+        operational_expenses.OperationalExpense.tenant_id == tenant_id,
+        operational_expenses.OperationalExpense.date >= start_date,
+        operational_expenses.OperationalExpense.date <= end_date
     ).scalar() or Decimal(0)
 
     # 5. Calculate Net Income

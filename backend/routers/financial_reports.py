@@ -4,6 +4,7 @@ from database import get_db
 from schemas.financial_reports import ProfitAndLoss, BalanceSheet
 from crud import financial_reports as crud_financial_reports
 from datetime import date
+from decimal import Decimal
 from utils.tenancy import get_tenant_id
 
 router = APIRouter(
@@ -18,7 +19,12 @@ def get_profit_and_loss(
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_tenant_id)
 ):
-    return crud_financial_reports.get_profit_and_loss(db=db, start_date=start_date, end_date=end_date, tenant_id=tenant_id)
+    return crud_financial_reports.get_profit_and_loss(
+        db=db, 
+        start_date=start_date, 
+        end_date=end_date, 
+        tenant_id=tenant_id
+    )
 
 @router.get("/balance-sheet", response_model=BalanceSheet)
 def get_balance_sheet(

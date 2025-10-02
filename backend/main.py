@@ -42,6 +42,7 @@ import routers.inventory_items as inventory_items
 import routers.sales_orders as sales_orders
 import routers.sales_payments as sales_payments
 import routers.financial_reports as financial_reports
+import routers.operational_expenses as operational_expenses
 from utils.auth_utils import get_current_user, get_user_identifier, require_group
 from utils.tenancy import get_tenant_id
 
@@ -119,6 +120,7 @@ app.include_router(inventory_items.router)
 app.include_router(sales_orders.router)
 app.include_router(sales_payments.router)
 app.include_router(financial_reports.router)
+app.include_router(operational_expenses.router)
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
