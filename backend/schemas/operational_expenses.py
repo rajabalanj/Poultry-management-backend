@@ -15,7 +15,7 @@ class OperationalExpenseUpdate(OperationalExpenseBase):
 
 class OperationalExpense(OperationalExpenseBase):
     id: int
-    tenant_id: int
+    tenant_id: str
 
     class Config:
         from_attributes = True
