@@ -107,6 +107,7 @@ def _calculate_summary(batches: list[DailyBatch], query_start_date: date, query_
         "highest_age": round(highest_age, 1),
     }
 
+
 @router.get("/snapshot")
 def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
     """
@@ -166,6 +167,7 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
                 "jumbo": batch.jumbo,
                 "cr": batch.cr,
                 "total_eggs": batch.total_eggs,
+                "batch_type": batch.batch_type,
                 "hd": batch.hd,
                 "standard_hen_day_percentage": float(batch.standard_hen_day_percentage) if batch.standard_hen_day_percentage is not None else None,
                 "actual_feed_consumed": actual_feed_consumed,
@@ -207,6 +209,8 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
                 batch_summary["batch_id"] = b_id
                 batch_summary["batch_no"] = batch_records[0].batch_no
                 batch_summary["shed_no"] = batch_records[0].shed_no
+                # Use the batch_type from the last record in the date range for this batch
+                batch_summary["batch_type"] = batch_records[-1].batch_type
                 detailed_result.append(batch_summary)
 
         detailed_result.sort(key=lambda x: x.get('batch_no', ''))
