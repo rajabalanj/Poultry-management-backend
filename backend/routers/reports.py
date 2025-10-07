@@ -108,6 +108,89 @@ def _calculate_summary(batches: list[DailyBatch], query_start_date: date, query_
     }
 
 
+@router.get("/weekly-layer-report")
+def get_weekly_layer_report(
+    batch_id: int,
+    week: int,  # e.g., 18 for week 18.1-18.7
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """Get weekly report for layer birds based on age range (e.g., week 18 = 18.1 to 18.7)"""
+    
+    # Calculate age range for the week
+    start_age = f"{week}.1"
+    end_age = f"{week}.7"
+    
+    # Get daily batches for the specified age range
+    daily_batches = db.query(DailyBatch).filter(
+        DailyBatch.batch_id == batch_id,
+        DailyBatch.age >= start_age,
+        DailyBatch.age <= end_age,
+        DailyBatch.tenant_id == tenant_id
+    ).order_by(DailyBatch.batch_date.asc()).all()
+    
+    if not daily_batches:
+        raise HTTPException(status_code=404, detail=f"No data found for batch {batch_id} at week {week}")
+    
+    # Get hen housing (closing count at age 17.7)
+    hen_housing_record = db.query(DailyBatch).filter(
+        DailyBatch.batch_id == batch_id,
+        DailyBatch.age == "17.7",
+        DailyBatch.tenant_id == tenant_id
+    ).first()
+    
+    hen_housing = hen_housing_record.closing_count if hen_housing_record else 0
+    
+    # Calculate summary using existing logic
+    start_date = daily_batches[0].batch_date
+    end_date = daily_batches[-1].batch_date
+    summary_data = _calculate_summary(daily_batches, start_date, end_date, is_single_batch=True)
+    
+    if summary_data:
+        total_actual_feed_consumed = sum(record.feed_in_kg for record in daily_batches if record.feed_in_kg is not None)
+        total_standard_feed_consumption = sum(record.standard_feed_in_kg * record.opening_count for record in daily_batches if record.standard_feed_in_kg is not None and record.opening_count is not None)
+        
+        summary_data["actual_feed_consumed"] = total_actual_feed_consumed
+        summary_data["standard_feed_consumption"] = total_standard_feed_consumption
+        summary_data["hen_housing"] = hen_housing
+    
+    # Prepare detailed results
+    detailed_result = []
+    for batch in daily_batches:
+        actual_feed_consumed = batch.feed_in_kg
+        standard_feed_consumption = None
+        if batch.standard_feed_in_kg is not None and batch.opening_count is not None:
+            standard_feed_consumption = batch.standard_feed_in_kg * batch.opening_count
+
+        detailed_result.append({
+            "batch_id": batch.batch_id,
+            "batch_no": batch.batch_no,
+            "batch_date": batch.batch_date.strftime("%d-%m-%Y"),
+            "shed_no": batch.shed_no,
+            "age": batch.age,
+            "opening_count": batch.opening_count,
+            "mortality": batch.mortality,
+            "culls": batch.culls,
+            "closing_count": batch.closing_count,
+            "table_eggs": batch.table_eggs,
+            "jumbo": batch.jumbo,
+            "cr": batch.cr,
+            "total_eggs": batch.total_eggs,
+            "batch_type": batch.batch_type,
+            "hd": batch.hd,
+            "standard_hen_day_percentage": float(batch.standard_hen_day_percentage) if batch.standard_hen_day_percentage is not None else None,
+            "actual_feed_consumed": actual_feed_consumed,
+            "standard_feed_consumption": standard_feed_consumption,
+        })
+    
+    return JSONResponse(content={
+        "details": detailed_result,
+        "summary": summary_data,
+        "week": week,
+        "age_range": f"{start_age} - {end_age}",
+        "hen_housing": hen_housing
+    })
+
 @router.get("/snapshot")
 def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
     """
