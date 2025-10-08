@@ -45,6 +45,7 @@ import routers.financial_reports as financial_reports
 import routers.operational_expenses as operational_expenses
 from utils.auth_utils import get_current_user, get_user_identifier, require_group
 from utils.tenancy import get_tenant_id
+from fastapi.openapi.utils import get_openapi
 
 
 from fastapi.staticfiles import StaticFiles
@@ -105,6 +106,29 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    openapi_schema = get_openapi(
+        title="Poultry Management API",
+        version="1.0.0",
+        description="API for Poultry Management System",
+        routes=app.routes,
+    )
+    openapi_schema["components"]["securitySchemes"] = {
+        "BearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+        }
+    }
+    # Apply security globally to all endpoints
+    openapi_schema["security"] = [{"BearerAuth": []}]
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+app.openapi = custom_openapi
 
 
 #app.mount("/", StaticFiles(directory="dist", html=True), name="static")
@@ -549,6 +573,41 @@ def update_config(name: str, config: AppConfigUpdate, db: Session = Depends(get_
     return updated
 
 
+DEFAULT_CONFIGS = [
+    {"name": "system_start_date", "value": "2024-01-01"},
+    {"name": "EGG_STOCK_TOLERANCE", "value": "100"},
+    {"name": "table_opening", "value": "0"},
+    {"name": "jumbo_opening", "value": "0"},
+    {"name": "grade_c_opening", "value": "0"},
+    {"name": "lowKgThreshold", "value": "4000"},
+    {"name": "lowTonThreshold", "value": "4"},
+    {"name": "medicineLowKgThreshold", "value": "10"},
+    {"name": "medicineLowGramThreshold", "value": "10000"},
+    {"name": "henDayDeviation", "value": "10"},
+]
+
+@app.get("/tenants/configs-initialized", tags=["Tenants"])
+def are_tenant_configurations_initialized(
+    tenant_id: str,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_group(["admin"]))
+):
+    """
+    Checks if the default application configurations are initialized for a tenant.
+    """
+    default_config_names = {config["name"] for config in DEFAULT_CONFIGS}
+
+    existing_configs_query = db.query(AppConfigModel.name).filter(
+        AppConfigModel.tenant_id == tenant_id,
+        AppConfigModel.name.in_(default_config_names)
+    )
+    existing_config_names = {name for (name,) in existing_configs_query}
+
+    all_configs_exist = default_config_names.issubset(existing_config_names)
+
+    return {"configs_initialized": all_configs_exist}
+
+
 @app.post("/tenants/initialize-configs", status_code=status.HTTP_201_CREATED, tags=["Tenants"])
 def initialize_tenant_configurations(
     tenant_id: str,
@@ -559,29 +618,12 @@ def initialize_tenant_configurations(
     Initializes a new tenant with a default set of application configurations.
     This is idempotent; it will not overwrite existing configurations for the tenant.
     """
-    # Define your default configurations here
-    default_configs = [
-        {"name": "system_start_date", "value": "2024-01-01"},
-        {"name": "EGG_STOCK_TOLERANCE", "value": "100"},
-        {"name": "table_opening", "value": "0"},
-        {"name": "jumbo_opening", "value": "0"},
-        {"name": "grade_c_opening", "value": "0"},
-        {"name": "lowKgThreshold", "value": "4000"},
-        {"name": "lowTonThreshold", "value": "4"},
-        {"name": "medicineLowKgThreshold", "value": "10"},
-        {"name": "medicineLowGramThreshold", "value": "10000"},
-        {"name": "henDayDeviation", "value": "10"},
-
-        # Add other default configurations as needed
-        # {"name": "some_other_setting", "value": "default_value"},
-    ]
-
     # Check which configs already exist for this tenant
     existing_configs_query = db.query(AppConfigModel.name).filter(AppConfigModel.tenant_id == tenant_id)
     existing_config_names = {name for (name,) in existing_configs_query}
 
     new_configs_created = []
-    for config_data in default_configs:
+    for config_data in DEFAULT_CONFIGS:
         if config_data["name"] not in existing_config_names:
             config = AppConfigCreate(**config_data)
             crud_app_config.create_config(db, config, tenant_id)
