@@ -16,6 +16,7 @@ from sqlalchemy import and_
 import models
 from models.batch import Batch
 from utils.tenancy import get_tenant_id
+from models.bovanswhitelayerperformance import BovansWhiteLayerPerformance
 
 def get_daily_batches_by_date_range(db: Session, start_date: date, end_date: date, tenant_id: str):
     return db.query(models.DailyBatch).filter(
@@ -28,6 +29,71 @@ router = APIRouter(
     prefix="/reports",
     tags=["reports"],
 )
+
+def _calculate_cumulative_report(db: Session, batch_id: int, current_week: int, hen_housing: int, current_summary: dict, tenant_id: str):
+    """Calculate cumulative report data"""
+    
+    # Calculate cumulative feed from week 18 to current week
+    cum_feed_total = 0
+    for week_num in range(18, current_week + 1):
+        week_batches = db.query(DailyBatch).filter(
+            DailyBatch.batch_id == batch_id,
+            DailyBatch.age >= f"{week_num}.1",
+            DailyBatch.age <= f"{week_num}.7",
+            DailyBatch.tenant_id == tenant_id
+        ).all()
+        
+        week_feed = sum(float(batch.feed_in_kg) for batch in week_batches if batch.feed_in_kg is not None)
+        cum_feed_total += week_feed
+    
+    # Get Bovans standard data for current week
+    bovans_data = db.query(BovansWhiteLayerPerformance).filter(
+        BovansWhiteLayerPerformance.age_weeks == current_week,
+        BovansWhiteLayerPerformance.tenant_id == tenant_id
+    ).first()
+    
+    # Section 1: Feed data
+    section1 = {
+        "cum_feed": {
+            "cum": float(cum_feed_total),
+            "actual": round(cum_feed_total / hen_housing, 4) if hen_housing > 0 else 0,
+            "standard": float(bovans_data.feed_intake_cum_kg) if bovans_data and bovans_data.feed_intake_cum_kg else 0,
+            "diff": 0  # Will calculate after
+        },
+        "weekly_feed": {
+            "cum": float(current_summary["actual_feed_consumed"]),
+            "actual": round(current_summary["actual_feed_consumed"] / hen_housing, 4) if hen_housing > 0 else 0,
+            "standard": round((float(bovans_data.feed_intake_per_day_g) * 7 / 1000), 4) if bovans_data and bovans_data.feed_intake_per_day_g else 0,
+            "diff": 0  # Will calculate after
+        }
+    }
+    
+    # Calculate diff for section 1
+    section1["cum_feed"]["diff"] = round(section1["cum_feed"]["actual"] - section1["cum_feed"]["standard"], 4)
+    section1["weekly_feed"]["diff"] = round(section1["weekly_feed"]["actual"] - section1["weekly_feed"]["standard"], 4)
+    
+    # Section 2: Performance data
+    section2 = {
+        "livability": {
+            "actual": round((current_summary["closing_count"] / hen_housing) * 100, 2) if hen_housing > 0 else 0,
+            "standard": float(bovans_data.livability_percent) if bovans_data and bovans_data.livability_percent else 0,
+            "diff": 0  # Will calculate after
+        },
+        "feed_grams": {
+            "actual": round((current_summary["actual_feed_consumed"] * 1000) / hen_housing, 2) if hen_housing > 0 else 0,
+            "standard": float(bovans_data.feed_intake_per_day_g) if bovans_data and bovans_data.feed_intake_per_day_g else 0,
+            "diff": 0  # Will calculate after
+        }
+    }
+    
+    # Calculate diff for section 2
+    section2["livability"]["diff"] = round(section2["livability"]["actual"] - section2["livability"]["standard"], 2)
+    section2["feed_grams"]["diff"] = round(section2["feed_grams"]["actual"] - section2["feed_grams"]["standard"], 2)
+    
+    return {
+        "section1": section1,
+        "section2": section2
+    }
 
 def _calculate_summary(batches: list[DailyBatch], query_start_date: date, query_end_date: date, is_single_batch: bool):
     """Helper function to calculate summary statistics for a list of daily batches."""
@@ -153,6 +219,20 @@ def get_weekly_layer_report(
         summary_data["actual_feed_consumed"] = total_actual_feed_consumed
         summary_data["standard_feed_consumption"] = total_standard_feed_consumption
         summary_data["hen_housing"] = hen_housing
+        
+        # Calculate hen housing percentages
+        if hen_housing > 0:
+            summary_data["opening_percent"] = round((summary_data["opening_count"] * 100) / hen_housing, 2)
+            summary_data["mort_percent"] = round((summary_data["mortality"] * 100) / hen_housing, 2)
+            summary_data["culls_percent"] = round((summary_data["culls"] * 100) / hen_housing, 2)
+            summary_data["closing_percent"] = round((summary_data["closing_count"] * 100) / hen_housing, 2)
+            summary_data["feed_per_bird_per_day_grams"] = round((total_actual_feed_consumed * 1000) / (hen_housing * 7), 2)
+        else:
+            summary_data["opening_percent"] = 0
+            summary_data["mort_percent"] = 0
+            summary_data["culls_percent"] = 0
+            summary_data["closing_percent"] = 0
+            summary_data["feed_per_bird_per_day_grams"] = 0
     
     # Prepare detailed results
     detailed_result = []
@@ -183,12 +263,16 @@ def get_weekly_layer_report(
             "standard_feed_consumption": standard_feed_consumption,
         })
     
+    # Calculate cumulative report
+    cumulative_report = _calculate_cumulative_report(db, batch_id, week, hen_housing, summary_data, tenant_id)
+    
     return JSONResponse(content={
         "details": detailed_result,
         "summary": summary_data,
         "week": week,
         "age_range": f"{start_age} - {end_age}",
-        "hen_housing": hen_housing
+        "hen_housing": hen_housing,
+        "cumulative_report": cumulative_report
     })
 
 @router.get("/snapshot")

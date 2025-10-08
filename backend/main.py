@@ -274,7 +274,7 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
         df = pd.read_excel(io.BytesIO(contents), header=None)
 
         all_batches = db.query(BatchModel).filter(BatchModel.tenant_id == tenant_id).all()
-        batch_map = {b.shed_no: b for b in all_batches}
+        batch_map = {b.batch_no: b for b in all_batches}
 
         date_indices = df.index[df[0] == 'DATE'].tolist()
         if not date_indices:
@@ -327,16 +327,16 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
                 logger.warning(f"Skipping row {row_idx} (Date: {report_date}) due to missing essential data: {row.tolist()}")
                 continue
 
-            shed_no_excel = str(row[1]).strip()
-            if shed_no_excel not in batch_map:
-                logger.warning(f"Skipping row {row_idx} (Date: {report_date}) due to shed_no not found in batch table: '{shed_no_excel}'.")
+            batch_no_excel = str(row[1]).strip()
+            if batch_no_excel not in batch_map:
+                logger.warning(f"Skipping row {row_idx} (Date: {report_date}) due to batch_no not found in batch table: '{batch_no_excel}'.")
                 continue
 
-            batch_obj = batch_map[shed_no_excel]
+            batch_obj = batch_map[batch_no_excel]
             batch_id_for_daily_batch = batch_obj.id
 
             if report_date < batch_obj.date:
-                logger.warning(f"Skipping row {row_idx} (Date: {report_date}) for shed '{shed_no_excel}' because it's before the batch start date ({batch_obj.date}).")
+                logger.warning(f"Skipping row {row_idx} (Date: {report_date}) for batch '{batch_no_excel}' because it's before the batch start date ({batch_obj.date}).")
                 continue
 
             from utils.age_utils import calculate_age_progression
@@ -384,8 +384,8 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
                 daily_batch_instance = DailyBatchCreate(
                     batch_id=batch_id_for_daily_batch,
                     tenant_id=tenant_id,
-                    shed_no=shed_no_excel,
-                    batch_no=f"B-{batch_id_excel:04d}",
+                    shed_no=batch_obj.shed_no,
+                    batch_no=batch_no_excel,
                     upload_date=date.today(),
                     batch_date=report_date,
                     age=str(round(age, 1)),
@@ -467,14 +467,7 @@ def update_daily_batch(
     if not daily_batch:
         raise HTTPException(status_code=404, detail="Daily batch not found")
 
-    # Update shed_no for all rows in batch if present
-    if "shed_no" in payload:
-        new_shed_no = payload["shed_no"]
-        db.query(DailyBatchModel).filter(
-            DailyBatchModel.batch_id == batch_id,
-            DailyBatchModel.tenant_id == tenant_id
-        ).update({DailyBatchModel.shed_no: new_shed_no}, synchronize_session=False)
-        daily_batch.shed_no = new_shed_no
+
 
     # Update fields on the current daily_batch from payload
     if "age" in payload:

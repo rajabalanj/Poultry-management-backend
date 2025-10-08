@@ -112,11 +112,40 @@ def update_batch(
     if db_batch is None:
         raise HTTPException(status_code=404, detail="Batch not found")
 
+    # Handle shed_no update with a specific date
+    if 'shed_no' in batch_data:
+        if 'shed_change_date' not in batch_data:
+            raise HTTPException(status_code=400, detail="shed_change_date is required when updating shed_no.")
+        
+        try:
+            shed_change_date_obj = parser.parse(batch_data['shed_change_date']).date()
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="Invalid shed_change_date format.")
+
+        new_shed_no = batch_data['shed_no']
+
+        # 1. Update historical and future DailyBatch records
+        db.query(DailyBatchModel).filter(
+            DailyBatchModel.batch_id == batch_id,
+            DailyBatchModel.batch_date >= shed_change_date_obj,
+            DailyBatchModel.tenant_id == tenant_id
+        ).update({'shed_no': new_shed_no}, synchronize_session=False)
+
+        # 2. Update the shed_no on the parent Batch record
+        db_batch.shed_no = new_shed_no
+        
+        # Remove these from batch_data so they are not processed again
+        del batch_data['shed_no']
+        if 'shed_change_date' in batch_data:
+            del batch_data['shed_change_date']
+
     # --- 1. Calculate changes and update the master Batch object ---
     changes = {}
     old_date = db_batch.date
     for key, value in batch_data.items():
         if hasattr(db_batch, key):
+            if key == 'batch_no' and getattr(db_batch, key) != value:
+                raise HTTPException(status_code=400, detail="Updating batch_no is not allowed.")
             old_value = getattr(db_batch, key)
             if key == 'date' and isinstance(value, str):
                 value = parser.parse(value).date()
@@ -143,7 +172,7 @@ def update_batch(
         logger.info("Deleted %d old daily_batch rows for batch_id=%s, tenant=%s", deleted_count, batch_id, tenant_id)
 
     # --- 3. Propagation Logic ---
-    if any(key in changes for key in ['date', 'age', 'opening_count', 'shed_no', 'batch_no']):
+    if any(key in changes for key in ['date', 'age', 'opening_count', 'batch_no']):
         
         # Get all daily_batch rows from the new start date onwards
         all_rows = db.query(DailyBatchModel).filter(
@@ -175,9 +204,7 @@ def update_batch(
         # --- 4. Loop through all affected rows and apply changes ---
         prev_row = None
         for i, current_row in enumerate(all_rows):
-            # Always update shed_no and batch_no from the master batch record
-            current_row.shed_no = db_batch.shed_no
-            current_row.batch_no = db_batch.batch_no
+
 
             if i == 0: # This is the start_row
                 current_row.age = db_batch.age
