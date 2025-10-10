@@ -27,7 +27,9 @@ def create_batch(db: Session, batch: BatchCreate, tenant_id: str, changed_by: st
     # Create new batch with calculated closing count
     db_batch = Batch(
         **batch.model_dump(),
-        tenant_id=tenant_id
+        tenant_id=tenant_id,
+        created_by=changed_by,
+        updated_by=changed_by
     )
     db.add(db_batch)
     db.commit()
@@ -48,6 +50,8 @@ def create_batch(db: Session, batch: BatchCreate, tenant_id: str, changed_by: st
         table_eggs=0,
         jumbo=0,
         cr=0,
+        created_by=changed_by,
+        updated_by=changed_by
     )
     db.add(db_daily_batch)
     db.commit()

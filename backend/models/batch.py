@@ -2,17 +2,19 @@ from unittest import case
 from sqlalchemy import Column, Integer, String, Date, ForeignKey, Boolean, Numeric
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.hybrid import hybrid_property
+from datetime import datetime
 from database import Base
-from datetime import date
+from models.audit_mixin import AuditMixin
+import pytz
 
-class Batch(Base):
+class Batch(Base, AuditMixin):
     __tablename__ = "batch"
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_id = Column(String, index=True)
     shed_no = Column(String)
     batch_no = Column(String)
-    date = Column(Date, default=date.today)
+    date = Column(Date, default=lambda: datetime.now(pytz.timezone('Asia/Kolkata')).date())
     age = Column(String)  # Format: "week.day" (e.g., "1.1" for 8 days)
     opening_count = Column(Integer)
     daily_batches = relationship("DailyBatch", back_populates="batch")
@@ -20,11 +22,11 @@ class Batch(Base):
 
     @hybrid_property
     def is_active(self):
-        return self.closing_date is None or self.closing_date > date.today()
+        return self.closing_date is None or self.closing_date > datetime.now(pytz.timezone('Asia/Kolkata')).date()
 
     @is_active.expression
     def is_active(cls):
-        return cls.closing_date.is_(None) | (cls.closing_date > date.today())
+        return cls.closing_date.is_(None) | (cls.closing_date > datetime.now(pytz.timezone('Asia/Kolkata')).date())
     # standard_hen_day_percentage = Column(Numeric(5, 2), default=0.0, nullable=True)  # Percentage of hen days
     
     @hybrid_property

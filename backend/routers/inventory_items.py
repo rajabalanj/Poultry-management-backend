@@ -27,7 +27,7 @@ def create_inventory_item(
     if db_item:
         raise HTTPException(status_code=400, detail="Inventory item with this name already exists")
     
-    new_item = crud_inventory_items.create_inventory_item(db=db, item=item, tenant_id=tenant_id)
+    new_item = crud_inventory_items.create_inventory_item(db=db, item=item, tenant_id=tenant_id, user=user)
     logger.info(f"Inventory item '{new_item.name}' created by user {get_user_identifier(user)} for tenant {tenant_id}")
     return new_item
 
@@ -74,7 +74,7 @@ def update_inventory_item(
         if existing_item:
             raise HTTPException(status_code=400, detail="Inventory item with this name already exists")
 
-    updated_item = crud_inventory_items.update_inventory_item(db=db, item_id=item_id, item=item, tenant_id=tenant_id)
+    updated_item = crud_inventory_items.update_inventory_item(db=db, item_id=item_id, item=item, tenant_id=tenant_id, user=user)
     logger.info(f"Inventory item '{updated_item.name}' (ID: {item_id}) updated by user {get_user_identifier(user)} for tenant {tenant_id}")
     return updated_item
 

@@ -10,6 +10,9 @@ import crud.batch as crud_batch
 from database import get_db
 from schemas.bovanswhitelayerperformance import BovansPerformanceSchema, PaginatedBovansPerformanceResponse
 from utils.tenancy import get_tenant_id
+from crud.audit_log import create_audit_log
+from schemas.audit_log import AuditLogCreate
+from utils import sqlalchemy_to_dict
 
 # --- Logging Configuration (import and get logger) ---
 import logging
@@ -115,6 +118,7 @@ def update_batch(
     if db_batch is None:
         raise HTTPException(status_code=404, detail="Batch not found")
 
+    db_batch.updated_by = get_user_identifier(user)
     logger.info(f"Batch found: {db_batch.batch_no}, current shed_no: {db_batch.shed_no}")
 
     # Handle shed_no update with a specific date
@@ -167,6 +171,7 @@ def update_batch(
 
     # --- 1. Calculate changes and update the master Batch object ---
     changes = {}
+    old_values = sqlalchemy_to_dict(db_batch)
     old_date = db_batch.date
     for key, value in batch_data.items():
         if hasattr(db_batch, key):
@@ -281,6 +286,17 @@ def update_batch(
         raise HTTPException(status_code=500, detail="Failed to update batch (commit error). Please retry")
     db.refresh(db_batch)
 
+    new_values = sqlalchemy_to_dict(db_batch)
+    log_entry = AuditLogCreate(
+        table_name='batch',
+        record_id=batch_id,
+        changed_by=get_user_identifier(user),
+        action='UPDATE',
+        old_values=old_values,
+        new_values=new_values
+    )
+    create_audit_log(db=db, log_entry=log_entry)
+
     logger.info(f"Successfully updated batch {batch_id}. New shed_no: {db_batch.shed_no}")
     return db_batch
 
@@ -297,10 +313,11 @@ def delete_batch(
     return {"message": "Batch deleted successfully"}
 
 @router.put("/{batch_id}/close")
-def close_batch(batch_id: int, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
+def close_batch(batch_id: int, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id), user: dict = Depends(get_current_user)):
     batch = db.query(BatchModel).filter(BatchModel.id == batch_id, BatchModel.tenant_id == tenant_id).first()
     if batch:
         batch.closing_date = date.today()
+        batch.updated_by = get_user_identifier(user)
         db.add(batch)
         db.commit()
         return {"message": "Batch closed successfully"}

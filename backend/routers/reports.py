@@ -103,20 +103,27 @@ def _calculate_summary(batches: list[DailyBatch], query_start_date: date, query_
     summary_opening_count = 0
     summary_closing_count = 0
 
+    from itertools import groupby
+
+    # The caller must sort batches by batch_id, then date.
+    grouped_batches = groupby(batches, key=lambda b: b.batch_id)
+
     if is_single_batch:
         # For a single batch, take the opening count of the first day and closing count of the last day.
         # The 'batches' list is already sorted by date.
         summary_opening_count = batches[0].opening_count
         summary_closing_count = batches[-1].closing_count
     else:
-        # For multiple batches (consolidation), sum the counts on the start/end dates.
-        # Calculate summary opening count: sum of opening_count for all batches on the query_start_date
-        first_day_batches_for_summary = [b for b in batches if b.batch_date == query_start_date]
-        summary_opening_count = sum(b.opening_count for b in first_day_batches_for_summary) if first_day_batches_for_summary else 0
+        # For multiple batches (consolidation), sum the opening count of the first day and closing count of the last day for each batch.
 
-        # Calculate summary closing count: sum of closing_count for all batches on the query_end_date
-        last_day_batches_for_summary = [b for b in batches if b.batch_date == query_end_date]
-        summary_closing_count = sum(b.closing_count for b in last_day_batches_for_summary) if last_day_batches_for_summary else 0
+        summary_opening_count = 0
+        summary_closing_count = 0
+
+        for _, group in grouped_batches:
+            batch_records = list(group)
+            if batch_records:
+                summary_opening_count += batch_records[0].opening_count
+                summary_closing_count += batch_records[-1].closing_count
 
     # Calculate highest age across all batches and all dates in the provided list
     highest_age = 0.0

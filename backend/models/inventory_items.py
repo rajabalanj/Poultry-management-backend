@@ -1,10 +1,12 @@
-from sqlalchemy import Column, Integer, String, Text, Numeric, DateTime
+from sqlalchemy import Column, Integer, String, Text, Numeric, DateTime, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base # Assuming Base is imported from your database setup
+from models.audit_mixin import AuditMixin
 
-class InventoryItem(Base):
+class InventoryItem(Base, AuditMixin):
     __tablename__ = "inventory_items"
+    __table_args__ = (UniqueConstraint('name', 'tenant_id', name='_inventory_items_name_tenant_uc'),)
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_id = Column(String, index=True)
@@ -15,8 +17,6 @@ class InventoryItem(Base):
     average_cost = Column(Numeric(10, 3), default=0.0, nullable=False) # Increased precision
     reorder_level = Column(Numeric(10, 3), nullable=True) # For general alerts
     description = Column(Text, nullable=True)
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, onupdate=func.now())
 
     # Relationships
     purchase_order_items = relationship("PurchaseOrderItem", back_populates="inventory_item")

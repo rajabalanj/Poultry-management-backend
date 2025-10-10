@@ -1,24 +1,26 @@
 from sqlalchemy import Column, Integer, String, Date, ForeignKey, func
 from sqlalchemy.orm import relationship
 from database import Base
-from datetime import date
+from datetime import datetime
 from sqlalchemy.ext.hybrid import hybrid_property
 from models.bovanswhitelayerperformance import BovansWhiteLayerPerformance
 from sqlalchemy.orm import object_session
 from models.composition_usage_history import CompositionUsageHistory
 from models.inventory_items import InventoryItem
 from decimal import Decimal
+from models.audit_mixin import AuditMixin
+import pytz
 
 
-class DailyBatch(Base):
+class DailyBatch(Base, AuditMixin):
     __tablename__ = "daily_batch"
     batch_id = Column(Integer, ForeignKey("batch.id"), primary_key=True)
     tenant_id = Column(String, index=True)
     batch = relationship("Batch", back_populates="daily_batches")
     shed_no = Column(String)
     batch_no = Column(String)
-    upload_date = Column(Date, default=date.today)
-    batch_date = Column(Date, default=date.today, primary_key=True)
+    upload_date = Column(Date, default=lambda: datetime.now(pytz.timezone('Asia/Kolkata')).date())
+    batch_date = Column(Date, default=lambda: datetime.now(pytz.timezone('Asia/Kolkata')).date(), primary_key=True)
     age = Column(String)
     opening_count = Column(Integer)
     mortality = Column(Integer, default=0)
