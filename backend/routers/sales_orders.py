@@ -9,6 +9,10 @@ import os
 import uuid
 from utils.auth_utils import get_current_user, get_user_identifier
 from utils.tenancy import get_tenant_id
+import pytz
+from crud.audit_log import create_audit_log
+from schemas.audit_log import AuditLogCreate
+from utils import sqlalchemy_to_dict
 
 try:
     from utils.s3_upload import upload_receipt_to_s3
@@ -266,6 +270,7 @@ def update_sales_order(
     if db_so is None:
         raise HTTPException(status_code=404, detail="Sales Order not found")
 
+    old_values = sqlalchemy_to_dict(db_so)
     old_order_date = db_so.order_date
     so_data = so_update.model_dump(exclude_unset=True)
     
@@ -325,6 +330,18 @@ def update_sales_order(
     for key, value in so_data.items():
         setattr(db_so, key, value)
     
+    db_so.updated_by = get_user_identifier(user)
+    
+    new_values = sqlalchemy_to_dict(db_so)
+    log_entry = AuditLogCreate(
+        table_name='sales_orders',
+        record_id=str(so_id),
+        changed_by=get_user_identifier(user),
+        action='UPDATE',
+        old_values=old_values,
+        new_values=new_values
+    )
+    create_audit_log(db=db, log_entry=log_entry)
     db.commit()
     db.refresh(db_so)
     
@@ -391,6 +408,7 @@ def add_item_to_sales_order(
     
     # Update the total_amount on the parent Sales Order
     db_so.total_amount += line_total
+    db_so.updated_by = get_user_identifier(user)
     # Deduct inventory for this added item
     inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_request.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).with_for_update().first()
     if inv is None:
@@ -561,6 +579,7 @@ def update_sales_order_item(
 
     total_amount = sum(item.line_total for item in db_so.items)
     db_so.total_amount = total_amount
+    db_so.updated_by = get_user_identifier(user)
 
     db.commit()
     db.refresh(db_so)
@@ -644,6 +663,7 @@ def delete_sales_order_item(
 
     # Update the total_amount on the parent Sales Order
     db_so.total_amount -= item_to_delete.line_total
+    db_so.updated_by = get_user_identifier(user)
 
     db.delete(item_to_delete)
     db.commit()
@@ -705,9 +725,21 @@ def delete_sales_order(
         if inv:
             inv.current_stock = (inv.current_stock or 0) + item.quantity
             db.add(inv)
-    db.delete(db_so)
+    old_values = sqlalchemy_to_dict(db_so)
+    db_so.deleted_at = datetime.now(pytz.timezone('Asia/Kolkata'))
+    db_so.deleted_by = get_user_identifier(user)
+    new_values = sqlalchemy_to_dict(db_so)
+    log_entry = AuditLogCreate(
+        table_name='sales_orders',
+        record_id=str(so_id),
+        changed_by=get_user_identifier(user),
+        action='DELETE',
+        old_values=old_values,
+        new_values=new_values
+    )
+    create_audit_log(db=db, log_entry=log_entry)
     db.commit()
-    logger.info(f"Sales Order (ID: {so_id}) deleted by user {get_user_identifier(user)} for tenant {tenant_id}")
+    logger.info(f"Sales Order (ID: {so_id}) soft deleted by user {get_user_identifier(user)} for tenant {tenant_id}")
     return {"message": "Sales Order deleted successfully"}
 
 @router.post("/{so_id}/receipt")

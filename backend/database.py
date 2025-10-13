@@ -1,6 +1,6 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import sessionmaker, Session, with_loader_criteria
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
 import os
 
@@ -24,7 +24,22 @@ engine = create_engine(SQLALCHEMY_DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Create Base class
-Base = declarative_base() 
+Base = declarative_base()
+
+@event.listens_for(Session, "do_orm_execute")
+def add_soft_delete_filter(execute_state):
+    if (
+        execute_state.is_select
+        and not execute_state.is_relationship_load
+    ):
+        for entity in execute_state.statement.column_descriptions:
+            if hasattr(entity['type'], 'deleted_at'):
+                execute_state.statement = execute_state.statement.options(
+                    with_loader_criteria(
+                        entity['type'].deleted_at.is_(None),
+                        include_aliases=True
+                    )
+                )
 
 # Dependency to get database session
 def get_db():

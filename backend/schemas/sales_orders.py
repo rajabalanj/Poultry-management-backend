@@ -52,6 +52,7 @@ class SalesOrder(SalesOrderBase):
     total_amount: Decimal
     total_amount_paid: Decimal
     created_by: Optional[str] = None
+    updated_by: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
     items: List['SalesOrderItem'] = []

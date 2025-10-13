@@ -1,3 +1,5 @@
+import datetime
+import pytz
 from sqlalchemy.orm import Session
 from models.inventory_items import InventoryItem
 from schemas.inventory_items import InventoryItemCreate, InventoryItemUpdate
@@ -42,9 +44,21 @@ def update_inventory_item(db: Session, item_id: int, item: InventoryItemUpdate, 
         create_audit_log(db=db, log_entry=log_entry)
     return db_item
 
-def delete_inventory_item(db: Session, item_id: int, tenant_id: str):
+def delete_inventory_item(db: Session, item_id: int, tenant_id: str, user: dict):
     db_item = db.query(InventoryItem).filter(InventoryItem.id == item_id, InventoryItem.tenant_id == tenant_id).first()
     if db_item:
-        db.delete(db_item)
+        old_values = sqlalchemy_to_dict(db_item)
+        db_item.deleted_at = datetime.now(pytz.timezone('Asia/Kolkata'))
+        db_item.deleted_by = get_user_identifier(user)
+        new_values = sqlalchemy_to_dict(db_item)
+        log_entry = AuditLogCreate(
+            table_name='inventory_items',
+            record_id=str(item_id),
+            changed_by=get_user_identifier(user),
+            action='DELETE',
+            old_values=old_values,
+            new_values=new_values
+        )
+        create_audit_log(db=db, log_entry=log_entry)
         db.commit()
     return db_item

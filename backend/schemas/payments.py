@@ -28,6 +28,8 @@ class Payment(PaymentBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
     tenant_id: Optional[str] = None
+    created_by: Optional[str] = None
+    updated_by: Optional[str] = None
 
     class Config:
         from_attributes = True

@@ -8,8 +8,8 @@ class AuditLog(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     table_name = Column(String, nullable=False)
-    record_id = Column(Integer, nullable=False)
-    changed_at = Column(DateTime, default=lambda: datetime.now(pytz.timezone('Asia/Kolkata')))
+    record_id = Column(String, nullable=False)
+    changed_at = Column(DateTime(timezone=True), default=lambda: datetime.now(pytz.timezone('Asia/Kolkata')))
     changed_by = Column(String, nullable=False)
     action = Column(String, nullable=False)  # e.g., 'INSERT', 'UPDATE', 'DELETE'
     old_values = Column(JSON)

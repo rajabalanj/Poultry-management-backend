@@ -31,6 +31,10 @@ class BusinessPartner(BusinessPartnerBase):
     tenant_id: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
+    created_by: Optional[str] = None
+    updated_by: Optional[str] = None
+    deleted_at: Optional[datetime] = None
+    deleted_by: Optional[str] = None
 
     class Config:
         from_attributes = True

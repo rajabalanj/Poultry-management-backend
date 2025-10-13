@@ -38,6 +38,8 @@ class EggRoomReportResponse(EggRoomReportBase):
     report_date: date
     created_at: datetime
     updated_at: datetime
+    created_by: Optional[str] = None
+    updated_by: Optional[str] = None
 
     table_received: Optional[int]
     grade_c_shed_received: Optional[int]

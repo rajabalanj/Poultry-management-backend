@@ -99,7 +99,7 @@ def delete_inventory_item(
             detail="Inventory item has associated purchase order items and cannot be deleted."
         )
     
-    crud_inventory_items.delete_inventory_item(db=db, item_id=item_id, tenant_id=tenant_id)
+    crud_inventory_items.delete_inventory_item(db=db, item_id=item_id, tenant_id=tenant_id, user=user)
     logger.info(f"Inventory item '{db_item.name}' (ID: {item_id}) deleted by user {get_user_identifier(user)} for tenant {tenant_id}")
     return {"message": "Inventory item deleted successfully"}
 

@@ -57,6 +57,7 @@ class PurchaseOrder(PurchaseOrderBase):
     total_amount: Decimal
     total_amount_paid: Decimal
     created_by: Optional[str] = None
+    updated_by: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
     # Include related items and payments for detailed view

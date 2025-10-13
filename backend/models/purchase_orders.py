@@ -3,6 +3,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base # Assuming Base is imported from your database setup
 import enum
+from models.audit_mixin import AuditMixin
 
 class PurchaseOrderStatus(enum.Enum):
     DRAFT = "Draft"
@@ -10,7 +11,7 @@ class PurchaseOrderStatus(enum.Enum):
     PARTIALLY_PAID = "Partially Paid"
     PAID = "Paid"
 
-class PurchaseOrder(Base):
+class PurchaseOrder(Base, AuditMixin):
     __tablename__ = "purchase_orders"
     __table_args__ = (UniqueConstraint('tenant_id', 'po_number', name='_tenant_po_number_uc'),)
 
@@ -23,9 +24,6 @@ class PurchaseOrder(Base):
     status = Column(Enum(PurchaseOrderStatus), default=PurchaseOrderStatus.DRAFT, nullable=False)
     notes = Column(Text, nullable=True)
     payment_receipt = Column(String(500), nullable=True)
-    created_by = Column(String, nullable=True) # Assuming a user ID string or name for auditing
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, onupdate=func.now())
     tenant_id = Column(String, index=True)
 
     # Relationships

@@ -14,6 +14,8 @@ class AppConfigUpdate(BaseModel):
 
 class AppConfigOut(AppConfigBase):
     id: int
+    created_by: Optional[str] = None
+    updated_by: Optional[str] = None
 
     class Config:
         from_attributes = True

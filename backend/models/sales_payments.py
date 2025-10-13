@@ -2,8 +2,9 @@ from sqlalchemy import Column, Integer, Numeric, Date, DateTime, String, Foreign
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
+from models.audit_mixin import AuditMixin
 
-class SalesPayment(Base):
+class SalesPayment(Base, AuditMixin):
     __tablename__ = "sales_payments"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -14,8 +15,6 @@ class SalesPayment(Base):
     reference_number = Column(String, nullable=True)
     notes = Column(Text, nullable=True)
     payment_receipt = Column(String(500), nullable=True)
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, onupdate=func.now())
     tenant_id = Column(String, index=True)
 
     # Relationships

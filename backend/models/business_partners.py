@@ -3,13 +3,14 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
 import enum
+from models.audit_mixin import AuditMixin
 
 class PartnerStatus(enum.Enum):
     ACTIVE = "Active"
     INACTIVE = "Inactive"
     BLOCKED = "Blocked"
 
-class BusinessPartner(Base):
+class BusinessPartner(Base, AuditMixin):
     __tablename__ = "business_partners"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -22,8 +23,6 @@ class BusinessPartner(Base):
     status = Column(Enum(PartnerStatus), default=PartnerStatus.ACTIVE, nullable=False)
     is_vendor = Column(Boolean, default=True, nullable=False)
     is_customer = Column(Boolean, default=True, nullable=False)
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, onupdate=func.now())
 
     # Relationships
     purchase_orders = relationship("PurchaseOrder", back_populates="vendor", foreign_keys="PurchaseOrder.vendor_id")

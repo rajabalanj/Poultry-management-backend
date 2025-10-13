@@ -8,6 +8,11 @@ import uuid
 from utils.auth_utils import get_current_user
 from utils.auth_utils import get_user_identifier
 from utils.tenancy import get_tenant_id
+from datetime import datetime
+import pytz
+from crud.audit_log import create_audit_log
+from schemas.audit_log import AuditLogCreate
+from utils import sqlalchemy_to_dict
 
 try:
     from utils.s3_upload import upload_receipt_to_s3
@@ -43,7 +48,7 @@ def create_sales_payment(
             detail=f"Payment amount ({payment.amount_paid}) exceeds remaining due amount ({remaining_amount}) for SO {db_so.id}."
         )
 
-    db_payment = SalesPaymentModel(**payment.model_dump(), tenant_id=tenant_id)
+    db_payment = SalesPaymentModel(**payment.model_dump(), tenant_id=tenant_id, created_by=get_user_identifier(user))
     db.add(db_payment)
     db.commit()
     db.refresh(db_payment)
@@ -96,12 +101,25 @@ def update_sales_payment(
     if db_payment is None:
         raise HTTPException(status_code=404, detail="Sales Payment not found")
 
+    old_values = sqlalchemy_to_dict(db_payment)
     old_amount_paid = db_payment.amount_paid
     
     payment_data = payment_update.model_dump(exclude_unset=True)
     for key, value in payment_data.items():
         setattr(db_payment, key, value)
     
+    db_payment.updated_by = get_user_identifier(user)
+    
+    new_values = sqlalchemy_to_dict(db_payment)
+    log_entry = AuditLogCreate(
+        table_name='sales_payments',
+        record_id=str(payment_id),
+        changed_by=get_user_identifier(user),
+        action='UPDATE',
+        old_values=old_values,
+        new_values=new_values
+    )
+    create_audit_log(db=db, log_entry=log_entry)
     db.commit()
     db.refresh(db_payment)
 
@@ -138,7 +156,19 @@ def delete_sales_payment(
 
     db_so = db_payment.sales_order
     
-    db.delete(db_payment)
+    old_values = sqlalchemy_to_dict(db_payment)
+    db_payment.deleted_at = datetime.now(pytz.timezone('Asia/Kolkata'))
+    db_payment.deleted_by = get_user_identifier(user)
+    new_values = sqlalchemy_to_dict(db_payment)
+    log_entry = AuditLogCreate(
+        table_name='sales_payments',
+        record_id=str(payment_id),
+        changed_by=get_user_identifier(user),
+        action='DELETE',
+        old_values=old_values,
+        new_values=new_values
+    )
+    create_audit_log(db=db, log_entry=log_entry)
     db.commit()
 
     # Re-evaluate SO payment status after deletion

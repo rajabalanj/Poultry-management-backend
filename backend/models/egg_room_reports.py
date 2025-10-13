@@ -1,8 +1,9 @@
 from sqlalchemy import Column, Date, Integer, DateTime, func, String
 from sqlalchemy.orm import column_property, synonym
 from database import Base
+from models.audit_mixin import AuditMixin
 
-class EggRoomReport(Base):
+class EggRoomReport(Base, AuditMixin):
     __tablename__ = "egg_room_reports"
 
     report_date = Column(Date, primary_key=True)
@@ -23,9 +24,6 @@ class EggRoomReport(Base):
     jumbo_transfer = Column(Integer, default=0)
     jumbo_waste = Column(Integer, default=0)
     jumbo_out = Column(Integer, default=0)
-
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     # Opening balances (actual columns for performance)
     table_opening = Column(Integer, default=0)

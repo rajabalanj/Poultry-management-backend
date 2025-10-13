@@ -1,7 +1,8 @@
 from sqlalchemy import Column, Integer, String, UniqueConstraint
 from database import Base
+from models.audit_mixin import AuditMixin
 
-class AppConfig(Base):
+class AppConfig(Base, AuditMixin):
     __tablename__ = "app_config"
     __table_args__ = (UniqueConstraint('name', 'tenant_id', name='_app_config_name_tenant_uc'),)
 

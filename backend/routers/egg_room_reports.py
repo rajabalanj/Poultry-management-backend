@@ -12,7 +12,7 @@ from models.egg_room_reports import EggRoomReport
 from models.daily_batch import DailyBatch
 from models.app_config import AppConfig  # Import AppConfig
 from datetime import datetime, date, timedelta  # Import date for comparison
-from utils.auth_utils import get_current_user
+from utils.auth_utils import get_current_user, get_user_identifier
 from utils.tenancy import get_tenant_id
 
 router = APIRouter(prefix="/egg-room-report", tags=["egg_room_reports"])
@@ -183,7 +183,7 @@ def create_report(report: EggRoomReportCreate, db: Session = Depends(get_db), cu
         report.jumbo_transfer = 0
         report.grade_c_transfer = 0
         
-        created_report = egg_crud.create_report(db, report, tenant_id)
+        created_report = egg_crud.create_report(db, report, tenant_id, get_user_identifier(current_user))
         if created_report:
             # ... (rest of your serialization logic remains the same) ...
             result = {
@@ -243,7 +243,7 @@ def update_report(report_date: str, report: EggRoomReportUpdate, db: Session = D
             )
 
         updated_report = egg_crud.update_report(
-            db, report_date, report, tenant_id)
+            db, report_date, report, tenant_id, get_user_identifier(current_user))
         if not updated_report:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
@@ -302,7 +302,7 @@ def delete_report(report_date: str, db: Session = Depends(get_db), current_user:
         # Also, consider if you want to prevent deletion of records from very early dates
         # to preserve historical data.
 
-        return egg_crud.delete_report(db, report_date, tenant_id)
+        return egg_crud.delete_report(db, report_date, tenant_id, get_user_identifier(current_user))
     except HTTPException:
         raise
     except Exception as e:

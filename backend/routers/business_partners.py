@@ -3,6 +3,10 @@ from sqlalchemy.orm import Session, selectinload
 from typing import List, Optional
 import logging
 from utils.auth_utils import get_current_user, get_user_identifier
+from datetime import datetime
+from crud.audit_log import create_audit_log
+from schemas.audit_log import AuditLogCreate
+from utils import sqlalchemy_to_dict
 
 from database import get_db
 from models.business_partners import BusinessPartner as BusinessPartnerModel
@@ -10,6 +14,7 @@ from models.purchase_orders import PurchaseOrder as PurchaseOrderModel
 from models.sales_orders import SalesOrder as SalesOrderModel
 from schemas.business_partners import BusinessPartner, BusinessPartnerCreate, BusinessPartnerUpdate, PartnerStatus
 from utils.auth_utils import get_current_user
+import pytz
 from utils.tenancy import get_tenant_id
 
 router = APIRouter(prefix="/business-partners", tags=["Business Partners"])
@@ -26,7 +31,7 @@ def create_business_partner(
     if db_partner:
         raise HTTPException(status_code=400, detail="Business partner with this name already exists")
     
-    db_partner = BusinessPartnerModel(**partner.model_dump(), tenant_id=tenant_id)
+    db_partner = BusinessPartnerModel(**partner.model_dump(), tenant_id=tenant_id, created_by=get_user_identifier(user))
     db.add(db_partner)
     db.commit()
     db.refresh(db_partner)
@@ -71,6 +76,8 @@ def update_business_partner(
     if db_partner is None:
         raise HTTPException(status_code=404, detail="Business partner not found")
     
+    old_values = sqlalchemy_to_dict(db_partner)
+
     if partner.name is not None and partner.name != db_partner.name:
         existing_partner = db.query(BusinessPartnerModel).filter(BusinessPartnerModel.name == partner.name, BusinessPartnerModel.tenant_id == tenant_id).first()
         if existing_partner:
@@ -80,6 +87,18 @@ def update_business_partner(
     for key, value in partner_data.items():
         setattr(db_partner, key, value)
     
+    db_partner.updated_by = get_user_identifier(user)
+    
+    new_values = sqlalchemy_to_dict(db_partner)
+    log_entry = AuditLogCreate(
+        table_name='business_partners',
+        record_id=str(partner_id),
+        changed_by=get_user_identifier(user),
+        action='UPDATE',
+        old_values=old_values,
+        new_values=new_values
+    )
+    create_audit_log(db=db, log_entry=log_entry)
     db.commit()
     db.refresh(db_partner)
     logger.info(f"Business partner '{db_partner.name}' (ID: {partner_id}) updated by user {get_user_identifier(user)} for tenant {tenant_id}")
@@ -109,6 +128,21 @@ def delete_business_partner(
             detail=f"Business partner '{db_partner.name}' has associated orders. Status changed to Inactive."
         )
     
-    db.delete(db_partner)
+    old_values = sqlalchemy_to_dict(db_partner)
+    # Perform a soft delete instead of a hard delete
+    db_partner.deleted_at = datetime.now(pytz.timezone('Asia/Kolkata'))
+    db_partner.deleted_by = get_user_identifier(user)
+    new_values = sqlalchemy_to_dict(db_partner)
+    log_entry = AuditLogCreate(
+        table_name='business_partners',
+        record_id=str(partner_id),
+        changed_by=get_user_identifier(user),
+        action='DELETE',
+        old_values=old_values,
+        new_values=new_values
+    )
+    create_audit_log(db=db, log_entry=log_entry)
+    db.add(db_partner)
     db.commit()
     logger.info(f"Business partner '{db_partner.name}' (ID: {partner_id}) deleted by user {get_user_identifier(user)} for tenant {tenant_id}")
+    return {"message": "Business partner deleted successfully"}

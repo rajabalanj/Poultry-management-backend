@@ -15,7 +15,7 @@ class InventoryItemAudit(Base):
     old_quantity = Column(Float, nullable=False)
     new_quantity = Column(Float, nullable=False)
     changed_by = Column(String, nullable=True)
-    timestamp = Column(DateTime, default=datetime.now(pytz.timezone('Asia/Kolkata')))
+    timestamp = Column(DateTime(timezone=True), default=datetime.now(pytz.timezone('Asia/Kolkata')))
     note = Column(String, nullable=True)
 
     inventory_item = relationship("InventoryItem", back_populates="audits")

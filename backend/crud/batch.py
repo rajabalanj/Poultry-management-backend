@@ -1,5 +1,10 @@
+import datetime
+import pytz
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_
+from crud.audit_log import create_audit_log
+from schemas.audit_log import AuditLogCreate
+from utils import sqlalchemy_to_dict
 from models.batch import Batch
 from schemas.batch import BatchCreate
 from datetime import date
@@ -61,7 +66,19 @@ def create_batch(db: Session, batch: BatchCreate, tenant_id: str, changed_by: st
 def delete_batch(db: Session, batch_id: int, tenant_id: str, changed_by: str):
     db_batch = db.query(Batch).filter(Batch.id == batch_id, Batch.tenant_id == tenant_id).first()
     if db_batch:
-        db.delete(db_batch)
+        old_values = sqlalchemy_to_dict(db_batch)
+        db_batch.deleted_at = datetime.now(pytz.timezone('Asia/Kolkata'))
+        db_batch.deleted_by = changed_by
+        new_values = sqlalchemy_to_dict(db_batch)
+        log_entry = AuditLogCreate(
+            table_name='batch',
+            record_id=str(batch_id),
+            changed_by=changed_by,
+            action='DELETE',
+            old_values=old_values,
+            new_values=new_values
+        )
+        create_audit_log(db=db, log_entry=log_entry)
         db.commit()
         batches = db.query(Batch).filter(Batch.date == date.today(), Batch.tenant_id == tenant_id).all()
         reports.write_daily_report_excel(batches)

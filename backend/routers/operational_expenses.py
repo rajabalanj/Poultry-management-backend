@@ -6,6 +6,7 @@ from database import get_db
 from schemas import operational_expenses as schemas
 from crud import operational_expenses as crud
 from utils.tenancy import get_tenant_id
+from utils.auth_utils import get_current_user, get_user_identifier
 
 router = APIRouter(
     prefix="/operational-expenses",
@@ -13,8 +14,9 @@ router = APIRouter(
 )
 
 @router.post("/", response_model=schemas.OperationalExpense)
-def create_operational_expense(expense: schemas.OperationalExpenseCreate, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
-    return crud.create_operational_expense(db=db, expense=expense, tenant_id=tenant_id)
+def create_operational_expense(expense: schemas.OperationalExpenseCreate, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id), user: dict = Depends(get_current_user)):
+    user_id = get_user_identifier(user)
+    return crud.create_operational_expense(db=db, expense=expense, tenant_id=tenant_id, user_id=user_id)
 
 @router.get("/", response_model=List[schemas.OperationalExpense])
 def read_operational_expenses(start_date: date, end_date: date, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
@@ -28,15 +30,9 @@ def read_operational_expense(expense_id: int, db: Session = Depends(get_db), ten
     return db_expense
 
 @router.put("/{expense_id}", response_model=schemas.OperationalExpense)
-def update_operational_expense(expense_id: int, expense: schemas.OperationalExpenseUpdate, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
-    db_expense = crud.update_operational_expense(db=db, expense_id=expense_id, expense=expense, tenant_id=tenant_id)
-    if db_expense is None:
-        raise HTTPException(status_code=404, detail="Expense not found")
-    return db_expense
-
-@router.delete("/{expense_id}", response_model=schemas.OperationalExpense)
-def delete_operational_expense(expense_id: int, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
-    db_expense = crud.delete_operational_expense(db=db, expense_id=expense_id, tenant_id=tenant_id)
+def update_operational_expense(expense_id: int, expense: schemas.OperationalExpenseUpdate, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id), user: dict = Depends(get_current_user)):
+    user_id = get_user_identifier(user)
+    db_expense = crud.update_operational_expense(db=db, expense_id=expense_id, expense=expense, tenant_id=tenant_id, user_id=user_id)
     if db_expense is None:
         raise HTTPException(status_code=404, detail="Expense not found")
     return db_expense

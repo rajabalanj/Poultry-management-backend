@@ -1,4 +1,9 @@
+from datetime import datetime
+import pytz
 from sqlalchemy.orm import Session
+from crud.audit_log import create_audit_log
+from schemas.audit_log import AuditLogCreate
+from utils import sqlalchemy_to_dict
 from models.egg_room_reports import EggRoomReport
 from schemas.egg_room_reports import EggRoomReportCreate, EggRoomReportUpdate
 from typing import List
@@ -25,7 +30,7 @@ def get_reports_by_date_range(db: Session, start_date: str, end_date: str, tenan
     )
 
 
-def create_report(db: Session, report: EggRoomReportCreate, tenant_id: str) -> EggRoomReport:
+def create_report(db: Session, report: EggRoomReportCreate, tenant_id: str, user_id: str) -> EggRoomReport:
     # Calculate opening balances from previous day's closing
     prev_report = db.query(EggRoomReport).filter(
         EggRoomReport.report_date < report.report_date,
@@ -54,14 +59,14 @@ def create_report(db: Session, report: EggRoomReportCreate, tenant_id: str) -> E
     report_data['grade_c_shed_received'] = daily_batch_sums.grade_c_shed_received or 0
 
     db_report = EggRoomReport(
-        **{**report_data, **opening_values, 'tenant_id': tenant_id})
+        **{**report_data, **opening_values, 'tenant_id': tenant_id, 'created_by': user_id})
     db.add(db_report)
     db.commit()
     db.refresh(db_report)
     return db_report
 
 
-def update_report(db: Session, report_date: str, report: EggRoomReportUpdate, tenant_id: str) -> EggRoomReport:
+def update_report(db: Session, report_date: str, report: EggRoomReportUpdate, tenant_id: str, user_id: str) -> EggRoomReport:
     """
     Updates an existing egg room report.
     The opening/closing balances of subsequent days are updated automatically on the next read.
@@ -70,6 +75,8 @@ def update_report(db: Session, report_date: str, report: EggRoomReportUpdate, te
         EggRoomReport.report_date == report_date, EggRoomReport.tenant_id == tenant_id).first()
     if not db_report:
         return None
+
+    old_values = sqlalchemy_to_dict(db_report)
 
     # Recalculate sums from daily_batch to get the correct received amount
     daily_batch_sums = db.query(
@@ -127,13 +134,25 @@ def update_report(db: Session, report_date: str, report: EggRoomReportUpdate, te
     db_report.table_received = table_received
     db_report.jumbo_received = jumbo_received
     db_report.grade_c_shed_received = grade_c_shed_received
+    db_report.updated_by = user_id
+
+    new_values = sqlalchemy_to_dict(db_report)
+    log_entry = AuditLogCreate(
+        table_name='egg_room_reports',
+        record_id=f"{db_report.report_date.isoformat()}_{db_report.tenant_id}",
+        changed_by=user_id,
+        action='UPDATE',
+        old_values=old_values,
+        new_values=new_values
+    )
+    create_audit_log(db=db, log_entry=log_entry)
 
     db.commit()
     db.refresh(db_report)
     return db_report
 
 
-def delete_report(db: Session, report_date: str, tenant_id: str):
+def delete_report(db: Session, report_date: str, tenant_id: str, user_id: str):
     """
     Deletes a report for a specific date.
     """
@@ -141,6 +160,18 @@ def delete_report(db: Session, report_date: str, tenant_id: str):
         EggRoomReport.report_date == report_date, EggRoomReport.tenant_id == tenant_id).first()
     if not db_report:
         return None
-    db.delete(db_report)
+    old_values = sqlalchemy_to_dict(db_report)
+    db_report.deleted_at = datetime.now(pytz.timezone('Asia/Kolkata'))
+    db_report.deleted_by = user_id
+    new_values = sqlalchemy_to_dict(db_report)
+    log_entry = AuditLogCreate(
+        table_name='egg_room_reports',
+        record_id=f"{db_report.report_date.isoformat()}_{db_report.tenant_id}",
+        changed_by=user_id,
+        action='DELETE',
+        old_values=old_values,
+        new_values=new_values
+    )
+    create_audit_log(db=db, log_entry=log_entry)
     db.commit()
     return {"message": "Report deleted"}

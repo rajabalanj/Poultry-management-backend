@@ -11,6 +11,11 @@ import os
 import uuid
 from utils.auth_utils import get_current_user, get_user_identifier
 from utils.tenancy import get_tenant_id
+from crud.audit_log import create_audit_log
+from schemas.audit_log import AuditLogCreate
+from utils import sqlalchemy_to_dict
+from datetime import datetime
+import pytz
 
 try:
     from utils.s3_upload import upload_receipt_to_s3
@@ -230,6 +235,8 @@ def update_purchase_order(
     if db_po is None:
         raise HTTPException(status_code=404, detail="Purchase Order not found")
     
+    old_values = sqlalchemy_to_dict(db_po)
+
     # Handle inventory changes when PO is marked as received/paid
     new_status = getattr(po_update, 'status', None)
     # Marking as PAID (received): increase inventory
@@ -284,6 +291,18 @@ def update_purchase_order(
     for key, value in po_data.items():
         setattr(db_po, key, value)
     
+    db_po.updated_by = get_user_identifier(user)
+    
+    new_values = sqlalchemy_to_dict(db_po)
+    log_entry = AuditLogCreate(
+        table_name='purchase_orders',
+        record_id=str(po_id),
+        changed_by=get_user_identifier(user),
+        action='UPDATE',
+        old_values=old_values,
+        new_values=new_values
+    )
+    create_audit_log(db=db, log_entry=log_entry)
     db.commit()
     db.refresh(db_po)
     
@@ -330,9 +349,21 @@ def delete_purchase_order(
             inv.current_stock = (inv.current_stock or 0) - item.quantity
             db.add(inv)
 
-    db.delete(db_po)
+    old_values = sqlalchemy_to_dict(db_po)
+    db_po.deleted_at = datetime.now(pytz.timezone('Asia/Kolkata'))
+    db_po.deleted_by = get_user_identifier(user)
+    new_values = sqlalchemy_to_dict(db_po)
+    log_entry = AuditLogCreate(
+        table_name='purchase_orders',
+        record_id=str(po_id),
+        changed_by=get_user_identifier(user),
+        action='DELETE',
+        old_values=old_values,
+        new_values=new_values
+    )
+    create_audit_log(db=db, log_entry=log_entry)
     db.commit()
-    logger.info(f"Purchase Order (ID: {po_id}) hard deleted by user {get_user_identifier(user)} for tenant {tenant_id}")
+    logger.info(f"Purchase Order (ID: {po_id}) soft deleted by user {get_user_identifier(user)} for tenant {tenant_id}")
     return {"message": "Purchase Order deleted successfully"}
 
 # --- Purchase Order Item Endpoints (Nested for managing items within a PO) ---
@@ -383,6 +414,7 @@ def add_item_to_purchase_order(
     
     # Update total_amount on the PO
     db_po.total_amount += line_total
+    db_po.updated_by = get_user_identifier(user)
     # Immediately increase inventory for this PO item
     inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_request.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).with_for_update().first()
     if inv is None:
@@ -461,6 +493,7 @@ def update_item_in_purchase_order(
 
     db_po_item.line_total = db_po_item.quantity * db_po_item.price_per_unit
     db_po.total_amount += (db_po_item.line_total - old_line_total) # Adjust PO total
+    db_po.updated_by = get_user_identifier(user)
     # Adjust inventory by delta
     delta = db_po_item.quantity - old_qty
     if delta != 0:
@@ -538,6 +571,7 @@ def remove_item_from_purchase_order(
     
     # Adjust total_amount on the PO and reduce inventory
     db_po.total_amount -= db_po_item.line_total
+    db_po.updated_by = get_user_identifier(user)
     inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == db_po_item.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).with_for_update().first()
     if inv:
         inv.current_stock = (inv.current_stock or 0) - db_po_item.quantity

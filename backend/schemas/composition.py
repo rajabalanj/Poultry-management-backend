@@ -13,5 +13,7 @@ class CompositionCreate(CompositionBase):
 class Composition(CompositionBase):
     id: int
     inventory_items: List[InventoryItemInComposition]
+    created_by: Optional[str] = None
+    updated_by: Optional[str] = None
     class Config:
         from_attributes = True
