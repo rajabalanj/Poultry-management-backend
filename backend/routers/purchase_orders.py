@@ -78,7 +78,7 @@ def create_purchase_order(
         BusinessPartnerModel.id == po.vendor_id, 
         BusinessPartnerModel.tenant_id == tenant_id,
         BusinessPartnerModel.status == 'ACTIVE',
-        BusinessPartnerModel.is_vendor == True
+        BusinessPartnerModel.is_vendor
     ).first()
     if not db_vendor:
         raise HTTPException(status_code=400, detail="Business partner not found, inactive, or not a vendor.")

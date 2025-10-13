@@ -50,7 +50,7 @@ def create_sales_order(
         BusinessPartnerModel.id == so.customer_id, 
         BusinessPartnerModel.tenant_id == tenant_id,
         BusinessPartnerModel.status == 'ACTIVE',
-        BusinessPartnerModel.is_customer == True
+        BusinessPartnerModel.is_customer
     ).first()
     if not db_customer:
         raise HTTPException(status_code=400, detail="Business partner not found, inactive, or not a customer.")

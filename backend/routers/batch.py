@@ -34,7 +34,7 @@ def create_batch(
     # Application-level uniqueness check for active batches
     existing = db.query(BatchModel).filter(
         ((BatchModel.shed_no == batch.shed_no) | (BatchModel.batch_no == batch.batch_no)) & 
-        (BatchModel.is_active == True) &
+        (BatchModel.is_active) &
         (BatchModel.tenant_id == tenant_id)
     ).first()
     if existing:
@@ -53,7 +53,7 @@ def get_all_batches(
     """
     try:
         # Filter by the is_active hybrid property
-        batches = db.query(BatchModel).filter(BatchModel.is_active == True, BatchModel.tenant_id == tenant_id).order_by(BatchModel.batch_no).offset(skip).limit(limit).all()
+        batches = db.query(BatchModel).filter(BatchModel.is_active, BatchModel.tenant_id == tenant_id).order_by(BatchModel.batch_no).offset(skip).limit(limit).all()
         result = []
         for batch in batches:
             d = batch.__dict__.copy()

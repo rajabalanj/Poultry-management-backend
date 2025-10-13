@@ -36,7 +36,7 @@ def use_composition_endpoint(
         used_at_dt = datetime.now()
 
     # Find the batch_id based on shed_no
-    batch = db.query(BatchModel).filter(BatchModel.shed_no == shed_no, BatchModel.is_active == True, BatchModel.tenant_id == tenant_id).first()
+    batch = db.query(BatchModel).filter(BatchModel.shed_no == shed_no, BatchModel.is_active, BatchModel.tenant_id == tenant_id).first()
     if not batch:
         raise HTTPException(status_code=404, detail=f"Active batch with shed_no '{shed_no}' not found.")
     batch_id = batch.id
