@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from sqlalchemy.orm import Session
 from typing import List
-from datetime import date,datetime
+from datetime import date
 import pandas as pd
 import io
 import logging
@@ -16,7 +16,6 @@ from schemas.audit_log import AuditLogCreate
 from utils import sqlalchemy_to_dict
 from utils.auth_utils import get_current_user, get_user_identifier
 from utils.tenancy import get_tenant_id
-from utils.age_utils import calculate_age_progression
 
 router = APIRouter()
 logger = logging.getLogger(__name__)

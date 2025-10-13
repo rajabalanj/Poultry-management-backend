@@ -6,7 +6,6 @@ import sys
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from database import Base  # Import your Base and any models
-from models import DailyBatch, Batch  # Import your models here
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config

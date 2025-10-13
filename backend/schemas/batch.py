@@ -1,7 +1,6 @@
 from typing import Optional
-from pydantic import BaseModel, validator, computed_field
+from pydantic import BaseModel, validator
 from datetime import date
-import re
 
 class BatchBase(BaseModel):
     age: str

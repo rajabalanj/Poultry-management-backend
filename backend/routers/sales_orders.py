@@ -1,9 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, Header, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.orm import Session, selectinload
-from sqlalchemy import desc, func
+from sqlalchemy import func
 from typing import List, Optional
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from decimal import Decimal
 import os
 import uuid
@@ -24,7 +24,6 @@ from models.sales_orders import SalesOrder as SalesOrderModel, SalesOrderStatus
 from models.sales_order_items import SalesOrderItem as SalesOrderItemModel
 from models.inventory_items import InventoryItem as InventoryItemModel
 from models.business_partners import BusinessPartner as BusinessPartnerModel
-from models.sales_payments import SalesPayment as SalesPaymentModel
 from models.inventory_item_audit import InventoryItemAudit
 from models.egg_room_reports import EggRoomReport as EggRoomReportModel
 from crud import app_config as crud_app_config # Import app_config crud
@@ -32,8 +31,7 @@ from crud import egg_room_reports as crud_egg_room_reports # Import egg_room_rep
 from schemas.sales_orders import (
     SalesOrder as SalesOrderSchema,
     SalesOrderCreate,
-    SalesOrderUpdate,
-    SalesOrderItem as SalesOrderItemSchema
+    SalesOrderUpdate
 )
 from schemas.sales_order_items import SalesOrderItemCreateRequest, SalesOrderItemUpdate
 

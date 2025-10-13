@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Date, Integer, DateTime, func, String
+from sqlalchemy import Column, Date, Integer, func, String
 from sqlalchemy.orm import column_property, synonym
 from database import Base
 from models.audit_mixin import AuditMixin

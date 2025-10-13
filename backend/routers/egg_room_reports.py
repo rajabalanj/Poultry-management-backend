@@ -6,12 +6,11 @@ from schemas.egg_room_reports import EggRoomReportCreate, EggRoomReportUpdate, E
 from crud import egg_room_reports as egg_crud
 import logging
 import traceback
-from typing import List
 from fastapi.responses import JSONResponse
 from models.egg_room_reports import EggRoomReport
 from models.daily_batch import DailyBatch
 from models.app_config import AppConfig  # Import AppConfig
-from datetime import datetime, date, timedelta  # Import date for comparison
+from datetime import datetime, date  # Import date for comparison
 from utils.auth_utils import get_current_user, get_user_identifier
 from utils.tenancy import get_tenant_id
 

@@ -1,10 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from database import get_db
 from schemas.financial_reports import ProfitAndLoss, BalanceSheet
 from crud import financial_reports as crud_financial_reports
 from datetime import date
-from decimal import Decimal
 from utils.tenancy import get_tenant_id
 
 router = APIRouter(

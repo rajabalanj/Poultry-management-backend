@@ -1,6 +1,5 @@
-from sqlalchemy import Column, Integer, Numeric, Date, DateTime, String, ForeignKey, Text
+from sqlalchemy import Column, Integer, Numeric, Date, String, ForeignKey, Text
 from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
 from database import Base # Assuming Base is imported from your database setup
 from models.audit_mixin import AuditMixin
 

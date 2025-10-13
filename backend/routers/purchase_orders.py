@@ -1,11 +1,11 @@
 # backend/routers/purchase_orders.py
 
-from fastapi import APIRouter, Depends, HTTPException, Header, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload # <-- import selectinload
 from typing import List, Optional
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from decimal import Decimal
 import os
 import uuid
@@ -14,7 +14,6 @@ from utils.tenancy import get_tenant_id
 from crud.audit_log import create_audit_log
 from schemas.audit_log import AuditLogCreate
 from utils import sqlalchemy_to_dict
-from datetime import datetime
 import pytz
 
 try:
@@ -29,12 +28,10 @@ from models.purchase_order_items import PurchaseOrderItem as PurchaseOrderItemMo
 from models.inventory_items import InventoryItem as InventoryItemModel
 from models.inventory_item_audit import InventoryItemAudit
 from models.business_partners import BusinessPartner as BusinessPartnerModel
-from models.payments import Payment as PaymentModel # Import the Payment model
 from schemas.purchase_orders import (
     PurchaseOrder as PurchaseOrderSchema,
     PurchaseOrderCreate,
     PurchaseOrderUpdate,
-    PurchaseOrderItem as PurchaseOrderItemSchema,
     PurchaseOrderItemCreateRequest,
 )
 

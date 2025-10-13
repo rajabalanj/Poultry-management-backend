@@ -1,7 +1,7 @@
 import datetime
 import pytz
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_
+from sqlalchemy import and_
 from crud.audit_log import create_audit_log
 from schemas.audit_log import AuditLogCreate
 from utils import sqlalchemy_to_dict

@@ -1,4 +1,4 @@
-from fastapi import Header, HTTPException, Depends
+from fastapi import Header, HTTPException
 
 def get_tenant_id(x_tenant_id: str = Header(...)) -> str:
     if not x_tenant_id:

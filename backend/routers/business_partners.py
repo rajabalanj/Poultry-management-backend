@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, Header, status, Query
-from sqlalchemy.orm import Session, selectinload
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from sqlalchemy.orm import Session
 from typing import List, Optional
 import logging
 from utils.auth_utils import get_current_user, get_user_identifier
@@ -13,7 +13,6 @@ from models.business_partners import BusinessPartner as BusinessPartnerModel
 from models.purchase_orders import PurchaseOrder as PurchaseOrderModel
 from models.sales_orders import SalesOrder as SalesOrderModel
 from schemas.business_partners import BusinessPartner, BusinessPartnerCreate, BusinessPartnerUpdate, PartnerStatus
-from utils.auth_utils import get_current_user
 import pytz
 from utils.tenancy import get_tenant_id
 

@@ -1,5 +1,4 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func
 from models.daily_batch import DailyBatch
 from schemas.daily_batch import DailyBatchCreate
 from datetime import date

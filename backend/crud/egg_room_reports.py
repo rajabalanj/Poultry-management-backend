@@ -10,7 +10,6 @@ from typing import List
 from models.daily_batch import DailyBatch
 from sqlalchemy import func
 from crud import app_config as crud_app_config # Import app_config crud
-from models.app_config import AppConfig # Import AppConfig model
 
 
 def get_report_by_date(db: Session, report_date: str, tenant_id: str):

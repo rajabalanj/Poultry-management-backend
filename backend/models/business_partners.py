@@ -1,6 +1,5 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, Enum, Boolean
+from sqlalchemy import Column, Integer, String, Text, Enum, Boolean
 from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
 from database import Base
 import enum
 from models.audit_mixin import AuditMixin

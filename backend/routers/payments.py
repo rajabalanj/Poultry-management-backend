@@ -1,8 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, Header, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List
 import logging
-from decimal import Decimal
 import os
 import uuid
 from utils.auth_utils import get_current_user, get_user_identifier

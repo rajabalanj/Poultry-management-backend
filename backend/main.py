@@ -1,16 +1,12 @@
-from fastapi import FastAPI, HTTPException, Depends, Header, UploadFile, File, status
+from fastapi import FastAPI
 from dotenv import load_dotenv
 
 load_dotenv()
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from sqlalchemy.orm import Session
-from typing import List, Optional
-import io
 from database import Base, engine
 from datetime import datetime
 import routers.reports as reports
-from database import get_db
 import os
 import routers.bovanswhitelayerperformance as bovanswhitelayerperformance
 import routers.batch as batch
@@ -28,12 +24,9 @@ import routers.app_config as app_config
 import routers.composition as composition
 import routers.egg_room_reports as egg_room_reports
 import logging
-from utils.auth_utils import get_current_user, get_user_identifier, require_group
-from utils.tenancy import get_tenant_id
 from fastapi.openapi.utils import get_openapi
 
 
-from fastapi.staticfiles import StaticFiles
 LOG_DIR = "logs"
 os.makedirs(LOG_DIR, exist_ok=True) # Create 'logs' directory if it doesn't exist
 

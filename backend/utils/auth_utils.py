@@ -5,7 +5,7 @@ from typing import Dict, List
 import urllib.request
 
 from fastapi import Depends, HTTPException, status, Request
-from jose import jwk, jwt
+from jose import jwt
 from jose.exceptions import JWTError
 
 # === Cognito Configuration (replace with your actual values) ===

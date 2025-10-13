@@ -1,17 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 import os
-from typing import Optional, Dict
-from datetime import datetime, timedelta, date
+from typing import Optional
+from datetime import datetime, date
 from models.daily_batch import DailyBatch
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment
-from openpyxl.worksheet.cell_range import CellRange
 from openpyxl.utils import get_column_letter
 from database import get_db
-import pandas as pd
-from io import BytesIO
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from sqlalchemy import and_
 import models
 from models.batch import Batch

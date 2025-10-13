@@ -1,14 +1,13 @@
 from models.daily_batch import DailyBatch as DailyBatchModel
-from fastapi import APIRouter, Depends, HTTPException, Header, Query
+from fastapi import APIRouter, Depends, HTTPException
 from utils.auth_utils import get_current_user, get_user_identifier
 from sqlalchemy.orm import Session
 from models.batch import Batch as BatchModel
 from schemas.batch import BatchCreate, Batch as BatchSchema
 from datetime import date
-from typing import List, Optional
+from typing import List
 import crud.batch as crud_batch
 from database import get_db
-from schemas.bovanswhitelayerperformance import BovansPerformanceSchema, PaginatedBovansPerformanceResponse
 from utils.tenancy import get_tenant_id
 from crud.audit_log import create_audit_log
 from schemas.audit_log import AuditLogCreate

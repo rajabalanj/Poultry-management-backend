@@ -3,7 +3,6 @@ from models.composition_usage_history import CompositionUsageHistory
 from models.composition import Composition
 from models.inventory_item_in_composition import InventoryItemInComposition
 from models.inventory_items import InventoryItem
-from schemas.composition_usage_history import CompositionUsageHistoryCreate
 from datetime import date, datetime
 from decimal import Decimal
 from models.inventory_item_audit import InventoryItemAudit
