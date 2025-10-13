@@ -76,7 +76,7 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
             row_idx = data['row_idx']
 
             try:
-                batch_id_excel = int(row[0])
+                int(row[0]) # Validate batch_id is integer
             except (ValueError, TypeError):
                 logger.warning(f"Skipping row {row_idx} (Date: {report_date}) due to non-integer batch ID: '{row[0]}'.")
                 continue

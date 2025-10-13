@@ -241,7 +241,8 @@ def update_batch(
             if i == 0: # This is the start_row
                 current_row.age = db_batch.age
                 current_row.opening_count = db_batch.opening_count
-                if not current_row.upload_date: current_row.upload_date = new_date
+                if not current_row.upload_date:
+                    current_row.upload_date = new_date
             else: # This is a subsequent row, propagate from prev_row
                 current_row.opening_count = prev_row.closing_count
 

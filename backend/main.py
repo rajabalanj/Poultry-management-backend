@@ -1,13 +1,10 @@
 from fastapi import FastAPI
-from dotenv import load_dotenv
-
-load_dotenv()
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.openapi.utils import get_openapi
 from database import Base, engine
-from datetime import datetime
+
 import routers.reports as reports
-import os
 import routers.bovanswhitelayerperformance as bovanswhitelayerperformance
 import routers.batch as batch
 import routers.business_partners as business_partners
@@ -23,9 +20,14 @@ import routers.daily_batch as daily_batch
 import routers.app_config as app_config
 import routers.composition as composition
 import routers.egg_room_reports as egg_room_reports
-import logging
-from fastapi.openapi.utils import get_openapi
 
+import logging
+import os
+from dotenv import load_dotenv
+from datetime import datetime
+
+
+load_dotenv()
 
 LOG_DIR = "logs"
 os.makedirs(LOG_DIR, exist_ok=True) # Create 'logs' directory if it doesn't exist

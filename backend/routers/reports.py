@@ -489,8 +489,6 @@ def write_daily_report_excel(batches, report_date=None, file_path=None, tenant_i
     orange_red_fill = PatternFill(start_color="FF6600", end_color="FF6600", fill_type="solid") # Closer to the image's orange-red
     bold_font_black = Font(bold=True, color="000000") # Black font for yellow fill
     bold_font_white = Font(bold=True, color="FFFFFF") # White font for red/orange-red fill
-    green_fill = PatternFill(start_color="92D050", end_color="92D050", fill_type="solid")
-    bold_font = Font(bold=True)
 
      # Formatting for header1 (DATE and DAILY REPORT)
     date_cell = ws.cell(row=start_row, column=1)
