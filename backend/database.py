@@ -36,7 +36,8 @@ def add_soft_delete_filter(execute_state):
             if hasattr(entity['type'], 'deleted_at'):
                 execute_state.statement = execute_state.statement.options(
                     with_loader_criteria(
-                        entity['type'].deleted_at.is_(None),
+                        entity['type'],
+                        lambda cls: cls.deleted_at.is_(None),
                         include_aliases=True
                     )
                 )

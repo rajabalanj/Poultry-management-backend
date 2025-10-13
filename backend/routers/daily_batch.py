@@ -387,7 +387,7 @@ def create_or_get_daily_batches(
             result_list.append(d)
         else:
             # Generate missing daily batch
-            if batch_date < batch.date:
+            if batch_date < batch.date.date():
                 result_list.append({
                     "batch_id": batch.id,
                     "shed_no": batch.shed_no,
