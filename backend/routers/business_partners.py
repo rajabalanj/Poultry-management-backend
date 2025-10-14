@@ -128,20 +128,22 @@ def delete_business_partner(
         )
     
     old_values = sqlalchemy_to_dict(db_partner)
-    # Perform a soft delete instead of a hard delete
-    db_partner.deleted_at = datetime.now(pytz.timezone('Asia/Kolkata'))
-    db_partner.deleted_by = get_user_identifier(user)
+
+    # Instead of deleting, mark the partner as INACTIVE
+    db_partner.status = PartnerStatus.INACTIVE
+    db_partner.updated_by = get_user_identifier(user)
     new_values = sqlalchemy_to_dict(db_partner)
+
     log_entry = AuditLogCreate(
         table_name='business_partners',
         record_id=str(partner_id),
         changed_by=get_user_identifier(user),
-        action='DELETE',
+        action='DEACTIVATE',
         old_values=old_values,
         new_values=new_values
     )
     create_audit_log(db=db, log_entry=log_entry)
-    db.add(db_partner)
+
     db.commit()
-    logger.info(f"Business partner '{db_partner.name}' (ID: {partner_id}) deleted by user {get_user_identifier(user)} for tenant {tenant_id}")
-    return {"message": "Business partner deleted successfully"}
+    logger.info(f"Business partner '{db_partner.name}' (ID: {partner_id}) set to INACTIVE by user {get_user_identifier(user)} for tenant {tenant_id}")
+    return {"message": "Business partner set to Inactive"}

@@ -160,17 +160,24 @@ def delete_report(db: Session, report_date: str, tenant_id: str, user_id: str):
     if not db_report:
         return None
     old_values = sqlalchemy_to_dict(db_report)
-    db_report.deleted_at = datetime.now(pytz.timezone('Asia/Kolkata'))
-    db_report.deleted_by = user_id
-    new_values = sqlalchemy_to_dict(db_report)
-    log_entry = AuditLogCreate(
-        table_name='egg_room_reports',
-        record_id=f"{db_report.report_date.isoformat()}_{db_report.tenant_id}",
-        changed_by=user_id,
-        action='DELETE',
-        old_values=old_values,
-        new_values=new_values
-    )
-    create_audit_log(db=db, log_entry=log_entry)
-    db.commit()
+    try:
+        db.delete(db_report)
+        db.commit()
+    except Exception:
+        db.rollback()
+        return None
+
+    try:
+        log_entry = AuditLogCreate(
+            table_name='egg_room_reports',
+            record_id=f"{report_date}_{tenant_id}",
+            changed_by=user_id,
+            action='DELETE',
+            old_values=old_values,
+            new_values=None
+        )
+        create_audit_log(db=db, log_entry=log_entry)
+    except Exception:
+        pass
+
     return {"message": "Report deleted"}

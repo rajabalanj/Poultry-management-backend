@@ -67,21 +67,36 @@ def delete_batch(db: Session, batch_id: int, tenant_id: str, changed_by: str):
     db_batch = db.query(Batch).filter(Batch.id == batch_id, Batch.tenant_id == tenant_id).first()
     if db_batch:
         old_values = sqlalchemy_to_dict(db_batch)
-        db_batch.deleted_at = datetime.now(pytz.timezone('Asia/Kolkata'))
-        db_batch.deleted_by = changed_by
-        new_values = sqlalchemy_to_dict(db_batch)
-        log_entry = AuditLogCreate(
-            table_name='batch',
-            record_id=str(batch_id),
-            changed_by=changed_by,
-            action='DELETE',
-            old_values=old_values,
-            new_values=new_values
-        )
-        create_audit_log(db=db, log_entry=log_entry)
-        db.commit()
-        batches = db.query(Batch).filter(Batch.date == date.today(), Batch.tenant_id == tenant_id).all()
-        reports.write_daily_report_excel(batches)
+        try:
+            # Hard-delete the batch
+            db.delete(db_batch)
+            db.commit()
+        except Exception:
+            db.rollback()
+            return False
+
+        # Audit log: record old values, no new values for a hard delete
+        try:
+            log_entry = AuditLogCreate(
+                table_name='batch',
+                record_id=str(batch_id),
+                changed_by=changed_by,
+                action='DELETE',
+                old_values=old_values,
+                new_values=None
+            )
+            create_audit_log(db=db, log_entry=log_entry)
+        except Exception:
+            # don't fail the delete if audit logging fails
+            pass
+
+        # Re-generate today's daily report list if needed
+        try:
+            batches = db.query(Batch).filter(Batch.date == date.today(), Batch.tenant_id == tenant_id).all()
+            reports.write_daily_report_excel(batches)
+        except Exception:
+            # non-critical: ignore failures when regenerating reports
+            pass
         return True
     return False
 

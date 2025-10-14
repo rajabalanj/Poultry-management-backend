@@ -100,32 +100,25 @@ def delete_composition(db: Session, composition_id: int, tenant_id: str, user_id
         old_values = sqlalchemy_to_dict(db_composition)
     except Exception:
         old_values = None
-
-    # Soft-delete: set deleted_at and deleted_by
+    # Hard-delete the composition and its child inventory_item_in_composition rows
     try:
-        db_composition.deleted_at = datetime.datetime.now(pytz.timezone('Asia/Kolkata'))
-        db_composition.deleted_by = user_id
-        db.add(db_composition)
+        # delete child rows first for referential safety
+        db.query(InventoryItemInComposition).filter(InventoryItemInComposition.composition_id == composition_id, InventoryItemInComposition.tenant_id == tenant_id).delete()
+        db.delete(db_composition)
         db.commit()
-        db.refresh(db_composition)
     except Exception:
-        # Fallback to hard delete if soft-delete fails (should be rare)
-        try:
-            db.delete(db_composition)
-            db.commit()
-        except Exception:
-            pass
+        db.rollback()
+        return False
 
-    # Audit log for deletion
+    # Audit log for deletion (old values recorded, no new values)
     try:
-        new_values = sqlalchemy_to_dict(db_composition)
         log_entry = AuditLogCreate(
             table_name='composition',
             record_id=str(composition_id),
             changed_by=user_id,
             action='DELETE',
             old_values=old_values or {},
-            new_values=new_values or {}
+            new_values=None
         )
         create_audit_log(db, log_entry)
     except Exception:
