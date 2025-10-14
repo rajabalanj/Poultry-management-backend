@@ -20,7 +20,7 @@ def create_config(db: Session, config: AppConfigCreate, tenant_id: str, user_id:
         new_values = sqlalchemy_to_dict(db_config)
         log_entry = AuditLogCreate(
             table_name='app_config',
-            record_id=db_config.id,
+            record_id=str(db_config.id),
             changed_by=user_id,
             action='CREATE',
             old_values={},
@@ -58,7 +58,7 @@ def update_config(db: Session, config_id: int, config: AppConfigUpdate, tenant_i
         new_values = sqlalchemy_to_dict(db_config)
         log_entry = AuditLogCreate(
             table_name='app_config',
-            record_id=db_config.id,
+            record_id=str(db_config.id),
             changed_by=user_id,
             action='UPDATE',
             old_values=old_values,
@@ -89,7 +89,7 @@ def update_config_by_name(db: Session, name: str, config: AppConfigUpdate, tenan
         new_values = sqlalchemy_to_dict(db_config)
         log_entry = AuditLogCreate(
             table_name='app_config',
-            record_id=db_config.id,
+            record_id=str(db_config.id),
             changed_by=user_id,
             action='UPDATE',
             old_values=old_values,

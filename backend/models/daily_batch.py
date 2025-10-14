@@ -8,11 +8,11 @@ from sqlalchemy.orm import object_session
 from models.composition_usage_history import CompositionUsageHistory
 from models.inventory_items import InventoryItem
 from decimal import Decimal
-from models.audit_mixin import AuditMixin
+from models.audit_mixin import TimestampMixin
 import pytz
 
 
-class DailyBatch(Base, AuditMixin):
+class DailyBatch(Base, TimestampMixin):
     __tablename__ = "daily_batch"
     batch_id = Column(Integer, ForeignKey("batch.id"), primary_key=True)
     tenant_id = Column(String, index=True)

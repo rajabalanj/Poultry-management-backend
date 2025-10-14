@@ -172,6 +172,10 @@ def update_batch(
     changes = {}
     old_values = sqlalchemy_to_dict(db_batch)
     old_date = db_batch.date
+    # Ensure old_date is a date object, not datetime
+    if hasattr(old_date, 'date') and callable(old_date.date):
+        old_date = old_date.date()
+    
     for key, value in batch_data.items():
         if hasattr(db_batch, key):
             if key == 'batch_no' and getattr(db_batch, key) != value:
@@ -189,6 +193,9 @@ def update_batch(
         return db_batch
 
     new_date = db_batch.date
+    # Ensure new_date is a date object, not datetime
+    if hasattr(new_date, 'date') and callable(new_date.date):
+        new_date = new_date.date()
 
     # --- 2. Handle date change: delete old daily entries ---
     # Use a bulk delete with synchronize_session=False to avoid stale session state
@@ -273,23 +280,34 @@ def update_batch(
         from sqlalchemy.orm.exc import StaleDataError
         if isinstance(e, StaleDataError):
             logger.exception("StaleDataError committing batch update for batch_id=%s: %s", batch_id, e)
+            # For stale data errors, refresh the session and retry the operation once
+            try:
+                db.rollback()
+                db.expire_all()
+                logger.info("Retrying batch update for batch_id=%s after StaleDataError", batch_id)
+                db.commit()
+                logger.info("Successfully completed batch update retry for batch_id=%s", batch_id)
+            except Exception as retry_error:
+                logger.exception("Retry failed for batch_id=%s: %s", batch_id, retry_error)
+                db.rollback()
+                raise HTTPException(status_code=500, detail="Failed to update batch due to concurrent changes. Please retry")
         else:
             logger.exception("Error committing batch update for batch_id=%s: %s", batch_id, e)
-        # Log a little more DB state to help debugging
-        try:
-            logger.debug("Session new objects: %s", [repr(x) for x in list(db.new)])
-            logger.debug("Session dirty objects: %s", [repr(x) for x in list(db.dirty)])
-            logger.debug("Session deleted objects: %s", [repr(x) for x in list(db.deleted)])
-        except Exception:
-            pass
-        db.rollback()
-        raise HTTPException(status_code=500, detail="Failed to update batch (commit error). Please retry")
+            # Log a little more DB state to help debugging
+            try:
+                logger.debug("Session new objects: %s", [repr(x) for x in list(db.new)])
+                logger.debug("Session dirty objects: %s", [repr(x) for x in list(db.dirty)])
+                logger.debug("Session deleted objects: %s", [repr(x) for x in list(db.deleted)])
+            except Exception:
+                pass
+            db.rollback()
+            raise HTTPException(status_code=500, detail="Failed to update batch (commit error). Please retry")
     db.refresh(db_batch)
 
     new_values = sqlalchemy_to_dict(db_batch)
     log_entry = AuditLogCreate(
         table_name='batch',
-        record_id=batch_id,
+        record_id=str(batch_id),
         changed_by=get_user_identifier(user),
         action='UPDATE',
         old_values=old_values,

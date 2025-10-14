@@ -1,9 +1,9 @@
 from sqlalchemy import Column, Integer, String, Text, Numeric, UniqueConstraint
 from sqlalchemy.orm import relationship
 from database import Base # Assuming Base is imported from your database setup
-from models.audit_mixin import AuditMixin
+from models.audit_mixin import TimestampMixin
 
-class InventoryItem(Base, AuditMixin):
+class InventoryItem(Base, TimestampMixin):
     __tablename__ = "inventory_items"
     __table_args__ = (UniqueConstraint('name', 'tenant_id', name='_inventory_items_name_tenant_uc'),)
 

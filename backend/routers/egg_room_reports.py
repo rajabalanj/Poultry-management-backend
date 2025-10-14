@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from database import get_db
@@ -13,6 +13,10 @@ from models.app_config import AppConfig  # Import AppConfig
 from datetime import datetime, date  # Import date for comparison
 from utils.auth_utils import get_current_user, get_user_identifier
 from utils.tenancy import get_tenant_id
+
+def datetime_to_iso(dt):
+    """Safely convert datetime to ISO format, returning None if datetime is None"""
+    return dt.isoformat() if dt else None
 
 router = APIRouter(prefix="/egg-room-report", tags=["egg_room_reports"])
 logger = logging.getLogger("egg_room_reports")
@@ -38,7 +42,9 @@ def get_system_start_date(db: Session, tenant_id: str) -> date:
 
 
 @router.get("/{report_date}")
-def get_report(report_date: str, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
+def get_report(report_date: str, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id), request: Request = None):
+    user = get_current_user(request) if request else {}
+    user_id = get_user_identifier(user)
     try:
         requested_date = datetime.strptime(report_date, "%Y-%m-%d").date()
         system_start_date = get_system_start_date(db, tenant_id)
@@ -71,7 +77,7 @@ def get_report(report_date: str, db: Session = Depends(get_db), tenant_id: str =
                 grade_c_transfer=0, grade_c_labour=0, grade_c_waste=0,
                 tenant_id=tenant_id
             )
-            report = egg_crud.create_report(db, dummy_data, tenant_id)
+            report = egg_crud.create_report(db, dummy_data, tenant_id, user_id)
         else:
             # Always update received values from daily_batch
             daily_batch_sums = db.query(
@@ -130,8 +136,8 @@ def get_report(report_date: str, db: Session = Depends(get_db), tenant_id: str =
                 "jumbo_waste": report.jumbo_waste,
                 "jumbo_in": report.jumbo_in,
                 "jumbo_out": report.jumbo_out,
-                "created_at": report.created_at.isoformat(),
-                "updated_at": report.updated_at.isoformat(),
+                "created_at": datetime_to_iso(report.created_at),
+                "updated_at": datetime_to_iso(report.updated_at),
                 "table_opening": report.table_opening,
                 "table_closing": report.table_closing,
                 "jumbo_opening": report.jumbo_opening,
@@ -287,28 +293,7 @@ def update_report(report_date: str, report: EggRoomReportUpdate, db: Session = D
 
 
 
-@router.delete("/{report_date}")
-def delete_report(report_date: str, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user), tenant_id: str = Depends(get_tenant_id)):
-    try:
-        requested_date = datetime.strptime(report_date, "%Y-%m-%d").date()
-        system_start_date = get_system_start_date(db, tenant_id)
 
-        if requested_date < system_start_date:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Report date {report_date} cannot be before the system start date of {system_start_date.isoformat()}."
-            )
-        # Also, consider if you want to prevent deletion of records from very early dates
-        # to preserve historical data.
-
-        return egg_crud.delete_report(db, report_date, tenant_id, get_user_identifier(current_user))
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(
-            f"Error deleting egg room report for {report_date}: {e}\n{traceback.format_exc()}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
 
 @router.get("/")
@@ -353,8 +338,8 @@ def get_reports(start_date: str, end_date: str, db: Session = Depends(get_db), t
                 "jumbo_waste": report.jumbo_waste,
                 "jumbo_in": report.jumbo_in,
                 "jumbo_out": report.jumbo_out,
-                "created_at": report.created_at.isoformat(),
-                "updated_at": report.updated_at.isoformat(),
+                "created_at": datetime_to_iso(report.created_at),
+                "updated_at": datetime_to_iso(report.updated_at),
                 "table_opening": report.table_opening,
                 "table_closing": report.table_closing,
                 "jumbo_opening": report.jumbo_opening,

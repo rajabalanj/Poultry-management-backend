@@ -1,9 +1,9 @@
 from sqlalchemy import Column, Date, Integer, func, String
 from sqlalchemy.orm import column_property, synonym
 from database import Base
-from models.audit_mixin import AuditMixin
+from models.audit_mixin import TimestampMixin
 
-class EggRoomReport(Base, AuditMixin):
+class EggRoomReport(Base, TimestampMixin):
     __tablename__ = "egg_room_reports"
 
     report_date = Column(Date, primary_key=True)

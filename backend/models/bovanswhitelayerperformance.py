@@ -1,8 +1,8 @@
 from database import Base
 from sqlalchemy import DECIMAL, Column, Integer, String
-from models.audit_mixin import AuditMixin
+from models.audit_mixin import TimestampMixin
 
-class BovansWhiteLayerPerformance(Base, AuditMixin):
+class BovansWhiteLayerPerformance(Base, TimestampMixin):
     __tablename__ = "bovanswhitelayerperformance" # Ensure this matches your table name exactly
 
     age_weeks = Column(Integer, primary_key=True, index=True)

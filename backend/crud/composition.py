@@ -31,7 +31,7 @@ def create_composition(db: Session, composition: CompositionCreate, tenant_id: s
         new_values = sqlalchemy_to_dict(db_composition)
         log_entry = AuditLogCreate(
             table_name='composition',
-            record_id=db_composition.id,
+            record_id=str(db_composition.id),
             changed_by=user_id,
             action='CREATE',
             old_values={},
@@ -78,7 +78,7 @@ def update_composition(db: Session, composition_id: int, composition: Compositio
         new_values = sqlalchemy_to_dict(db_composition)
         log_entry = AuditLogCreate(
             table_name='composition',
-            record_id=db_composition.id,
+            record_id=str(db_composition.id),
             changed_by=user_id,
             action='UPDATE',
             old_values=old_values,
@@ -121,7 +121,7 @@ def delete_composition(db: Session, composition_id: int, tenant_id: str, user_id
         new_values = sqlalchemy_to_dict(db_composition)
         log_entry = AuditLogCreate(
             table_name='composition',
-            record_id=composition_id,
+            record_id=str(composition_id),
             changed_by=user_id,
             action='DELETE',
             old_values=old_values or {},

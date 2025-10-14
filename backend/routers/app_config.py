@@ -26,7 +26,8 @@ def get_configs(name: Optional[str] = None, db: Session = Depends(get_db), tenan
 
 @router.patch("/configurations/{name}/", response_model=AppConfigOut)
 def update_config(name: str, config: AppConfigUpdate, db: Session = Depends(get_db), user: dict = Depends(get_current_user), tenant_id: str = Depends(get_tenant_id)):
-    updated = crud_app_config.update_config_by_name(db, name, config, tenant_id)
+    user_id = get_user_identifier(user)
+    updated = crud_app_config.update_config_by_name(db, name, config, tenant_id, user_id)
     if not updated:
         raise HTTPException(status_code=404, detail="Configuration not found")
     return updated

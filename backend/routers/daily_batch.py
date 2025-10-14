@@ -109,7 +109,7 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
                     prev_age = float(prev_daily.age)
                 except (ValueError, TypeError):
                     prev_age = 0.0
-                days_diff = (report_date - prev_daily.batch_date).days
+                days_diff = (report_date - prev_daily.batch_date.date()).days
                 age = calculate_age_progression(prev_age, days_diff)
             else:
                 opening_count = batch_obj.opening_count
@@ -211,7 +211,7 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
             for row_to_update in subsequent_rows:
                 row_to_update.opening_count = prev_closing
                 
-                days_diff = (row_to_update.batch_date - prev_date).days
+                days_diff = (row_to_update.batch_date.date() - prev_date.date()).days
                 prev_age = calculate_age_progression(prev_age, days_diff)
                 row_to_update.age = str(round(prev_age, 1))
                 
@@ -314,7 +314,7 @@ def update_daily_batch(
             row.opening_count = prev_closing
             
             # Propagate age
-            days_diff = (row.batch_date - prev_date).days
+            days_diff = (row.batch_date.date() - prev_date.date()).days
             prev_age = calculate_age_progression(prev_age, days_diff)
             row.age = str(prev_age)
             
@@ -339,7 +339,7 @@ def update_daily_batch(
 
 @router.post("/daily-batch/", response_model=List[dict])
 def create_or_get_daily_batches(
-    batch_date: date = Query(..., description="Date for which to fetch daily batches"),
+    batch_date: str = Query(..., description="Date for which to fetch daily batches"),
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
     tenant_id: str = Depends(get_tenant_id)
@@ -352,7 +352,14 @@ def create_or_get_daily_batches(
     from models.daily_batch import DailyBatch as DailyBatchModel
     from models.batch import Batch as BatchModel
     from utils import calculate_age_progression
+    from dateutil import parser
 
+    # Handle timezone format issues (+ becomes space in URL decoding)
+    batch_date_str = batch_date.replace(' ', '+')
+    try:
+        batch_date = parser.parse(batch_date_str).date()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid batch_date format")
 
     today = date.today()
 
@@ -410,7 +417,7 @@ def create_or_get_daily_batches(
                     prev_age = float(prev_daily.age)
                 except (ValueError, TypeError):
                     prev_age = 0.0
-                days_diff = (batch_date - prev_daily.batch_date).days
+                days_diff = (batch_date - prev_daily.batch_date.date()).days
                 age = calculate_age_progression(prev_age, days_diff)
             else:
                 opening_count = batch.opening_count
@@ -418,7 +425,7 @@ def create_or_get_daily_batches(
                     base_age = float(batch.age)
                 except (ValueError, TypeError):
                     base_age = 0.0
-                days_diff = (batch_date - batch.date).days
+                days_diff = (batch_date - batch.date.date()).days
                 age = calculate_age_progression(base_age, days_diff)
 
             db_daily = DailyBatchModel(

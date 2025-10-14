@@ -3,10 +3,10 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.ext.hybrid import hybrid_property
 from datetime import datetime
 from database import Base
-from models.audit_mixin import AuditMixin
+from models.audit_mixin import TimestampMixin
 import pytz
 
-class Batch(Base, AuditMixin):
+class Batch(Base, TimestampMixin):
     __tablename__ = "batch"
 
     id = Column(Integer, primary_key=True, index=True)

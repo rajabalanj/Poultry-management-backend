@@ -1,4 +1,4 @@
-import datetime
+from datetime import datetime
 import pytz
 from sqlalchemy.orm import Session
 from models.inventory_items import InventoryItem
@@ -35,7 +35,7 @@ def update_inventory_item(db: Session, item_id: int, item: InventoryItemUpdate, 
         new_values = sqlalchemy_to_dict(db_item)
         log_entry = AuditLogCreate(
             table_name='inventory_items',
-            record_id=item_id,
+            record_id=str(item_id),
             changed_by=get_user_identifier(user),
             action='UPDATE',
             old_values=old_values,

@@ -200,7 +200,7 @@ def read_purchase_orders(
         query = query.filter(PurchaseOrderModel.order_date <= end_date)
 
     # Eagerly load items and payments for the response model
-    purchase_orders = query.options(
+    purchase_orders = query.order_by(PurchaseOrderModel.order_date.desc(), PurchaseOrderModel.id.desc()).options(
         selectinload(PurchaseOrderModel.items),
         selectinload(PurchaseOrderModel.payments)
     ).offset(skip).limit(limit).all()

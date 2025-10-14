@@ -6,6 +6,19 @@ def sqlalchemy_to_dict(obj):
     if not obj:
         return None
     mapper = class_mapper(obj.__class__)
-    return {c.key: getattr(obj, c.key) for c in mapper.columns}
+    result = {}
+    for c in mapper.columns:
+        value = getattr(obj, c.key)
+        # Convert datetime objects to ISO format strings
+        if hasattr(value, 'isoformat'):
+            value = value.isoformat()
+        # Convert Decimal objects to floats
+        elif hasattr(value, 'normalize') and hasattr(value, 'from_float'):  # Check if it's a Decimal
+            value = float(value)
+        # Convert enum types to strings
+        elif hasattr(value, 'name'):  # Check if it's an enum
+            value = value.name
+        result[c.key] = value
+    return result
 
 __all__ = ['calculate_age_progression', 'sqlalchemy_to_dict']

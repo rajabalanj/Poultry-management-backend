@@ -2,14 +2,14 @@ from sqlalchemy import Column, Integer, String, Text, Enum, Boolean
 from sqlalchemy.orm import relationship
 from database import Base
 import enum
-from models.audit_mixin import AuditMixin
+from models.audit_mixin import TimestampMixin
 
 class PartnerStatus(enum.Enum):
     ACTIVE = "Active"
     INACTIVE = "Inactive"
     BLOCKED = "Blocked"
 
-class BusinessPartner(Base, AuditMixin):
+class BusinessPartner(Base, TimestampMixin):
     __tablename__ = "business_partners"
 
     id = Column(Integer, primary_key=True, index=True)
