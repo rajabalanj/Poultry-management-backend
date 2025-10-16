@@ -133,6 +133,7 @@ def update_report(db: Session, report_date: str, report: EggRoomReportUpdate, te
     db_report.table_received = table_received
     db_report.jumbo_received = jumbo_received
     db_report.grade_c_shed_received = grade_c_shed_received
+    db_report.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
     db_report.updated_by = user_id
 
     new_values = sqlalchemy_to_dict(db_report)

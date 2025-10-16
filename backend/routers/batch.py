@@ -1,10 +1,11 @@
+import pytz
 from models.daily_batch import DailyBatch as DailyBatchModel
 from fastapi import APIRouter, Depends, HTTPException
-from utils.auth_utils import get_current_user, get_user_identifier
+from utils.auth_utils import get_current_user, get_user_identifier, require_group
 from sqlalchemy.orm import Session
 from models.batch import Batch as BatchModel
 from schemas.batch import BatchCreate, Batch as BatchSchema
-from datetime import date
+from datetime import date, datetime
 from typing import List
 import crud.batch as crud_batch
 from database import get_db
@@ -105,7 +106,7 @@ def update_batch(
     batch_id: int,
     batch_data: dict,
     db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_group(["admin"])),
     tenant_id: str = Depends(get_tenant_id)
 ):
     from utils import calculate_age_progression
@@ -117,6 +118,7 @@ def update_batch(
     if db_batch is None:
         raise HTTPException(status_code=404, detail="Batch not found")
 
+    db_batch.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
     db_batch.updated_by = get_user_identifier(user)
     logger.info(f"Batch found: {db_batch.batch_no}, current shed_no: {db_batch.shed_no}")
 
@@ -322,7 +324,7 @@ def update_batch(
 def delete_batch(
     batch_id: int, 
     db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_group(["admin"])),
     tenant_id: str = Depends(get_tenant_id)
 ):
     success = crud_batch.delete_batch(db, batch_id=batch_id, tenant_id=tenant_id, changed_by=get_user_identifier(user))
@@ -331,10 +333,11 @@ def delete_batch(
     return {"message": "Batch deleted successfully"}
 
 @router.put("/{batch_id}/close")
-def close_batch(batch_id: int, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id), user: dict = Depends(get_current_user)):
+def close_batch(batch_id: int, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id), user: dict = Depends(require_group(["admin"]))):
     batch = db.query(BatchModel).filter(BatchModel.id == batch_id, BatchModel.tenant_id == tenant_id).first()
     if batch:
         batch.closing_date = date.today()
+        batch.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
         batch.updated_by = get_user_identifier(user)
         db.add(batch)
         db.commit()

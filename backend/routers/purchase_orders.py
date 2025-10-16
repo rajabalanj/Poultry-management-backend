@@ -288,6 +288,7 @@ def update_purchase_order(
     for key, value in po_data.items():
         setattr(db_po, key, value)
     
+    db_po.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
     db_po.updated_by = get_user_identifier(user)
     
     new_values = sqlalchemy_to_dict(db_po)
@@ -411,6 +412,7 @@ def add_item_to_purchase_order(
     
     # Update total_amount on the PO
     db_po.total_amount += line_total
+    db_po.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
     db_po.updated_by = get_user_identifier(user)
     # Immediately increase inventory for this PO item
     inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_request.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).with_for_update().first()
@@ -490,6 +492,7 @@ def update_item_in_purchase_order(
 
     db_po_item.line_total = db_po_item.quantity * db_po_item.price_per_unit
     db_po.total_amount += (db_po_item.line_total - old_line_total) # Adjust PO total
+    db_po.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
     db_po.updated_by = get_user_identifier(user)
     # Adjust inventory by delta
     delta = db_po_item.quantity - old_qty
@@ -568,6 +571,7 @@ def remove_item_from_purchase_order(
     
     # Adjust total_amount on the PO and reduce inventory
     db_po.total_amount -= db_po_item.line_total
+    db_po.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
     db_po.updated_by = get_user_identifier(user)
     inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == db_po_item.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).with_for_update().first()
     if inv:
@@ -613,10 +617,11 @@ def upload_payment_receipt(
     
     if os.getenv('AWS_ENVIRONMENT') and upload_receipt_to_s3:
         try:
-            s3_url = upload_receipt_to_s3(content, file.filename, po_id, tenant_id)
+            s3_url = upload_receipt_to_s3(content, file.filename, po_id)
             db_po.payment_receipt = s3_url
-        except Exception:
-            raise HTTPException(status_code=500, detail="Failed to upload to S3")
+        except Exception as e:
+            logger.exception(f"S3 upload failed for PO {po_id}: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to upload to S3: {str(e)}")
     else:
         with open(file_path, "wb") as buffer:
             buffer.write(content)

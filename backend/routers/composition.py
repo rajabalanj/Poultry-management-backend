@@ -13,7 +13,7 @@ router = APIRouter()
 
 
 @router.post("/compositions/", response_model=Composition)
-def create_composition(composition: CompositionCreate, db: Session = Depends(get_db), user: dict = Depends(require_group(["admin"])), tenant_id: str = Depends(get_tenant_id)):
+def create_composition(composition: CompositionCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user), tenant_id: str = Depends(get_tenant_id)):
     # Pass the user identifier to the CRUD function so it can populate audit fields
     return crud_composition.create_composition(db, composition, tenant_id, user_id=get_user_identifier(user))
 

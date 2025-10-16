@@ -85,7 +85,7 @@ def update_business_partner(
     partner_data = partner.model_dump(exclude_unset=True)
     for key, value in partner_data.items():
         setattr(db_partner, key, value)
-    
+    db_partner.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
     db_partner.updated_by = get_user_identifier(user)
     
     new_values = sqlalchemy_to_dict(db_partner)
@@ -131,6 +131,7 @@ def delete_business_partner(
 
     # Instead of deleting, mark the partner as INACTIVE
     db_partner.status = PartnerStatus.INACTIVE
+    db_partner.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
     db_partner.updated_by = get_user_identifier(user)
     new_values = sqlalchemy_to_dict(db_partner)
 

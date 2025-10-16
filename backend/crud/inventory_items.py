@@ -29,6 +29,7 @@ def update_inventory_item(db: Session, item_id: int, item: InventoryItemUpdate, 
         update_data = item.model_dump(exclude_unset=True)
         for key, value in update_data.items():
             setattr(db_item, key, value)
+        db_item.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
         db_item.updated_by = get_user_identifier(user)
         db.commit()
         db.refresh(db_item)

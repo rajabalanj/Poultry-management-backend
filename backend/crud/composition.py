@@ -60,6 +60,7 @@ def update_composition(db: Session, composition_id: int, composition: Compositio
     old_values = sqlalchemy_to_dict(db_composition)
 
     db_composition.name = composition.name
+    db_composition.updated_at = datetime.datetime.now(pytz.timezone('Asia/Kolkata'))
     db_composition.updated_by = user_id
     db.query(InventoryItemInComposition).filter(InventoryItemInComposition.composition_id == composition_id, InventoryItemInComposition.tenant_id == tenant_id).delete()
     for item in composition.inventory_items:

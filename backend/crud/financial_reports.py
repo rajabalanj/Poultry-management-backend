@@ -1,9 +1,11 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func
-from models import sales_orders, purchase_orders, inventory_items, payments, sales_payments, composition_usage_history, operational_expenses
+from sqlalchemy import func, or_
+from models import sales_orders, purchase_orders, inventory_items, payments, sales_payments, composition_usage_history, operational_expenses, business_partners, purchase_order_items, sales_order_items
 from schemas.financial_reports import ProfitAndLoss, BalanceSheet, Assets, CurrentAssets, Liabilities, CurrentLiabilities
+from schemas.ledgers import GeneralLedger, GeneralLedgerEntry, PurchaseLedger, PurchaseLedgerEntry, SalesLedger, SalesLedgerEntry, InventoryLedger, InventoryLedgerEntry
 from datetime import date
 from decimal import Decimal
+from crud import app_config as crud_app_config
 
 def get_profit_and_loss(db: Session, start_date: date, end_date: date, tenant_id: int) -> ProfitAndLoss:
     # 1. Calculate Revenue
@@ -96,3 +98,195 @@ def get_balance_sheet(db: Session, as_of_date: date, tenant_id: int) -> BalanceS
     equity = total_assets - total_liabilities
 
     return BalanceSheet(assets=assets, liabilities=liabilities, equity=equity)
+
+def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id: str) -> GeneralLedger:
+    financial_config = crud_app_config.get_financial_config(db, tenant_id)
+    opening_balance = financial_config['general_ledger_opening_balance']
+
+    sales_payments_query = db.query(sales_payments.SalesPayment).filter(
+        sales_payments.SalesPayment.tenant_id == tenant_id,
+        sales_payments.SalesPayment.payment_date >= start_date,
+        sales_payments.SalesPayment.payment_date <= end_date
+    ).all()
+
+    purchase_payments_query = db.query(payments.Payment).filter(
+        payments.Payment.tenant_id == tenant_id,
+        payments.Payment.payment_date >= start_date,
+        payments.Payment.payment_date <= end_date
+    ).all()
+
+    transactions = []
+    for sp in sales_payments_query:
+        transactions.append({
+            "date": sp.payment_date,
+            "description": f"Payment from Customer for SO-{sp.sales_order_id}",
+            "journal_ref_id": f"SP-{sp.id}",
+            "debit": 0.0,
+            "credit": float(sp.amount_paid)
+        })
+
+    for pp in purchase_payments_query:
+        transactions.append({
+            "date": pp.payment_date,
+            "description": f"Payment to Vendor for PO-{pp.purchase_order_id}",
+            "journal_ref_id": f"PP-{pp.id}",
+            "debit": float(pp.amount_paid),
+            "credit": 0.0
+        })
+
+    transactions.sort(key=lambda x: x['date'])
+
+    balance = opening_balance
+    entries = []
+    for t in transactions:
+        balance += t['credit'] - t['debit']
+        entries.append(GeneralLedgerEntry(**t, balance=balance))
+
+    return GeneralLedger(
+        title="General Ledger (Cash Account)",
+        opening_balance=opening_balance,
+        entries=entries,
+        closing_balance=balance
+    )
+
+def get_purchase_ledger(db: Session, vendor_id: int, tenant_id: str) -> PurchaseLedger:
+    vendor = db.query(business_partners.BusinessPartner).filter(business_partners.BusinessPartner.id == vendor_id, business_partners.BusinessPartner.tenant_id == tenant_id).first()
+    
+    purchase_orders_query = db.query(purchase_orders.PurchaseOrder).filter(
+        purchase_orders.PurchaseOrder.vendor_id == vendor_id,
+        purchase_orders.PurchaseOrder.tenant_id == tenant_id
+    ).all()
+
+    entries = []
+    for po in purchase_orders_query:
+        amount_paid = sum(p.amount_paid for p in po.payments)
+        balance_amount = po.total_amount - amount_paid
+        entries.append(PurchaseLedgerEntry(
+            date=po.order_date,
+            vendor_name=vendor.name,
+            invoice_number=f"PO-{po.po_number}",
+            description=po.notes,
+            amount=float(po.total_amount),
+            amount_paid=float(amount_paid),
+            balance_amount=float(balance_amount),
+            payment_status=po.status.value
+        ))
+
+    return PurchaseLedger(
+        title=f"Purchase Ledger for {vendor.name}",
+        vendor_id=vendor_id,
+        entries=entries
+    )
+
+def get_sales_ledger(db: Session, customer_id: int, tenant_id: str) -> SalesLedger:
+    customer = db.query(business_partners.BusinessPartner).filter(business_partners.BusinessPartner.id == customer_id, business_partners.BusinessPartner.tenant_id == tenant_id).first()
+
+    sales_orders_query = db.query(sales_orders.SalesOrder).filter(
+        sales_orders.SalesOrder.customer_id == customer_id,
+        sales_orders.SalesOrder.tenant_id == tenant_id
+    ).all()
+
+    entries = []
+    for so in sales_orders_query:
+        amount_paid = sum(p.amount_paid for p in so.payments)
+        balance_amount = so.total_amount - amount_paid
+        entries.append(SalesLedgerEntry(
+            date=so.order_date,
+            customer_name=customer.name,
+            invoice_number=f"SO-{so.so_number}",
+            description=so.notes,
+            amount=float(so.total_amount),
+            amount_paid=float(amount_paid),
+            balance_amount=float(balance_amount),
+            payment_status=so.status.value
+        ))
+
+    return SalesLedger(
+        title=f"Sales Ledger for {customer.name}",
+        customer_id=customer_id,
+        entries=entries
+    )
+
+def get_inventory_ledger(db: Session, item_id: int, start_date: date, end_date: date, tenant_id: str) -> InventoryLedger:
+    item = db.query(inventory_items.InventoryItem).filter(inventory_items.InventoryItem.id == item_id, inventory_items.InventoryItem.tenant_id == tenant_id).first()
+
+    # Calculate opening quantity
+    purchases_before = db.query(func.sum(purchase_order_items.PurchaseOrderItem.quantity)).join(purchase_orders.PurchaseOrder).filter(
+        purchase_order_items.PurchaseOrderItem.item_id == item_id,
+        purchase_orders.PurchaseOrder.tenant_id == tenant_id,
+        purchase_orders.PurchaseOrder.order_date < start_date
+    ).scalar() or 0.0
+
+    sales_before = db.query(func.sum(sales_order_items.SalesOrderItem.quantity)).join(sales_orders.SalesOrder).filter(
+        sales_order_items.SalesOrderItem.item_id == item_id,
+        sales_orders.SalesOrder.tenant_id == tenant_id,
+        sales_orders.SalesOrder.order_date < start_date
+    ).scalar() or 0.0
+
+    opening_quantity = float(purchases_before) - float(sales_before)
+
+    # Get transactions within the date range
+    purchase_items = db.query(purchase_order_items.PurchaseOrderItem).join(purchase_orders.PurchaseOrder).filter(
+        purchase_order_items.PurchaseOrderItem.item_id == item_id,
+        purchase_orders.PurchaseOrder.tenant_id == tenant_id,
+        purchase_orders.PurchaseOrder.order_date >= start_date,
+        purchase_orders.PurchaseOrder.order_date <= end_date
+    ).all()
+
+    sales_items = db.query(sales_order_items.SalesOrderItem).join(sales_orders.SalesOrder).filter(
+        sales_order_items.SalesOrderItem.item_id == item_id,
+        sales_orders.SalesOrder.tenant_id == tenant_id,
+        sales_orders.SalesOrder.order_date >= start_date,
+        sales_orders.SalesOrder.order_date <= end_date
+    ).all()
+
+    transactions = []
+    for pi in purchase_items:
+        transactions.append({
+            "date": pi.purchase_order.order_date,
+            "type": "purchase",
+            "reference": f"PO-{pi.purchase_order.po_number}",
+            "quantity_received": float(pi.quantity),
+            "unit_cost": float(pi.unit_price),
+            "total_cost": float(pi.quantity * pi.unit_price),
+            "quantity_sold": 0.0
+        })
+
+    for si in sales_items:
+        transactions.append({
+            "date": si.sales_order.order_date,
+            "type": "sale",
+            "reference": f"SO-{si.sales_order.so_number}",
+            "quantity_received": 0.0,
+            "unit_cost": 0.0,
+            "total_cost": 0.0,
+            "quantity_sold": float(si.quantity)
+        })
+
+    transactions.sort(key=lambda x: x['date'])
+
+    quantity_on_hand = opening_quantity
+    entries = []
+    for t in transactions:
+        if t['type'] == 'purchase':
+            quantity_on_hand += t['quantity_received']
+        else:
+            quantity_on_hand -= t['quantity_sold']
+        
+        entries.append(InventoryLedgerEntry(
+            date=t['date'],
+            reference=t['reference'],
+            quantity_received=t.get('quantity_received'),
+            unit_cost=t.get('unit_cost'),
+            total_cost=t.get('total_cost'),
+            quantity_sold=t.get('quantity_sold'),
+            quantity_on_hand=quantity_on_hand
+        ))
+
+    return InventoryLedger(
+        title=f"Inventory Ledger for {item.name}",
+        item_id=item_id,
+        opening_quantity=opening_quantity,
+        entries=entries,
+        closing_quantity_on_hand=quantity_on_hand
+    )

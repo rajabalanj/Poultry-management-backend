@@ -32,6 +32,7 @@ def update_operational_expense(db: Session, expense_id: int, expense: schemas.Op
         old_values = sqlalchemy_to_dict(db_expense)
         for key, value in expense.model_dump().items():
             setattr(db_expense, key, value)
+        db_expense.updated_at = datetime.datetime.now(pytz.timezone('Asia/Kolkata'))
         db_expense.updated_by = user_id
         new_values = sqlalchemy_to_dict(db_expense)
         log_entry = AuditLogCreate(

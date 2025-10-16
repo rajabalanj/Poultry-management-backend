@@ -4,8 +4,7 @@ from typing import List
 import logging
 import os
 import uuid
-from utils.auth_utils import get_current_user
-from utils.auth_utils import get_user_identifier
+from utils.auth_utils import get_current_user, get_user_identifier, require_group
 from utils.tenancy import get_tenant_id
 from datetime import datetime
 import pytz
@@ -30,7 +29,7 @@ logger = logging.getLogger("sales_payments")
 def create_sales_payment(
     payment: SalesPaymentCreate,
     db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_group(["admin", "payment-group"])),
     tenant_id: str = Depends(get_tenant_id)
 ):
     """Record a new payment for a sales order."""
@@ -63,6 +62,8 @@ def create_sales_payment(
             db_so.status = SalesOrderStatus.PARTIALLY_PAID
             logger.info(f"SO {db_so.id} status updated to 'PARTIALLY_PAID'.")
     
+    db_so.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
+    db_so.updated_by = get_user_identifier(user)
     db.commit()
     db.refresh(db_payment)
 
@@ -92,7 +93,7 @@ def update_sales_payment(
     payment_id: int,
     payment_update: SalesPaymentUpdate,
     db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_group(["admin", "payment-group"])),
     tenant_id: str = Depends(get_tenant_id)
 ):
     """Update an existing sales payment."""
@@ -107,6 +108,7 @@ def update_sales_payment(
     for key, value in payment_data.items():
         setattr(db_payment, key, value)
     
+    db_payment.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
     db_payment.updated_by = get_user_identifier(user)
     
     new_values = sqlalchemy_to_dict(db_payment)
@@ -135,6 +137,8 @@ def update_sales_payment(
         else:
             db_so.status = SalesOrderStatus.DRAFT
 
+        db_so.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
+        db_so.updated_by = get_user_identifier(user)
         db.commit()
         db.refresh(db_so)
 
@@ -145,7 +149,7 @@ def update_sales_payment(
 def delete_sales_payment(
     payment_id: int,
     db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_group(["admin", "payment-group"])),
     tenant_id: str = Depends(get_tenant_id)
 ):
     """Delete a sales payment."""
@@ -181,6 +185,8 @@ def delete_sales_payment(
         else:
             db_so.status = SalesOrderStatus.DRAFT
 
+        db_so.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
+        db_so.updated_by = get_user_identifier(user)
         db.commit()
 
     logger.info(f"Sales Payment ID {payment_id} deleted for Sales Order ID {db_payment.sales_order_id}  by user {get_user_identifier(user)} for tenant {tenant_id}")
@@ -191,6 +197,7 @@ def upload_payment_receipt(
     payment_id: int,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    user: dict = Depends(require_group(["admin", "payment-group"])),
     tenant_id: str = Depends(get_tenant_id)
 ):
     """Upload payment receipt for a sales payment."""
@@ -213,10 +220,11 @@ def upload_payment_receipt(
     
     if os.getenv('AWS_ENVIRONMENT') and upload_receipt_to_s3:
         try:
-            s3_url = upload_receipt_to_s3(content, file.filename, payment_id, tenant_id)
+            s3_url = upload_receipt_to_s3(content, file.filename, payment_id)
             db_payment.payment_receipt = s3_url
-        except Exception:
-            raise HTTPException(status_code=500, detail="Failed to upload to S3")
+        except Exception as e:
+            logger.exception(f"S3 upload failed for payment {payment_id}: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to upload to S3: {str(e)}")
     else:
         with open(file_path, "wb") as buffer:
             buffer.write(content)

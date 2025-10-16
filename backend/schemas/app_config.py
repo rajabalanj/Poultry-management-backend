@@ -19,3 +19,6 @@ class AppConfigOut(AppConfigBase):
 
     class Config:
         from_attributes = True
+
+class FinancialConfig(BaseModel):
+    general_ledger_opening_balance: Optional[float] = None

@@ -4,7 +4,7 @@ from typing import List, Optional
 import logging
 
 from database import get_db
-from schemas.app_config import AppConfigCreate, AppConfigUpdate, AppConfigOut
+from schemas.app_config import AppConfigCreate, AppConfigUpdate, AppConfigOut, FinancialConfig
 from crud import app_config as crud_app_config
 from models.app_config import AppConfig as AppConfigModel
 from utils.auth_utils import get_current_user, get_user_identifier, require_group
@@ -14,7 +14,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 @router.post("/configurations/", response_model=AppConfigOut)
-def create_config(config: AppConfigCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user), tenant_id: str = Depends(get_tenant_id)):
+def create_config(config: AppConfigCreate, db: Session = Depends(get_db), user: dict = Depends(require_group(["admin"])), tenant_id: str = Depends(get_tenant_id)):
     return crud_app_config.create_config(db, config, tenant_id, user_id=get_user_identifier(user))
 
 
@@ -25,12 +25,22 @@ def get_configs(name: Optional[str] = None, db: Session = Depends(get_db), tenan
     return [configs] if name and configs else configs or []
 
 @router.patch("/configurations/{name}/", response_model=AppConfigOut)
-def update_config(name: str, config: AppConfigUpdate, db: Session = Depends(get_db), user: dict = Depends(get_current_user), tenant_id: str = Depends(get_tenant_id)):
+def update_config(name: str, config: AppConfigUpdate, db: Session = Depends(get_db), user: dict = Depends(require_group(["admin"])), tenant_id: str = Depends(get_tenant_id)):
     user_id = get_user_identifier(user)
     updated = crud_app_config.update_config_by_name(db, name, config, tenant_id, user_id)
     if not updated:
         raise HTTPException(status_code=404, detail="Configuration not found")
     return updated
+
+@router.get("/configurations/financial", response_model=FinancialConfig)
+def get_financial_config_endpoint(db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
+    return crud_app_config.get_financial_config(db, tenant_id)
+
+@router.patch("/configurations/financial", response_model=FinancialConfig)
+def update_financial_config_endpoint(config: FinancialConfig, db: Session = Depends(get_db), user: dict = Depends(require_group(["admin"])), tenant_id: str = Depends(get_tenant_id)):
+    user_id = get_user_identifier(user)
+    updated_configs = crud_app_config.update_financial_config(db, config.model_dump(), tenant_id, user_id)
+    return updated_configs
 
 
 DEFAULT_CONFIGS = [

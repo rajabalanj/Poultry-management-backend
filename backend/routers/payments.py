@@ -4,7 +4,7 @@ from typing import List
 import logging
 import os
 import uuid
-from utils.auth_utils import get_current_user, get_user_identifier
+from utils.auth_utils import get_current_user, get_user_identifier, require_group
 from utils.tenancy import get_tenant_id
 from crud.audit_log import create_audit_log
 from schemas.audit_log import AuditLogCreate
@@ -29,7 +29,7 @@ logger = logging.getLogger("payments")
 def create_payment(
     payment: PaymentCreate,
     db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_group(["admin", "payment-group"])),
     tenant_id: str = Depends(get_tenant_id)
 ):
     """Record a new payment for a purchase order."""
@@ -92,7 +92,7 @@ def update_payment(
     payment_id: int,
     payment_update: PaymentUpdate,
     db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_group(["admin", "payment-group"])),
     tenant_id: str = Depends(get_tenant_id)
 ):
     """Update an existing payment."""
@@ -107,6 +107,7 @@ def update_payment(
     for key, value in payment_data.items():
         setattr(db_payment, key, value)
     
+    db_payment.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
     db_payment.updated_by = get_user_identifier(user)
     
     new_values = sqlalchemy_to_dict(db_payment)
@@ -145,7 +146,7 @@ def update_payment(
 def delete_payment(
     payment_id: int,
     db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_group(["admin", "payment-group"])),
     tenant_id: str = Depends(get_tenant_id)
 ):
     """Delete a payment."""
@@ -191,7 +192,7 @@ def upload_payment_receipt(
     payment_id: int,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_group(["admin", "payment-group"])),
     tenant_id: str = Depends(get_tenant_id)
 ):
     """Upload payment receipt for a payment."""
@@ -216,16 +217,50 @@ def upload_payment_receipt(
     # Read and save file
     content = file.file.read()
     
-    if os.getenv('AWS_ENVIRONMENT') and upload_receipt_to_s3:
-        try:
-            s3_url = upload_receipt_to_s3(content, file.filename, payment_id, tenant_id)
-            db_payment.payment_receipt = s3_url
-        except Exception:
-            raise HTTPException(status_code=500, detail="Failed to upload to S3")
-    else:
-        with open(file_path, "wb") as buffer:
-            buffer.write(content)
-        db_payment.payment_receipt = file_path
+    # Log useful debug info for diagnosing upload issues
+    try:
+        logger.info(f"Uploading receipt for payment_id={payment_id}, tenant={tenant_id}, filename={file.filename}, content_type={file.content_type}")
+        logger.debug(f"ENV AWS_ENVIRONMENT={os.getenv('AWS_ENVIRONMENT')}, S3_BUCKET_NAME={os.getenv('S3_BUCKET_NAME')}")
+        logger.debug(f"File size (bytes): {len(content)}")
+
+        if os.getenv('AWS_ENVIRONMENT') and upload_receipt_to_s3:
+            try:
+                s3_url = upload_receipt_to_s3(content, file.filename, payment_id)
+                db_payment.payment_receipt = s3_url
+                logger.info(f"S3 upload succeeded for payment_id={payment_id}, s3_url={s3_url}")
+            except Exception as e:
+                # Log full stacktrace for debugging
+                logger.exception(f"S3 upload failed for payment_id {payment_id}: {e}")
+                # Fallback: save file locally so it can be inspected
+                fallback_dir = os.path.join("uploads", "payment_receipts", tenant_id, "failed_s3_uploads")
+                os.makedirs(fallback_dir, exist_ok=True)
+                fallback_filename = f"failed_s3_payment_{payment_id}_{uuid.uuid4().hex}.{file_extension}"
+                fallback_path = os.path.join(fallback_dir, fallback_filename)
+                try:
+                    with open(fallback_path, "wb") as fb:
+                        fb.write(content)
+                    db_payment.payment_receipt = fallback_path
+                    logger.error(f"Saved fallback receipt to {fallback_path} for payment_id={payment_id}")
+                except Exception as write_exc:
+                    logger.exception(f"Failed to write fallback receipt for payment_id={payment_id}: {write_exc}")
+                    # If we can't save fallback, raise detailed error to caller
+                    raise HTTPException(status_code=500, detail=f"S3 upload failed and fallback save failed: {write_exc}")
+        else:
+            # Not configured for S3: save locally
+            with open(file_path, "wb") as buffer:
+                buffer.write(content)
+            db_payment.payment_receipt = file_path
+
+    except HTTPException:
+        # Re-raise HTTPExceptions raised above
+        raise
+    except Exception as outer_exc:
+        logger.exception(f"Unexpected error during receipt upload for payment_id={payment_id}: {outer_exc}")
+        raise HTTPException(status_code=500, detail="Unexpected error during receipt upload")
+    # else:
+    #     with open(file_path, "wb") as buffer:
+    #         buffer.write(content)
+    #     db_payment.payment_receipt = file_path
     
     db.commit()
     return {"message": "Receipt uploaded successfully", "file_path": db_payment.payment_receipt}
