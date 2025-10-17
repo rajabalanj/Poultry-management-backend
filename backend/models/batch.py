@@ -36,3 +36,12 @@ class Batch(Base, TimestampMixin):
             return 'Grower'
         elif float(self.age) > 18:
             return 'Layer'
+
+    @batch_type.expression
+    def batch_type(cls):
+        from sqlalchemy import cast, Float, case
+        return case(
+            (cast(cls.age, Float) < 16, 'Chick'),
+            (cast(cls.age, Float) <= 18, 'Grower'),
+            else_='Layer'
+        )

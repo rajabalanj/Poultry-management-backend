@@ -9,7 +9,7 @@ from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 from database import get_db
 from fastapi.responses import JSONResponse
-from sqlalchemy import and_
+from sqlalchemy import and_, func, Float
 import models
 from models.batch import Batch
 from utils.tenancy import get_tenant_id
@@ -347,44 +347,137 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
 
     else:
         # No batch_id provided, so we consolidate.
-        all_daily_batches = query.order_by(DailyBatch.batch_id, DailyBatch.batch_date.asc()).all()
         
-        # First, calculate the grand summary over all batches
-        summary_data = _calculate_summary(all_daily_batches, start_date_obj, end_date_obj, is_single_batch=False)
+        # Subquery to get the first opening count for each batch in the date range
+        first_opening_sq = (
+            db.query(
+                DailyBatch.batch_id,
+                DailyBatch.opening_count.label("first_opening_count")
+            )
+            .filter(
+                DailyBatch.batch_date >= start_date_obj,
+                DailyBatch.batch_date <= end_date_obj,
+                DailyBatch.tenant_id == tenant_id
+            )
+            .order_by(DailyBatch.batch_id, DailyBatch.batch_date.asc())
+            .distinct(DailyBatch.batch_id)
+            .subquery('first_opening_sq')
+        )
 
-        if summary_data:
-            total_actual_feed_consumed = sum(record.feed_in_kg for record in all_daily_batches if record.feed_in_kg is not None)
-            total_standard_feed_consumption = sum(record.standard_feed_in_kg * record.opening_count for record in all_daily_batches if record.standard_feed_in_kg is not None and record.opening_count is not None)
-            
-            summary_data["actual_feed_consumed"] = total_actual_feed_consumed
-            summary_data["standard_feed_consumption"] = total_standard_feed_consumption
-
-        # Group batches by batch_id for detailed consolidation
-        from itertools import groupby
+        # Subquery to get the last closing count for each batch in the date range
+        last_closing_sq = (
+            db.query(
+                DailyBatch.batch_id,
+                DailyBatch.closing_count.label("last_closing_count")
+            )
+            .filter(
+                DailyBatch.batch_date >= start_date_obj,
+                DailyBatch.batch_date <= end_date_obj,
+                DailyBatch.tenant_id == tenant_id
+            )
+            .order_by(DailyBatch.batch_id, DailyBatch.batch_date.desc())
+            .distinct(DailyBatch.batch_id)
+            .subquery('last_closing_sq')
+        )
         
-        grouped_batches = groupby(all_daily_batches, key=lambda b: b.batch_id)
+        # Subquery to get the last batch type for each batch in the date range
+        last_batch_type_sq = (
+            db.query(
+                DailyBatch.batch_id,
+                DailyBatch.batch_type.label("last_batch_type")
+            )
+            .filter(
+                DailyBatch.batch_date >= start_date_obj,
+                DailyBatch.batch_date <= end_date_obj,
+                DailyBatch.tenant_id == tenant_id
+            )
+            .order_by(DailyBatch.batch_id, DailyBatch.batch_date.desc())
+            .distinct(DailyBatch.batch_id)
+            .subquery('last_batch_type_sq')
+        )
 
-        for b_id, group in grouped_batches:
-            batch_records = list(group)
-            # Calculate a summary for this specific batch's records
-            batch_summary = _calculate_summary(batch_records, batch_records[0].batch_date, batch_records[-1].batch_date, is_single_batch=True)
-            
-            if batch_summary:
-                # Calculate feed consumption for the batch
-                total_actual_feed_consumed = sum(record.feed_in_kg for record in batch_records if record.feed_in_kg is not None)
-                total_standard_feed_consumption = sum(record.standard_feed_in_kg * record.opening_count for record in batch_records if record.standard_feed_in_kg is not None and record.opening_count is not None)
-                
-                batch_summary["actual_feed_consumed"] = total_actual_feed_consumed
-                batch_summary["standard_feed_consumption"] = total_standard_feed_consumption
-                # Add batch-specific info to the summary
-                batch_summary["batch_id"] = b_id
-                batch_summary["batch_no"] = batch_records[0].batch_no
-                batch_summary["shed_no"] = batch_records[0].shed_no
-                # Use the batch_type from the last record in the date range for this batch
-                batch_summary["batch_type"] = batch_records[-1].batch_type
-                detailed_result.append(batch_summary)
+        # Main aggregation query
+        consolidation_query = (
+            db.query(
+                DailyBatch.batch_id,
+                DailyBatch.batch_no,
+                DailyBatch.shed_no,
+                func.sum(DailyBatch.mortality).label("total_mortality"),
+                func.sum(DailyBatch.culls).label("total_culls"),
+                func.sum(DailyBatch.table_eggs).label("total_table_eggs"),
+                func.sum(DailyBatch.jumbo).label("total_jumbo"),
+                func.sum(DailyBatch.cr).label("total_cr"),
+                func.sum(DailyBatch.total_eggs).label("total_eggs"),
+                func.avg(DailyBatch.hd).label("avg_hd"),
+                func.avg(DailyBatch.standard_hen_day_percentage).label("avg_standard_hd"),
+                func.max(db.cast(DailyBatch.age, Float)).label("highest_age"),
+                func.sum(DailyBatch.feed_in_kg).label("actual_feed_consumed"),
+                func.sum(DailyBatch.standard_feed_in_kg * DailyBatch.opening_count).label("standard_feed_consumption"),
+                first_opening_sq.c.first_opening_count,
+                last_closing_sq.c.last_closing_count,
+                last_batch_type_sq.c.last_batch_type
+            )
+            .join(Batch).filter(
+                DailyBatch.batch_date >= start_date_obj,
+                DailyBatch.batch_date <= end_date_obj,
+                Batch.is_active == True,
+                Batch.tenant_id == tenant_id
+            )
+            .join(first_opening_sq, DailyBatch.batch_id == first_opening_sq.c.batch_id)
+            .join(last_closing_sq, DailyBatch.batch_id == last_closing_sq.c.batch_id)
+            .join(last_batch_type_sq, DailyBatch.batch_id == last_batch_type_sq.c.batch_id)
+            .group_by(
+                DailyBatch.batch_id,
+                DailyBatch.batch_no,
+                DailyBatch.shed_no,
+                first_opening_sq.c.first_opening_count,
+                last_closing_sq.c.last_closing_count,
+                last_batch_type_sq.c.last_batch_type
+            )
+            .order_by(DailyBatch.batch_no)
+        )
+        
+        results = consolidation_query.all()
 
-        detailed_result.sort(key=lambda x: x.get('batch_no', ''))
+        detailed_result = [
+            {
+                "batch_id": r.batch_id,
+                "batch_no": r.batch_no,
+                "shed_no": r.shed_no,
+                "opening_count": r.first_opening_count,
+                "mortality": r.total_mortality,
+                "culls": r.total_culls,
+                "closing_count": r.last_closing_count,
+                "table_eggs": r.total_table_eggs,
+                "jumbo": r.total_jumbo,
+                "cr": r.total_cr,
+                "total_eggs": r.total_eggs,
+                "hd": round(r.avg_hd, 4) if r.avg_hd else 0,
+                "standard_hen_day_percentage": round(r.avg_standard_hd, 4) if r.avg_standard_hd else 0,
+                "highest_age": round(r.highest_age, 1) if r.highest_age else 0,
+                "batch_type": r.last_batch_type,
+                "actual_feed_consumed": r.actual_feed_consumed,
+                "standard_feed_consumption": r.standard_feed_consumption,
+            }
+            for r in results
+        ]
+
+        if detailed_result:
+            summary_data = {
+                "opening_count": sum(r['opening_count'] for r in detailed_result),
+                "mortality": sum(r['mortality'] for r in detailed_result),
+                "culls": sum(r['culls'] for r in detailed_result),
+                "closing_count": sum(r['closing_count'] for r in detailed_result),
+                "table_eggs": sum(r['table_eggs'] for r in detailed_result),
+                "jumbo": sum(r['jumbo'] for r in detailed_result),
+                "cr": sum(r['cr'] for r in detailed_result),
+                "total_eggs": sum(r['total_eggs'] for r in detailed_result),
+                "hd": round(sum(r['hd'] for r in detailed_result) / len(detailed_result), 4),
+                "standard_hen_day_percentage": round(sum(r['standard_hen_day_percentage'] for r in detailed_result) / len(detailed_result), 4),
+                "highest_age": max(r['highest_age'] for r in detailed_result),
+                "actual_feed_consumed": sum(r['actual_feed_consumed'] for r in detailed_result),
+                "standard_feed_consumption": sum(r['standard_feed_consumption'] for r in detailed_result),
+            }
 
     response_content = {
         "details": detailed_result,
