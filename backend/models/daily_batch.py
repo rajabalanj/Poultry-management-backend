@@ -137,51 +137,12 @@ class DailyBatch(Base, TimestampMixin):
         ).all()
 
         for usage in usages:
-            for item_in_comp in usage.composition_items:
-                item = session.query(InventoryItem).filter(InventoryItem.id == item_in_comp['inventory_item_id']).first()
-                if item and item.category == 'Feed':
-                    total_feed_kg += Decimal(str(item_in_comp['weight'])) * Decimal(usage.times)
+            for item_in_comp in usage.items:
+                if item_in_comp.item_category == 'Feed':
+                    total_feed_kg += Decimal(str(item_in_comp.weight)) * Decimal(usage.times)
 
         return float(total_feed_kg * 1000)
 
-    @feed_in_grams.expression
-    def feed_in_grams(cls):
-        from sqlalchemy import select, func, cast, Date, JSON, Float, Integer
-        from sqlalchemy.dialects.postgresql import JSONB
-        from models.composition_usage_history import CompositionUsageHistory
-        from models.inventory_items import InventoryItem
-
-        # This is a complex subquery that calculates the total feed in grams for a daily batch.
-        # It is specific to PostgreSQL as it uses JSONB functions.
-        
-        # 1. Unnest the composition_items array of objects
-        composition_items_cte = select(
-            CompositionUsageHistory.id.label("usage_id"),
-            (func.jsonb_array_elements(CompositionUsageHistory.composition_items)).label("item_data")
-        ).where(
-            CompositionUsageHistory.batch_id == cls.batch_id,
-            cast(CompositionUsageHistory.used_at, Date) == cast(cls.batch_date, Date)
-        ).cte("composition_items_cte")
-
-        # 2. Join with InventoryItem to filter by category 'Feed'
-        # and calculate the weight for each item
-        feed_items_cte = select(
-            composition_items_cte.c.usage_id,
-            (cast(composition_items_cte.c.item_data['weight'], Float) *
-             select(CompositionUsageHistory.times).where(CompositionUsageHistory.id == composition_items_cte.c.usage_id).scalar_subquery()).label("total_weight_kg")
-        ).select_from(composition_items_cte).join(
-            InventoryItem,
-            cast(composition_items_cte.c.item_data['inventory_item_id'], Integer) == InventoryItem.id
-        ).where(
-            InventoryItem.category == 'Feed'
-        ).cte("feed_items_cte")
-
-        # 3. Sum the weights and convert to grams
-        total_feed_kg_subquery = select(
-            func.sum(feed_items_cte.c.total_weight_kg)
-        ).select_from(feed_items_cte).scalar_subquery()
-
-        return func.coalesce(total_feed_kg_subquery * 1000, 0)
 
     @hybrid_property
     def feed_in_kg(self):

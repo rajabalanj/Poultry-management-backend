@@ -26,10 +26,10 @@ def get_profit_and_loss(db: Session, start_date: date, end_date: date, tenant_id
     # This loop performs N+1 queries. Consider optimizing if performance becomes an issue.
     for usage in composition_usages:
         usage_cost = Decimal(0)
-        for item in usage.composition_items:
-            inventory_item = db.query(inventory_items.InventoryItem).get(item['inventory_item_id'])
+        for item in usage.items:
+            inventory_item = db.query(inventory_items.InventoryItem).get(item.inventory_item_id)
             if inventory_item:
-                usage_cost += Decimal(item['weight']) * inventory_item.average_cost
+                usage_cost += Decimal(item.weight) * inventory_item.average_cost
         cogs += usage_cost * usage.times
 
     # 3. Calculate Gross Profit

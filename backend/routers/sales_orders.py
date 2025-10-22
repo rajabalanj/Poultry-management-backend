@@ -34,6 +34,7 @@ from schemas.sales_orders import (
     SalesOrderUpdate
 )
 from schemas.sales_order_items import SalesOrderItemCreateRequest, SalesOrderItemUpdate
+from schemas.egg_room_reports import EggRoomReportCreate
 
 router = APIRouter(prefix="/sales-orders", tags=["Sales Orders"])
 logger = logging.getLogger("sales_orders")
@@ -188,9 +189,20 @@ EGG_ITEM_NAMES = ["Table Egg", "Jumbo Egg", "Grade C Egg"]
 
 def _get_available_egg_stock(db: Session, tenant_id: str, order_date: date, egg_type: str) -> float:
     logger.info(f"Checking available stock for {egg_type} on {order_date} for tenant {tenant_id}")
+    
+    # First, try to get the report for the exact date
     egg_room_report = crud_egg_room_reports.get_report_by_date(db, order_date.isoformat(), tenant_id)
+    
+    # If no report is found for the exact date, get the most recent one before it
     if not egg_room_report:
-        logger.warning(f"No EggRoomReport found for {order_date} for tenant {tenant_id}. Returning 0.0 available stock.")
+        logger.warning(f"No EggRoomReport found for {order_date}. Trying to find the most recent report before this date.")
+        egg_room_report = db.query(EggRoomReportModel).filter(
+            EggRoomReportModel.report_date < order_date,
+            EggRoomReportModel.tenant_id == tenant_id
+        ).order_by(EggRoomReportModel.report_date.desc()).first()
+
+    if not egg_room_report:
+        logger.warning(f"No EggRoomReport found for or before {order_date} for tenant {tenant_id}. Returning 0.0 available stock.")
         return 0.0
 
     available_stock = Decimal("0.0")
@@ -312,7 +324,14 @@ def update_sales_order(
                 EggRoomReportModel.tenant_id == tenant_id
             ).first()
             if not new_egg_room_report:
-                raise HTTPException(status_code=400, detail=f"Egg room report for date {new_order_date} not found. Please create the report for this date first.")
+                logger.info(f"No egg room report found for {new_order_date}, creating one.")
+                report_create = EggRoomReportCreate(report_date=new_order_date)
+                new_egg_room_report = crud_egg_room_reports.create_report(
+                    db=db, 
+                    report=report_create, 
+                    tenant_id=tenant_id, 
+                    user_id=get_user_identifier(user)
+                )
             
             new_egg_room_report.table_transfer += egg_items_by_type["Table Egg"]
             new_egg_room_report.jumbo_transfer += egg_items_by_type["Jumbo Egg"]

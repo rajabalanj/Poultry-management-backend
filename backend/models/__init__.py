@@ -2,6 +2,7 @@ from models.batch import Batch
 from models.daily_batch import DailyBatch
 from models.composition import Composition
 from models.composition_usage_history import CompositionUsageHistory
+from models.composition_usage_item import CompositionUsageItem
 from models.egg_room_reports import EggRoomReport
 from models.bovanswhitelayerperformance import BovansWhiteLayerPerformance
 from models.app_config import AppConfig
@@ -19,4 +20,4 @@ from models.inventory_item_usage_history import InventoryItemUsageHistory
 from models.operational_expenses import OperationalExpense
 from models.audit_log import AuditLog
 
-__all__ = ['AppConfig', 'Batch', 'BovansWhiteLayerPerformance', 'CompositionUsageHistory', 'Composition', 'DailyBatch', 'EggRoomReport', 'Payment', 'PurchaseOrder', 'PurchaseOrderItem', 'InventoryItem', 'SalesOrderItem', 'SalesOrder', 'SalesPayment', 'BusinessPartner', 'InventoryItemAudit', 'InventoryItemInComposition', 'InventoryItemUsageHistory', 'OperationalExpense', 'AuditLog']
+__all__ = ['AppConfig', 'Batch', 'BovansWhiteLayerPerformance', 'CompositionUsageHistory', 'CompositionUsageItem', 'Composition', 'DailyBatch', 'EggRoomReport', 'Payment', 'PurchaseOrder', 'PurchaseOrderItem', 'InventoryItem', 'SalesOrderItem', 'SalesOrder', 'SalesPayment', 'BusinessPartner', 'InventoryItemAudit', 'InventoryItemInComposition', 'InventoryItemUsageHistory', 'OperationalExpense', 'AuditLog']

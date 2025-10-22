@@ -9,11 +9,19 @@ from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 from database import get_db
 from fastapi.responses import JSONResponse
-from sqlalchemy import and_, func, Float
+from sqlalchemy import and_, func, Float, cast
 import models
 from models.batch import Batch
 from utils.tenancy import get_tenant_id
 from models.bovanswhitelayerperformance import BovansWhiteLayerPerformance
+
+
+def _is_layer_age(age_str):
+    """Return True if age_str represents >= 18 (weeks). Age may be stored as string like '18.3'."""
+    try:
+        return float(age_str) >= 18
+    except (ValueError, TypeError):
+        return False
 
 def get_daily_batches_by_date_range(db: Session, start_date: date, end_date: date, tenant_id: str):
     return db.query(models.DailyBatch).filter(
@@ -310,20 +318,8 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
         daily_batches = query.order_by(DailyBatch.batch_date.asc()).all()
         summary_data = _calculate_summary(daily_batches, start_date_obj, end_date_obj, is_single_batch=True)
 
-        if summary_data:
-            total_actual_feed_consumed = sum(record.feed_in_kg for record in daily_batches if record.feed_in_kg is not None)
-            total_standard_feed_consumption = sum(record.standard_feed_in_kg * record.opening_count for record in daily_batches if record.standard_feed_in_kg is not None and record.opening_count is not None)
-            
-            summary_data["actual_feed_consumed"] = total_actual_feed_consumed
-            summary_data["standard_feed_consumption"] = total_standard_feed_consumption
-
         # For a single batch, the details are the daily records
         for batch in daily_batches:
-            actual_feed_consumed = batch.feed_in_kg
-            standard_feed_consumption = None
-            if batch.standard_feed_in_kg is not None and batch.opening_count is not None:
-                standard_feed_consumption = batch.standard_feed_in_kg * batch.opening_count
-
             detailed_result.append({
                 "batch_id": batch.batch_id,
                 "batch_no": batch.batch_no,
@@ -341,8 +337,6 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
                 "batch_type": batch.batch_type,
                 "hd": batch.hd,
                 "standard_hen_day_percentage": float(batch.standard_hen_day_percentage) if batch.standard_hen_day_percentage is not None else None,
-                "actual_feed_consumed": actual_feed_consumed,
-                "standard_feed_consumption": standard_feed_consumption,
             })
 
     else:
@@ -396,71 +390,77 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
             .subquery('last_batch_type_sq')
         )
 
-        # Main aggregation query
-        consolidation_query = (
-            db.query(
-                DailyBatch.batch_id,
-                DailyBatch.batch_no,
-                DailyBatch.shed_no,
-                func.sum(DailyBatch.mortality).label("total_mortality"),
-                func.sum(DailyBatch.culls).label("total_culls"),
-                func.sum(DailyBatch.table_eggs).label("total_table_eggs"),
-                func.sum(DailyBatch.jumbo).label("total_jumbo"),
-                func.sum(DailyBatch.cr).label("total_cr"),
-                func.sum(DailyBatch.total_eggs).label("total_eggs"),
-                func.avg(DailyBatch.hd).label("avg_hd"),
-                func.avg(DailyBatch.standard_hen_day_percentage).label("avg_standard_hd"),
-                func.max(db.cast(DailyBatch.age, Float)).label("highest_age"),
-                func.sum(DailyBatch.feed_in_kg).label("actual_feed_consumed"),
-                func.sum(DailyBatch.standard_feed_in_kg * DailyBatch.opening_count).label("standard_feed_consumption"),
-                first_opening_sq.c.first_opening_count,
-                last_closing_sq.c.last_closing_count,
-                last_batch_type_sq.c.last_batch_type
-            )
-            .join(Batch).filter(
+        # Fetch all daily rows for the tenant & date range and aggregate in Python
+        from collections import defaultdict
+
+        daily_rows = (
+            db.query(DailyBatch)
+            .select_from(DailyBatch)
+            .join(Batch, DailyBatch.batch_id == Batch.id)
+            .filter(
                 DailyBatch.batch_date >= start_date_obj,
                 DailyBatch.batch_date <= end_date_obj,
                 Batch.is_active == True,
-                Batch.tenant_id == tenant_id
+                Batch.tenant_id == tenant_id,
             )
-            .join(first_opening_sq, DailyBatch.batch_id == first_opening_sq.c.batch_id)
-            .join(last_closing_sq, DailyBatch.batch_id == last_closing_sq.c.batch_id)
-            .join(last_batch_type_sq, DailyBatch.batch_id == last_batch_type_sq.c.batch_id)
-            .group_by(
-                DailyBatch.batch_id,
-                DailyBatch.batch_no,
-                DailyBatch.shed_no,
-                first_opening_sq.c.first_opening_count,
-                last_closing_sq.c.last_closing_count,
-                last_batch_type_sq.c.last_batch_type
-            )
-            .order_by(DailyBatch.batch_no)
+            .order_by(DailyBatch.batch_id, DailyBatch.batch_date)
+            .all()
         )
-        
-        results = consolidation_query.all()
 
-        detailed_result = [
-            {
-                "batch_id": r.batch_id,
-                "batch_no": r.batch_no,
-                "shed_no": r.shed_no,
-                "opening_count": r.first_opening_count,
-                "mortality": r.total_mortality,
-                "culls": r.total_culls,
-                "closing_count": r.last_closing_count,
-                "table_eggs": r.total_table_eggs,
-                "jumbo": r.total_jumbo,
-                "cr": r.total_cr,
-                "total_eggs": r.total_eggs,
-                "hd": round(r.avg_hd, 4) if r.avg_hd else 0,
-                "standard_hen_day_percentage": round(r.avg_standard_hd, 4) if r.avg_standard_hd else 0,
-                "highest_age": round(r.highest_age, 1) if r.highest_age else 0,
-                "batch_type": r.last_batch_type,
-                "actual_feed_consumed": r.actual_feed_consumed,
-                "standard_feed_consumption": r.standard_feed_consumption,
-            }
-            for r in results
-        ]
+        groups = defaultdict(list)
+        for row in daily_rows:
+            groups[row.batch_id].append(row)
+
+        detailed_result = []
+        for batch_id, rows in groups.items():
+            # first and last records per batch in the date range (rows are ordered by date)
+            first = rows[0]
+            last = rows[-1]
+
+            total_mortality = sum(r.mortality or 0 for r in rows)
+            total_culls = sum(r.culls or 0 for r in rows)
+            total_table_eggs = sum(r.table_eggs or 0 for r in rows)
+            total_jumbo = sum(r.jumbo or 0 for r in rows)
+            total_cr = sum(r.cr or 0 for r in rows)
+            total_eggs = total_table_eggs + total_jumbo + total_cr
+
+            # hd average and standard hd average across layer days
+            layer_rows = [r for r in rows if _is_layer_age(r.age)]
+            if layer_rows:
+                hd_values = [r.hd for r in layer_rows if r.hd is not None]
+                avg_hd = sum(hd_values) / len(hd_values) if hd_values else 0
+                std_hd_values = [float(r.standard_hen_day_percentage) for r in layer_rows if r.standard_hen_day_percentage is not None]
+                avg_std_hd = sum(std_hd_values) / len(std_hd_values) if std_hd_values else 0
+            else:
+                avg_hd = 0
+                avg_std_hd = 0
+
+            highest_age = 0.0
+            for r in rows:
+                try:
+                    a = float(r.age)
+                    if a > highest_age:
+                        highest_age = a
+                except (ValueError, TypeError):
+                    continue
+
+            detailed_result.append({
+                "batch_id": batch_id,
+                "batch_no": first.batch_no,
+                "shed_no": first.shed_no,
+                "opening_count": first.opening_count,
+                "mortality": total_mortality,
+                "culls": total_culls,
+                "closing_count": last.closing_count,
+                "table_eggs": total_table_eggs,
+                "jumbo": total_jumbo,
+                "cr": total_cr,
+                "total_eggs": total_eggs,
+                "hd": round(avg_hd, 4),
+                "standard_hen_day_percentage": round(avg_std_hd, 4),
+                "highest_age": round(highest_age, 1),
+                "batch_type": last.batch_type,
+            })
 
         if detailed_result:
             summary_data = {
@@ -475,8 +475,6 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
                 "hd": round(sum(r['hd'] for r in detailed_result) / len(detailed_result), 4),
                 "standard_hen_day_percentage": round(sum(r['standard_hen_day_percentage'] for r in detailed_result) / len(detailed_result), 4),
                 "highest_age": max(r['highest_age'] for r in detailed_result),
-                "actual_feed_consumed": sum(r['actual_feed_consumed'] for r in detailed_result),
-                "standard_feed_consumption": sum(r['standard_feed_consumption'] for r in detailed_result),
             }
 
     response_content = {

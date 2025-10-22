@@ -1,22 +1,26 @@
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 from pydantic import BaseModel
 from datetime import datetime
+from .composition_usage_item import CompositionUsageItem
+
 
 class CompositionUsageHistoryBase(BaseModel):
     composition_id: int
     times: int
     used_at: datetime
-    batch_id: Optional[int] = None # New field to track the batch associated with the usage
+    batch_id: Optional[int] = None
     tenant_id: Optional[str] = None
-    # shed_no: str = None  # Optional field to track the shed number
+
 
 class CompositionUsageHistoryCreate(CompositionUsageHistoryBase):
     pass
 
+
 class CompositionUsageHistory(CompositionUsageHistoryBase):
     id: int
     composition_name: Optional[str] = None
-    composition_items: Optional[List[Dict[str, Any]]] = None
+    items: List[CompositionUsageItem] = []
     shed_no: Optional[str] = None
+
     class Config:
         from_attributes = True
