@@ -101,8 +101,32 @@ def get_balance_sheet(db: Session, as_of_date: date, tenant_id: int) -> BalanceS
 
 def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id: str) -> GeneralLedger:
     financial_config = crud_app_config.get_financial_config(db, tenant_id)
-    opening_balance = financial_config['general_ledger_opening_balance']
+    initial_opening_balance = financial_config['general_ledger_opening_balance']
 
+    # Get all transactions before the start date to calculate the report opening balance
+
+    prior_sales_payments = db.query(sales_payments.SalesPayment).filter(
+        sales_payments.SalesPayment.tenant_id == tenant_id,
+        sales_payments.SalesPayment.payment_date < start_date
+    ).all()
+
+    prior_purchase_payments = db.query(payments.Payment).filter(
+        payments.Payment.tenant_id == tenant_id,
+        payments.Payment.payment_date < start_date
+    ).all()
+
+    # Calculate the net effect of prior transactions
+    prior_net_effect = 0.0
+    for sp in prior_sales_payments:
+        prior_net_effect += float(sp.amount_paid)  # Credits are positive
+
+    for pp in prior_purchase_payments:
+        prior_net_effect -= float(pp.amount_paid)  # Debits are negative
+
+    # Calculate the report opening balance
+    report_opening_balance = initial_opening_balance + prior_net_effect
+
+    # Get transactions within the date range
     sales_payments_query = db.query(sales_payments.SalesPayment).filter(
         sales_payments.SalesPayment.tenant_id == tenant_id,
         sales_payments.SalesPayment.payment_date >= start_date,
@@ -136,7 +160,7 @@ def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id:
 
     transactions.sort(key=lambda x: x['date'])
 
-    balance = opening_balance
+    balance = report_opening_balance
     entries = []
     for t in transactions:
         balance += t['credit'] - t['debit']
@@ -144,7 +168,7 @@ def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id:
 
     return GeneralLedger(
         title="General Ledger (Cash Account)",
-        opening_balance=opening_balance,
+        opening_balance=report_opening_balance,
         entries=entries,
         closing_balance=balance
     )
@@ -212,13 +236,13 @@ def get_inventory_ledger(db: Session, item_id: int, start_date: date, end_date: 
 
     # Calculate opening quantity
     purchases_before = db.query(func.sum(purchase_order_items.PurchaseOrderItem.quantity)).join(purchase_orders.PurchaseOrder).filter(
-        purchase_order_items.PurchaseOrderItem.item_id == item_id,
+        purchase_order_items.PurchaseOrderItem.inventory_item_id == item_id,
         purchase_orders.PurchaseOrder.tenant_id == tenant_id,
         purchase_orders.PurchaseOrder.order_date < start_date
     ).scalar() or 0.0
 
     sales_before = db.query(func.sum(sales_order_items.SalesOrderItem.quantity)).join(sales_orders.SalesOrder).filter(
-        sales_order_items.SalesOrderItem.item_id == item_id,
+        sales_order_items.SalesOrderItem.inventory_item_id == item_id,
         sales_orders.SalesOrder.tenant_id == tenant_id,
         sales_orders.SalesOrder.order_date < start_date
     ).scalar() or 0.0
@@ -227,14 +251,14 @@ def get_inventory_ledger(db: Session, item_id: int, start_date: date, end_date: 
 
     # Get transactions within the date range
     purchase_items = db.query(purchase_order_items.PurchaseOrderItem).join(purchase_orders.PurchaseOrder).filter(
-        purchase_order_items.PurchaseOrderItem.item_id == item_id,
+        purchase_order_items.PurchaseOrderItem.inventory_item_id == item_id,
         purchase_orders.PurchaseOrder.tenant_id == tenant_id,
         purchase_orders.PurchaseOrder.order_date >= start_date,
         purchase_orders.PurchaseOrder.order_date <= end_date
     ).all()
 
     sales_items = db.query(sales_order_items.SalesOrderItem).join(sales_orders.SalesOrder).filter(
-        sales_order_items.SalesOrderItem.item_id == item_id,
+        sales_order_items.SalesOrderItem.inventory_item_id == item_id,
         sales_orders.SalesOrder.tenant_id == tenant_id,
         sales_orders.SalesOrder.order_date >= start_date,
         sales_orders.SalesOrder.order_date <= end_date
@@ -247,8 +271,8 @@ def get_inventory_ledger(db: Session, item_id: int, start_date: date, end_date: 
             "type": "purchase",
             "reference": f"PO-{pi.purchase_order.po_number}",
             "quantity_received": float(pi.quantity),
-            "unit_cost": float(pi.unit_price),
-            "total_cost": float(pi.quantity * pi.unit_price),
+            "unit_cost": float(pi.price_per_unit),
+            "total_cost": float(pi.quantity * pi.price_per_unit),
             "quantity_sold": 0.0
         })
 

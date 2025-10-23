@@ -22,12 +22,15 @@ class EggRoomReportCreate(EggRoomReportBase):
 class EggRoomReportUpdate(BaseModel):
     table_damage: Optional[int]
     table_out: Optional[int]
+    table_transfer: Optional[int]
 
     grade_c_labour: Optional[int]
     grade_c_waste: Optional[int]
+    grade_c_transfer: Optional[int]
 
     jumbo_waste: Optional[int]
     jumbo_out: Optional[int]
+    jumbo_transfer: Optional[int]
 
     table_opening: Optional[int] = None
     jumbo_opening: Optional[int] = None

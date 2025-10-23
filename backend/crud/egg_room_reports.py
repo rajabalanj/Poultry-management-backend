@@ -98,21 +98,23 @@ def update_report(db: Session, report_date: str, report: EggRoomReportUpdate, te
     egg_stock_tolerance_config = crud_app_config.get_config(db, tenant_id, name="EGG_STOCK_TOLERANCE")
     egg_stock_tolerance = float(egg_stock_tolerance_config.value) if egg_stock_tolerance_config else 0.0
 
-    # Check for sufficient stock before applying updates
+    # Check for sufficient stock before applying updates (use new values or existing)
     new_table_damage = report_data.get('table_damage', db_report.table_damage)
     new_table_out = report_data.get('table_out', db_report.table_out)
+    new_table_transfer = report_data.get('table_transfer', db_report.table_transfer)
     new_jumbo_out = report_data.get('jumbo_out', db_report.jumbo_out)
 
-    table_consumption = (new_table_damage or 0) + (new_table_out or 0)
-    table_inflow = db_report.table_opening + table_received + (new_jumbo_out or 0)
+    table_consumption = (new_table_damage or 0) + (new_table_out or 0) + (new_table_transfer or 0)
+    table_inflow = (db_report.table_opening or 0) + table_received + (new_jumbo_out or 0)
 
     # Apply egg_stock_tolerance to table egg validation
     if table_consumption > (table_inflow + egg_stock_tolerance):
         raise ValueError(f"Insufficient stock for Table Egg. Available: {table_inflow}, Requested: {table_consumption}. (Tolerance: {egg_stock_tolerance})")
 
     new_jumbo_waste = report_data.get('jumbo_waste', db_report.jumbo_waste)
-    jumbo_consumption = (new_jumbo_waste or 0) + (new_jumbo_out or 0)
-    jumbo_inflow = db_report.jumbo_opening + jumbo_received + (new_table_out or 0)
+    new_jumbo_transfer = report_data.get('jumbo_transfer', db_report.jumbo_transfer)
+    jumbo_consumption = (new_jumbo_waste or 0) + (new_jumbo_out or 0) + (new_jumbo_transfer or 0)
+    jumbo_inflow = (db_report.jumbo_opening or 0) + jumbo_received + (new_table_out or 0)
 
     # Apply egg_stock_tolerance to jumbo egg validation
     if jumbo_consumption > (jumbo_inflow + egg_stock_tolerance):
@@ -120,19 +122,48 @@ def update_report(db: Session, report_date: str, report: EggRoomReportUpdate, te
 
     new_grade_c_labour = report_data.get('grade_c_labour', db_report.grade_c_labour)
     new_grade_c_waste = report_data.get('grade_c_waste', db_report.grade_c_waste)
-    grade_c_consumption = (new_grade_c_labour or 0) + (new_grade_c_waste or 0)
-    grade_c_inflow = db_report.grade_c_opening + grade_c_shed_received + (new_table_damage or 0)
+    new_grade_c_transfer = report_data.get('grade_c_transfer', db_report.grade_c_transfer)
+    grade_c_consumption = (new_grade_c_labour or 0) + (new_grade_c_waste or 0) + (new_grade_c_transfer or 0)
+    grade_c_inflow = (db_report.grade_c_opening or 0) + grade_c_shed_received + (new_table_damage or 0)
 
     # Apply egg_stock_tolerance to grade c egg validation
     if grade_c_consumption > (grade_c_inflow + egg_stock_tolerance):
         raise ValueError(f"Insufficient stock for Grade C Egg. Available: {grade_c_inflow}, Requested: {grade_c_consumption}. (Tolerance: {egg_stock_tolerance})")
 
+    # Compute resulting closings and ensure none become negative
+    table_closing_calc = table_inflow - table_consumption
+    jumbo_closing_calc = jumbo_inflow - jumbo_consumption
+    grade_c_closing_calc = grade_c_inflow - grade_c_consumption
+
+    negative_closings = []
+    if table_closing_calc < 0:
+        negative_closings.append(("Table Egg", table_inflow, table_consumption, table_closing_calc))
+    if jumbo_closing_calc < 0:
+        negative_closings.append(("Jumbo Egg", jumbo_inflow, jumbo_consumption, jumbo_closing_calc))
+    if grade_c_closing_calc < 0:
+        negative_closings.append(("Grade C Egg", grade_c_inflow, grade_c_consumption, grade_c_closing_calc))
+
+    if negative_closings:
+        # Build a concise error message listing all negative closings
+        parts = []
+        for name, inflow, consumption, closing in negative_closings:
+            parts.append(f"{name} would be negative: inflow={inflow}, consumption={consumption}, closing={closing}")
+        raise ValueError("Invalid update - negative closing(s): " + "; ".join(parts))
+
+    # Apply updates to the db_report
     for key, value in report_data.items():
         setattr(db_report, key, value)
 
+    # Update received and computed closing fields
     db_report.table_received = table_received
     db_report.jumbo_received = jumbo_received
     db_report.grade_c_shed_received = grade_c_shed_received
+
+    # Set computed closings explicitly
+    db_report.table_closing = table_closing_calc
+    db_report.jumbo_closing = jumbo_closing_calc
+    db_report.grade_c_closing = grade_c_closing_calc
+
     db_report.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
     db_report.updated_by = user_id
 
@@ -150,7 +181,6 @@ def update_report(db: Session, report_date: str, report: EggRoomReportUpdate, te
     db.commit()
     db.refresh(db_report)
     return db_report
-
 
 def delete_report(db: Session, report_date: str, tenant_id: str, user_id: str):
     """
