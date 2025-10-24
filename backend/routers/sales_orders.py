@@ -13,12 +13,13 @@ import pytz
 from crud.audit_log import create_audit_log
 from schemas.audit_log import AuditLogCreate
 from utils import sqlalchemy_to_dict
+from pydantic import BaseModel
 
 try:
-    from utils.s3_upload import upload_receipt_to_s3, get_receipt_from_s3
+    from utils.s3_utils import generate_presigned_upload_url, generate_presigned_download_url
 except ImportError:
-    upload_receipt_to_s3 = None
-    get_receipt_from_s3 = None
+    generate_presigned_upload_url = None
+    generate_presigned_download_url = None
 
 from database import get_db
 from models.sales_orders import SalesOrder as SalesOrderModel, SalesOrderStatus
@@ -764,83 +765,63 @@ def delete_sales_order(
     logger.info(f"Sales Order (ID: {so_id}) soft deleted by user {get_user_identifier(user)} for tenant {tenant_id}")
     return {"message": "Sales Order deleted successfully"}
 
-@router.post("/{so_id}/receipt")
-def upload_payment_receipt(
+class ReceiptUploadRequest(BaseModel):
+    filename: str
+
+@router.post("/{so_id}/receipt-upload-url")
+def get_receipt_upload_url(
     so_id: int,
-    file: UploadFile = File(...),
+    request_body: ReceiptUploadRequest,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
     tenant_id: str = Depends(get_tenant_id)
 ):
-    """Upload payment receipt for a sales order."""
+    """Get a pre-signed URL for uploading a sales order receipt."""
+    if not generate_presigned_upload_url:
+        raise HTTPException(status_code=501, detail="S3 upload functionality is not configured.")
+
     db_so = db.query(SalesOrderModel).filter(SalesOrderModel.id == so_id, SalesOrderModel.tenant_id == tenant_id).first()
     if not db_so:
         raise HTTPException(status_code=404, detail="Sales Order not found")
-    
-    allowed_types = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg']
-    if file.content_type not in allowed_types:
-        raise HTTPException(status_code=400, detail="Only PDF and image files allowed")
-    
-    upload_dir = f"uploads/sales_receipts/{tenant_id}"
-    os.makedirs(upload_dir, exist_ok=True)
-    
-    file_extension = file.filename.split('.')[-1]
-    unique_filename = f"{so_id}_{uuid.uuid4().hex}.{file_extension}"
-    file_path = os.path.join(upload_dir, unique_filename)
-    
-    content = file.file.read()
-    
-    if os.getenv('AWS_ENVIRONMENT') and upload_receipt_to_s3:
-        try:
-            s3_url = upload_receipt_to_s3(content, file.filename, so_id)
-            db_so.payment_receipt = s3_url
-        except Exception as e:
-            logger.exception(f"S3 upload failed for SO {so_id}: {e}")
-            raise HTTPException(status_code=500, detail=f"Failed to upload to S3: {str(e)}")
-    else:
-        with open(file_path, "wb") as buffer:
-            buffer.write(content)
-        db_so.payment_receipt = file_path
-    
-    db.commit()
-    return {"message": "Receipt uploaded successfully", "file_path": db_so.payment_receipt}
 
-@router.get("/{so_id}/receipt")
-def get_payment_receipt(
+    try:
+        upload_data = generate_presigned_upload_url(
+            tenant_id=tenant_id,
+            object_id=so_id,
+            filename=request_body.filename
+        )
+        
+        db_so.payment_receipt = upload_data["s3_path"]
+        db.commit()
+
+        return {"upload_url": upload_data["upload_url"], "s3_path": upload_data["s3_path"]}
+
+    except Exception as e:
+        logger.exception(f"Failed to generate presigned URL for SO {so_id}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate upload URL: {str(e)}")
+
+@router.get("/{so_id}/receipt-download-url")
+def get_receipt_download_url(
     so_id: int,
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_tenant_id)
 ):
-    """Download payment receipt for a sales order."""
-    from fastapi.responses import Response
-    
+    """Get a pre-signed URL for downloading a sales order receipt."""
+    if not generate_presigned_download_url:
+        raise HTTPException(status_code=501, detail="S3 download functionality is not configured.")
+
     db_so = db.query(SalesOrderModel).filter(SalesOrderModel.id == so_id, SalesOrderModel.tenant_id == tenant_id).first()
     if not db_so or not db_so.payment_receipt:
         raise HTTPException(status_code=404, detail="Receipt not found")
-    
-    if db_so.payment_receipt.startswith('s3://') and get_receipt_from_s3:
-        try:
-            file_content = get_receipt_from_s3(db_so.payment_receipt)
-            
-            file_extension = db_so.payment_receipt.split('.')[-1].lower()
-            if file_extension == 'pdf':
-                content_type = 'application/pdf'
-                filename = f"SO_Receipt_{so_id}.pdf"
-            elif file_extension == 'png':
-                content_type = 'image/png'
-                filename = f"SO_Receipt_{so_id}.png"
-            else:
-                content_type = 'image/jpeg'
-                filename = f"SO_Receipt_{so_id}.jpg"
 
-            return Response(
-                content=file_content,
-                media_type=content_type,
-                headers={
-                    "Content-Disposition": f"attachment; filename={filename}"
-                }
-            )
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to retrieve receipt: {str(e)}")
-    else:
-        raise HTTPException(status_code=404, detail="Receipt retrieval not supported")
+    if not db_so.payment_receipt.startswith('s3://'):
+        raise HTTPException(status_code=400, detail="Receipt is not stored in S3.")
+
+    try:
+        download_url = generate_presigned_download_url(s3_path=db_so.payment_receipt)
+        return {"download_url": download_url}
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.exception(f"Failed to generate download URL for SO {so_id}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate download URL: {str(e)}")

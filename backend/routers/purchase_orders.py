@@ -15,12 +15,14 @@ from crud.audit_log import create_audit_log
 from schemas.audit_log import AuditLogCreate
 from utils import sqlalchemy_to_dict
 import pytz
+from pydantic import BaseModel
 
 try:
-    from utils.s3_upload import upload_receipt_to_s3, get_receipt_from_s3
+    from utils.s3_utils import generate_presigned_upload_url, generate_presigned_download_url
 except ImportError:
-    upload_receipt_to_s3 = None
-    get_receipt_from_s3 = None
+    generate_presigned_upload_url = None
+    generate_presigned_download_url = None
+
 from schemas.purchase_order_items import PurchaseOrderItemUpdate
 
 from database import get_db
@@ -586,87 +588,63 @@ def remove_item_from_purchase_order(
     logger.info(f"Item ID {item_id} removed from Purchase Order (ID: {po_id}) by user {get_user_identifier(user)} for tenant {tenant_id}")
     return {"message": "Item removed successfully"}
 
-@router.post("/{po_id}/receipt")
-def upload_payment_receipt(
+class ReceiptUploadRequest(BaseModel):
+    filename: str
+
+@router.post("/{po_id}/receipt-upload-url")
+def get_receipt_upload_url(
     po_id: int,
-    file: UploadFile = File(...),
+    request_body: ReceiptUploadRequest,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
     tenant_id: str = Depends(get_tenant_id)
 ):
-    """Upload payment receipt for a purchase order."""
+    """Get a pre-signed URL for uploading a purchase order receipt."""
+    if not generate_presigned_upload_url:
+        raise HTTPException(status_code=501, detail="S3 upload functionality is not configured.")
+
     db_po = db.query(PurchaseOrderModel).filter(PurchaseOrderModel.id == po_id, PurchaseOrderModel.tenant_id == tenant_id).first()
     if not db_po:
         raise HTTPException(status_code=404, detail="Purchase Order not found")
-    
-    # Validate file type
-    allowed_types = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg']
-    if file.content_type not in allowed_types:
-        raise HTTPException(status_code=400, detail="Only PDF and image files allowed")
-    
-    # Create uploads directory
-    upload_dir = f"uploads/receipts/{tenant_id}"
-    os.makedirs(upload_dir, exist_ok=True)
-    
-    # Generate unique filename
-    file_extension = file.filename.split('.')[-1]
-    unique_filename = f"{po_id}_{uuid.uuid4().hex}.{file_extension}"
-    file_path = os.path.join(upload_dir, unique_filename)
-    
-    # Read and save file
-    content = file.file.read()
-    
-    if os.getenv('AWS_ENVIRONMENT') and upload_receipt_to_s3:
-        try:
-            s3_url = upload_receipt_to_s3(content, file.filename, po_id)
-            db_po.payment_receipt = s3_url
-        except Exception as e:
-            logger.exception(f"S3 upload failed for PO {po_id}: {e}")
-            raise HTTPException(status_code=500, detail=f"Failed to upload to S3: {str(e)}")
-    else:
-        with open(file_path, "wb") as buffer:
-            buffer.write(content)
-        db_po.payment_receipt = file_path
-    
-    db.commit()
-    return {"message": "Receipt uploaded successfully", "file_path": db_po.payment_receipt}
 
-@router.get("/{po_id}/receipt")
-def get_payment_receipt(
+    try:
+        upload_data = generate_presigned_upload_url(
+            tenant_id=tenant_id,
+            object_id=po_id,
+            filename=request_body.filename
+        )
+        
+        db_po.payment_receipt = upload_data["s3_path"]
+        db.commit()
+
+        return {"upload_url": upload_data["upload_url"], "s3_path": upload_data["s3_path"]}
+
+    except Exception as e:
+        logger.exception(f"Failed to generate presigned URL for PO {po_id}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate upload URL: {str(e)}")
+
+@router.get("/{po_id}/receipt-download-url")
+def get_receipt_download_url(
     po_id: int,
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_tenant_id)
 ):
-    """Download payment receipt for a purchase order."""
-    from fastapi.responses import Response
-    
+    """Get a pre-signed URL for downloading a purchase order receipt."""
+    if not generate_presigned_download_url:
+        raise HTTPException(status_code=501, detail="S3 download functionality is not configured.")
+
     db_po = db.query(PurchaseOrderModel).filter(PurchaseOrderModel.id == po_id, PurchaseOrderModel.tenant_id == tenant_id).first()
     if not db_po or not db_po.payment_receipt:
         raise HTTPException(status_code=404, detail="Receipt not found")
-    
-    if db_po.payment_receipt.startswith('s3://') and get_receipt_from_s3:
-        try:
-            file_content = get_receipt_from_s3(db_po.payment_receipt)
-            
-            file_extension = db_po.payment_receipt.split('.')[-1].lower()
-            if file_extension == 'pdf':
-                content_type = 'application/pdf'
-                filename = f"PO_Receipt_{po_id}.pdf"
-            elif file_extension == 'png':
-                content_type = 'image/png'
-                filename = f"PO_Receipt_{po_id}.png"
-            else:
-                content_type = 'image/jpeg'
-                filename = f"PO_Receipt_{po_id}.jpg"
 
-            return Response(
-                content=file_content,
-                media_type=content_type,
-                headers={
-                    "Content-Disposition": f"attachment; filename={filename}"
-                }
-            )
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to retrieve receipt: {str(e)}")
-    else:
-        raise HTTPException(status_code=404, detail="Receipt retrieval not supported")
+    if not db_po.payment_receipt.startswith('s3://'):
+        raise HTTPException(status_code=400, detail="Receipt is not stored in S3.")
+
+    try:
+        download_url = generate_presigned_download_url(s3_path=db_po.payment_receipt)
+        return {"download_url": download_url}
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.exception(f"Failed to generate download URL for PO {po_id}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate download URL: {str(e)}")

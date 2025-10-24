@@ -20,6 +20,12 @@ COGNITO_REGION = "eu-north-1"  # e.g., "us-east-1"
 COGNITO_USER_POOL_ID = os.getenv("COGNITO_USER_POOL_ID")
 COGNITO_APP_CLIENT_ID = os.getenv("COGNITO_APP_CLIENT_ID")
 
+if not COGNITO_USER_POOL_ID or COGNITO_USER_POOL_ID == "None":
+    raise ValueError("COGNITO_USER_POOL_ID environment variable not set or is 'None'.")
+
+if not COGNITO_APP_CLIENT_ID or COGNITO_APP_CLIENT_ID == "None":
+    raise ValueError("COGNITO_APP_CLIENT_ID environment variable not set or is 'None'.")
+
 # --- Advanced Configuration ---
 # These are constructed from the settings above.
 COGNITO_ISSUER = f"https://cognito-idp.{COGNITO_REGION}.amazonaws.com/{COGNITO_USER_POOL_ID}"

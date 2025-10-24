@@ -11,12 +11,13 @@ from schemas.audit_log import AuditLogCreate
 from utils import sqlalchemy_to_dict
 from datetime import datetime
 import pytz
+from pydantic import BaseModel
 
 try:
-    from utils.s3_upload import upload_receipt_to_s3, get_receipt_from_s3
+    from utils.s3_utils import generate_presigned_upload_url, generate_presigned_download_url
 except ImportError:
-    upload_receipt_to_s3 = None
-    get_receipt_from_s3 = None
+    generate_presigned_upload_url = None
+    generate_presigned_download_url = None
 
 from database import get_db
 from models.payments import Payment as PaymentModel
@@ -188,120 +189,63 @@ def delete_payment(
     logger.info(f"Payment ID {payment_id} deleted for Purchase Order ID {db_payment.purchase_order_id} by user {get_user_identifier(user)} for tenant {tenant_id}")
     return {"message": "Payment deleted successfully"}
 
-@router.post("/{payment_id}/receipt")
-def upload_payment_receipt(
+class ReceiptUploadRequest(BaseModel):
+    filename: str
+
+@router.post("/{payment_id}/receipt-upload-url")
+def get_receipt_upload_url(
     payment_id: int,
-    file: UploadFile = File(...),
+    request_body: ReceiptUploadRequest,
     db: Session = Depends(get_db),
     user: dict = Depends(require_group(["admin", "payment-group"])),
     tenant_id: str = Depends(get_tenant_id)
 ):
-    """Upload payment receipt for a payment."""
+    """Get a pre-signed URL for uploading a payment receipt."""
+    if not generate_presigned_upload_url:
+        raise HTTPException(status_code=501, detail="S3 upload functionality is not configured.")
+
     db_payment = db.query(PaymentModel).filter(PaymentModel.id == payment_id, PaymentModel.tenant_id == tenant_id).first()
     if not db_payment:
         raise HTTPException(status_code=404, detail="Payment not found")
-    
-    # Validate file type
-    allowed_types = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg']
-    if file.content_type not in allowed_types:
-        raise HTTPException(status_code=400, detail="Only PDF and image files allowed")
-    
-    # Create uploads directory
-    upload_dir = f"uploads/payment_receipts/{tenant_id}"
-    os.makedirs(upload_dir, exist_ok=True)
-    
-    # Generate unique filename
-    file_extension = file.filename.split('.')[-1]
-    unique_filename = f"payment_{payment_id}_{uuid.uuid4().hex}.{file_extension}"
-    file_path = os.path.join(upload_dir, unique_filename)
-    
-    # Read and save file
-    content = file.file.read()
-    
-    # Log useful debug info for diagnosing upload issues
+
     try:
-        logger.info(f"Uploading receipt for payment_id={payment_id}, tenant={tenant_id}, filename={file.filename}, content_type={file.content_type}")
-        logger.debug(f"ENV AWS_ENVIRONMENT={os.getenv('AWS_ENVIRONMENT')}, S3_BUCKET_NAME={os.getenv('S3_BUCKET_NAME')}")
-        logger.debug(f"File size (bytes): {len(content)}")
+        upload_data = generate_presigned_upload_url(
+            tenant_id=tenant_id,
+            object_id=payment_id,
+            filename=request_body.filename
+        )
+        
+        db_payment.payment_receipt = upload_data["s3_path"]
+        db.commit()
 
-        if os.getenv('AWS_ENVIRONMENT') and upload_receipt_to_s3:
-            try:
-                s3_url = upload_receipt_to_s3(content, file.filename, payment_id)
-                db_payment.payment_receipt = s3_url
-                logger.info(f"S3 upload succeeded for payment_id={payment_id}, s3_url={s3_url}")
-            except Exception as e:
-                # Log full stacktrace for debugging
-                logger.exception(f"S3 upload failed for payment_id {payment_id}: {e}")
-                # Fallback: save file locally so it can be inspected
-                fallback_dir = os.path.join("uploads", "payment_receipts", tenant_id, "failed_s3_uploads")
-                os.makedirs(fallback_dir, exist_ok=True)
-                fallback_filename = f"failed_s3_payment_{payment_id}_{uuid.uuid4().hex}.{file_extension}"
-                fallback_path = os.path.join(fallback_dir, fallback_filename)
-                try:
-                    with open(fallback_path, "wb") as fb:
-                        fb.write(content)
-                    db_payment.payment_receipt = fallback_path
-                    logger.error(f"Saved fallback receipt to {fallback_path} for payment_id={payment_id}")
-                except Exception as write_exc:
-                    logger.exception(f"Failed to write fallback receipt for payment_id={payment_id}: {write_exc}")
-                    # If we can't save fallback, raise detailed error to caller
-                    raise HTTPException(status_code=500, detail=f"S3 upload failed and fallback save failed: {write_exc}")
-        else:
-            # Not configured for S3: save locally
-            with open(file_path, "wb") as buffer:
-                buffer.write(content)
-            db_payment.payment_receipt = file_path
+        return {"upload_url": upload_data["upload_url"], "s3_path": upload_data["s3_path"]}
 
-    except HTTPException:
-        # Re-raise HTTPExceptions raised above
-        raise
-    except Exception as outer_exc:
-        logger.exception(f"Unexpected error during receipt upload for payment_id={payment_id}: {outer_exc}")
-        raise HTTPException(status_code=500, detail="Unexpected error during receipt upload")
-    # else:
-    #     with open(file_path, "wb") as buffer:
-    #         buffer.write(content)
-    #     db_payment.payment_receipt = file_path
-    
-    db.commit()
-    return {"message": "Receipt uploaded successfully", "file_path": db_payment.payment_receipt}
+    except Exception as e:
+        logger.exception(f"Failed to generate presigned URL for payment {payment_id}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate upload URL: {str(e)}")
 
-@router.get("/{payment_id}/receipt")
-def get_payment_receipt(
+@router.get("/{payment_id}/receipt-download-url")
+def get_receipt_download_url(
     payment_id: int,
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_tenant_id)
 ):
-    """Download payment receipt for a payment."""
-    from fastapi.responses import Response
-    
+    """Get a pre-signed URL for downloading a payment receipt."""
+    if not generate_presigned_download_url:
+        raise HTTPException(status_code=501, detail="S3 download functionality is not configured.")
+
     db_payment = db.query(PaymentModel).filter(PaymentModel.id == payment_id, PaymentModel.tenant_id == tenant_id).first()
     if not db_payment or not db_payment.payment_receipt:
         raise HTTPException(status_code=404, detail="Receipt not found")
-    
-    if db_payment.payment_receipt.startswith('s3://') and get_receipt_from_s3:
-        try:
-            file_content = get_receipt_from_s3(db_payment.payment_receipt)
-            
-            file_extension = db_payment.payment_receipt.split('.')[-1].lower()
-            if file_extension == 'pdf':
-                content_type = 'application/pdf'
-                filename = f"Payment_Receipt_{payment_id}.pdf"
-            elif file_extension == 'png':
-                content_type = 'image/png'
-                filename = f"Payment_Receipt_{payment_id}.png"
-            else:
-                content_type = 'image/jpeg'
-                filename = f"Payment_Receipt_{payment_id}.jpg"
 
-            return Response(
-                content=file_content,
-                media_type=content_type,
-                headers={
-                    "Content-Disposition": f"attachment; filename={filename}"
-                }
-            )
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to retrieve receipt: {str(e)}")
-    else:
-        raise HTTPException(status_code=404, detail="Receipt retrieval not supported")
+    if not db_payment.payment_receipt.startswith('s3://'):
+        raise HTTPException(status_code=400, detail="Receipt is not stored in S3.")
+
+    try:
+        download_url = generate_presigned_download_url(s3_path=db_payment.payment_receipt)
+        return {"download_url": download_url}
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.exception(f"Failed to generate download URL for payment {payment_id}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate download URL: {str(e)}")
