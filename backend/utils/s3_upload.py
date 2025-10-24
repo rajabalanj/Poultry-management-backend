@@ -120,3 +120,32 @@ def upload_receipt_to_s3(file_content: bytes, filename: str, payment_id: int, ma
             raise RuntimeError(f"S3 upload failed: {str(last_exc)}")
     else:
         raise RuntimeError("Unknown failure during S3 upload")
+
+
+def get_receipt_from_s3(s3_url: str) -> bytes:
+    """Download receipt file from S3 and return file content."""
+    if not s3_url.startswith('s3://'):
+        raise ValueError("Invalid S3 URL format")
+    
+    # Parse S3 URL: s3://bucket/key
+    parts = s3_url[5:].split('/', 1)
+    if len(parts) != 2:
+        raise ValueError("Invalid S3 URL format")
+    
+    bucket_name, s3_key = parts
+    aws_region = os.getenv('AWS_DEFAULT_REGION', 'eu-north-1')
+    
+    try:
+        s3_client = boto3.client('s3', region_name=aws_region)
+        response = s3_client.get_object(Bucket=bucket_name, Key=s3_key)
+        return response['Body'].read()
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        if error_code == '404':
+            raise FileNotFoundError(f"File not found in S3: {s3_url}")
+        elif error_code == '403':
+            raise PermissionError(f"Access denied to S3 file: {s3_url}")
+        else:
+            raise RuntimeError(f"S3 error: {e.response['Error']['Message']}")
+    except Exception as e:
+        raise RuntimeError(f"Failed to retrieve file from S3: {str(e)}")

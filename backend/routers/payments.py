@@ -13,9 +13,10 @@ from datetime import datetime
 import pytz
 
 try:
-    from utils.s3_upload import upload_receipt_to_s3
+    from utils.s3_upload import upload_receipt_to_s3, get_receipt_from_s3
 except ImportError:
     upload_receipt_to_s3 = None
+    get_receipt_from_s3 = None
 
 from database import get_db
 from models.payments import Payment as PaymentModel
@@ -264,3 +265,43 @@ def upload_payment_receipt(
     
     db.commit()
     return {"message": "Receipt uploaded successfully", "file_path": db_payment.payment_receipt}
+
+@router.get("/{payment_id}/receipt")
+def get_payment_receipt(
+    payment_id: int,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """Download payment receipt for a payment."""
+    from fastapi.responses import Response
+    
+    db_payment = db.query(PaymentModel).filter(PaymentModel.id == payment_id, PaymentModel.tenant_id == tenant_id).first()
+    if not db_payment or not db_payment.payment_receipt:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+    
+    if db_payment.payment_receipt.startswith('s3://') and get_receipt_from_s3:
+        try:
+            file_content = get_receipt_from_s3(db_payment.payment_receipt)
+            
+            file_extension = db_payment.payment_receipt.split('.')[-1].lower()
+            if file_extension == 'pdf':
+                content_type = 'application/pdf'
+                filename = f"Payment_Receipt_{payment_id}.pdf"
+            elif file_extension == 'png':
+                content_type = 'image/png'
+                filename = f"Payment_Receipt_{payment_id}.png"
+            else:
+                content_type = 'image/jpeg'
+                filename = f"Payment_Receipt_{payment_id}.jpg"
+
+            return Response(
+                content=file_content,
+                media_type=content_type,
+                headers={
+                    "Content-Disposition": f"attachment; filename={filename}"
+                }
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to retrieve receipt: {str(e)}")
+    else:
+        raise HTTPException(status_code=404, detail="Receipt retrieval not supported")
