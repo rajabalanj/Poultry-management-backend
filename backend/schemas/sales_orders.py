@@ -4,6 +4,8 @@ from datetime import date, datetime
 from decimal import Decimal
 from models.sales_orders import SalesOrderStatus
 from schemas.sales_order_items import SalesOrderItemCreateRequest
+from schemas.sales_payments import SalesPayment as SalesPaymentSchema
+
 
 class SalesOrderItem(BaseModel):
     id: int
@@ -11,18 +13,6 @@ class SalesOrderItem(BaseModel):
     quantity: Decimal
     price_per_unit: Decimal
     line_total: Decimal
-    tenant_id: Optional[str] = None
-
-    class Config:
-        from_attributes = True
-
-class SalesPayment(BaseModel):
-    id: int
-    payment_date: date
-    amount_paid: Decimal
-    payment_mode: Optional[str] = None
-    reference_number: Optional[str] = None
-    notes: Optional[str] = None
     tenant_id: Optional[str] = None
 
     class Config:
@@ -56,7 +46,7 @@ class SalesOrder(SalesOrderBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
     items: List['SalesOrderItem'] = []
-    payments: List['SalesPayment'] = []
+    payments: List[SalesPaymentSchema] = []
 
     class Config:
         from_attributes = True
