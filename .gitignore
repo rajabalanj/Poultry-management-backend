@@ -46,3 +46,5 @@ backend/.env.prod
 backend/tests/conftest.py
 backend/tests/test_crud/test_egg_room_reports.py
 pytest.ini
+backend/tests/test_routers/test_purchase_orders.py
+backend/tests/test_routers/test_sales_orders.py
