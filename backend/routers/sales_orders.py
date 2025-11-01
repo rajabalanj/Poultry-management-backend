@@ -329,7 +329,14 @@ def update_sales_order(
             ).first()
             if not new_egg_room_report:
                 logger.info(f"No egg room report found for {new_order_date}, creating one.")
-                report_create = EggRoomReportCreate(report_date=new_order_date)
+                report_create = EggRoomReportCreate(
+                    report_date=new_order_date,
+                    table_damage=0,
+                    table_out=0,
+                    grade_c_labour=0,
+                    grade_c_waste=0,
+                    jumbo_waste=0,
+                    jumbo_out=0)
                 new_egg_room_report = crud_egg_room_reports.create_report(
                     db=db, 
                     report=report_create, 
@@ -512,12 +519,14 @@ def update_sales_order_item(
         
         # 1. Restore stock for the OLD item
         old_inv_item = item_to_update.inventory_item
+        logger.info(f"[ITEM CHANGE] Old item: '{old_inv_item.name if old_inv_item else 'N/A'}' (ID: {item_to_update.inventory_item_id}), Quantity: {item_to_update.quantity}")
         if old_inv_item:
             if old_inv_item.name in EGG_ITEM_NAMES:
                 egg_room_report = db.query(EggRoomReportModel).filter(
                     EggRoomReportModel.report_date == db_so.order_date,
                     EggRoomReportModel.tenant_id == tenant_id
                 ).first()
+                logger.info(f"[ITEM CHANGE] Old item is an egg. Found egg room report for {db_so.order_date}: {'Yes' if egg_room_report else 'No'}")
                 if egg_room_report:
                     if old_inv_item.name == "Table Egg": egg_room_report.table_transfer -= int(item_to_update.quantity)
                     elif old_inv_item.name == "Jumbo Egg": egg_room_report.jumbo_transfer -= int(item_to_update.quantity)
@@ -525,6 +534,7 @@ def update_sales_order_item(
                     db.add(egg_room_report)
             else:
                 old_stock = old_inv_item.current_stock or 0
+                logger.info(f"[ITEM CHANGE] Old item is not an egg. Restoring stock for '{old_inv_item.name}'. Old stock: {old_stock}, Quantity to restore: {item_to_update.quantity}")
                 old_inv_item.current_stock += item_to_update.quantity
                 db.add(old_inv_item)
                 audit = InventoryItemAudit(
@@ -537,24 +547,47 @@ def update_sales_order_item(
 
         # 2. Validate and deduct stock for the NEW item
         new_inv_item = db.query(InventoryItemModel).filter(InventoryItemModel.id == new_inventory_item_id, InventoryItemModel.tenant_id == tenant_id).first()
+        logger.info(f"[ITEM CHANGE] New item: '{new_inv_item.name if new_inv_item else 'N/A'}' (ID: {new_inventory_item_id})")
         if not new_inv_item:
             raise HTTPException(status_code=400, detail=f"New Inventory Item with ID {new_inventory_item_id} not found.")
 
         new_quantity = Decimal(update_data.get('quantity', item_to_update.quantity))
+        logger.info(f"[ITEM CHANGE] New quantity: {new_quantity}")
 
         if new_inv_item.name in EGG_ITEM_NAMES:
+            logger.info(f"[ITEM CHANGE] New item '{new_inv_item.name}' is an egg. Checking stock for date {db_so.order_date}.")
             available_stock = _get_available_egg_stock(db, tenant_id, db_so.order_date, new_inv_item.name)
             if available_stock < new_quantity:
                 raise HTTPException(status_code=400, detail=f"Insufficient stock for new item '{new_inv_item.name}'. Available: {available_stock}, Requested: {new_quantity}")
             
-            egg_room_report = db.query(EggRoomReportModel).filter(EggRoomReportModel.report_date == db_so.order_date, EggRoomReportModel.tenant_id == tenant_id).first()
+            egg_room_report = db.query(EggRoomReportModel).filter(
+                EggRoomReportModel.report_date == db_so.order_date, 
+                EggRoomReportModel.tenant_id == tenant_id
+            ).first()
+            logger.info(f"[ITEM CHANGE] Found egg room report for {db_so.order_date} to deduct stock: {'Yes' if egg_room_report else 'No'}")
+            if not egg_room_report:
+                logger.info(f"No egg room report found for {db_so.order_date} while updating item, creating one.")
+                report_create = EggRoomReportCreate(
+                    report_date=db_so.order_date,
+                    table_damage=0,
+                    table_out=0,
+                    grade_c_labour=0,
+                    grade_c_waste=0,
+                    jumbo_waste=0,
+                    jumbo_out=0
+                )
+                egg_room_report = crud_egg_room_reports.create_report(
+                    db=db, report=report_create, tenant_id=tenant_id, user_id=get_user_identifier(user)
+                )
             if egg_room_report:
+                logger.info(f"[ITEM CHANGE] Deducting {new_quantity} of '{new_inv_item.name}' from egg room report.")
                 if new_inv_item.name == "Table Egg": egg_room_report.table_transfer += int(new_quantity)
                 elif new_inv_item.name == "Jumbo Egg": egg_room_report.jumbo_transfer += int(new_quantity)
                 elif new_inv_item.name == "Grade C Egg": egg_room_report.grade_c_transfer += int(new_quantity)
                 db.add(egg_room_report)
         else:
-            if new_inv_item.current_stock < new_quantity:
+            logger.info(f"[ITEM CHANGE] New item '{new_inv_item.name}' is not an egg. Checking inventory stock.")
+            if (new_inv_item.current_stock or 0) < new_quantity:
                 raise HTTPException(status_code=400, detail=f"Insufficient stock for new item '{new_inv_item.name}'. Available: {new_inv_item.current_stock}, Requested: {new_quantity}")
             
             old_stock = new_inv_item.current_stock or 0
