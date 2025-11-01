@@ -379,10 +379,9 @@ def add_item_to_purchase_order(
 ):
     """Add a new item to an existing purchase order."""
     db_po = db.query(PurchaseOrderModel).filter(PurchaseOrderModel.id == po_id, PurchaseOrderModel.tenant_id == tenant_id).first()
-    if db_po is None:
+    if not db_po:
         raise HTTPException(status_code=404, detail="Purchase Order not found")
-    
-    # Restrict item modification based on PO status (e.g., cannot add if 'Paid/Received')
+
     if db_po.status == PurchaseOrderStatus.PAID:
         raise HTTPException(status_code=400, detail=f"Cannot add items to a purchase order with status '{db_po.status.value}'.")
 
@@ -393,14 +392,13 @@ def add_item_to_purchase_order(
     if db_inventory_item.category and db_inventory_item.category.lower() == 'supplies':
         raise HTTPException(status_code=400, detail=f"Item '{db_inventory_item.name}' belongs to the 'Supplies' category and cannot be purchased.")
 
-    # Check if item already exists in PO (optional: prevent duplicates or update existing)
     existing_item = db.query(PurchaseOrderItemModel).filter(
         PurchaseOrderItemModel.purchase_order_id == po_id,
         PurchaseOrderItemModel.inventory_item_id == item_request.inventory_item_id,
         PurchaseOrderItemModel.tenant_id == tenant_id
     ).first()
     if existing_item:
-        raise HTTPException(status_code=400, detail="This item already exists in this purchase order. Use PATCH to update quantity.")
+        raise HTTPException(status_code=400, detail="This item already exists in this purchase order. Use the update endpoint to change quantity.")
 
     line_total = item_request.quantity * item_request.price_per_unit
     db_po_item = PurchaseOrderItemModel(
@@ -413,15 +411,11 @@ def add_item_to_purchase_order(
     )
     db.add(db_po_item)
     
-    # Update total_amount on the PO
     db_po.total_amount += line_total
-    db_po.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
-    db_po.updated_by = get_user_identifier(user)
+    
     # Immediately increase inventory for this PO item
     inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_request.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).with_for_update().first()
-    if inv is None:
-        raise HTTPException(status_code=400, detail=f"Inventory Item with ID {item_request.inventory_item_id} not found when updating stock.")
-
+    
     # Calculate new average cost
     new_quantity = item_request.quantity
     purchase_price = item_request.price_per_unit
@@ -449,17 +443,21 @@ def add_item_to_purchase_order(
     )
     db.add(audit)
     
+    db_po.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
+    db_po.updated_by = get_user_identifier(user)
+    
     db.commit()
     db.refresh(db_po)
 
-    # Refresh with relationships for the response
+    # Re-query with relationships for a complete response object
     db_po = db.query(PurchaseOrderModel).options(
-        selectinload(PurchaseOrderModel.items),
-        selectinload(PurchaseOrderModel.payments)
+        selectinload(PurchaseOrderModel.items).selectinload(PurchaseOrderItemModel.inventory_item),
+        selectinload(PurchaseOrderModel.vendor)
     ).filter(PurchaseOrderModel.id == po_id, PurchaseOrderModel.tenant_id == tenant_id).first()
 
-    logger.info(f"Item added to Purchase Order (ID: {po_id}) by user {get_user_identifier(user)} for tenant {tenant_id}")
+    logger.info(f"Item {db_inventory_item.name} added to Purchase Order (ID: {po_id}) by user {get_user_identifier(user)} for tenant {tenant_id}")
     return db_po
+
 
 @router.patch("/{po_id}/items/{item_id}", response_model=PurchaseOrderSchema)
 def update_item_in_purchase_order(
@@ -470,82 +468,123 @@ def update_item_in_purchase_order(
     user: dict = Depends(get_current_user),
     tenant_id: str = Depends(get_tenant_id)
 ):
-    """Update an item's quantity or price in a purchase order."""
-    db_po = db.query(PurchaseOrderModel).filter(PurchaseOrderModel.id == po_id, PurchaseOrderModel.tenant_id == tenant_id).first()
-    if db_po is None:
-        raise HTTPException(status_code=404, detail="Purchase Order not found")
-    
-    if db_po.status == PurchaseOrderStatus.PAID:
-        raise HTTPException(status_code=400, detail=f"Cannot update items in a purchase order with status '{db_po.status.value}'.")
-
-    db_po_item = db.query(PurchaseOrderItemModel).filter(
-        PurchaseOrderItemModel.id == item_id,
-        PurchaseOrderItemModel.purchase_order_id == po_id,
-        PurchaseOrderItemModel.tenant_id == tenant_id
-    ).first()
-    if db_po_item is None:
-        raise HTTPException(status_code=404, detail="Purchase Order Item not found in this PO.")
-
-    old_qty = db_po_item.quantity
-    old_line_total = db_po_item.line_total
-
-    item_data = item_update.model_dump(exclude_unset=True)
-    for key, value in item_data.items():
-        setattr(db_po_item, key, value)
-
-    db_po_item.line_total = db_po_item.quantity * db_po_item.price_per_unit
-    db_po.total_amount += (db_po_item.line_total - old_line_total) # Adjust PO total
-    db_po.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
-    db_po.updated_by = get_user_identifier(user)
-    # Adjust inventory by delta
-    delta = db_po_item.quantity - old_qty
-    if delta != 0:
-        inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == db_po_item.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).with_for_update().first()
-        if inv is None:
-            raise HTTPException(status_code=400, detail=f"Inventory Item with ID {db_po_item.inventory_item_id} not found when updating stock.")
-        
-        if delta > 0:
-            # Calculate new average cost
-            purchase_price = db_po_item.price_per_unit
-            current_stock = inv.current_stock or 0
-            current_avg_cost = inv.average_cost or 0
-
-            if current_stock + delta > 0:
-                new_avg_cost = ((current_stock * current_avg_cost) + (delta * purchase_price)) / (current_stock + delta)
-                inv.average_cost = new_avg_cost
-
-            old_stock = inv.current_stock or 0
-            inv.current_stock = (inv.current_stock or 0) + delta
-            db.add(inv)
-
-            # Create audit record for the inventory increase from PO item update
-            audit = InventoryItemAudit(
-                inventory_item_id=inv.id,
-                change_type="purchase",
-                change_amount=delta,
-                old_quantity=old_stock,
-                new_quantity=inv.current_stock,
-                changed_by=get_user_identifier(user),
-                note=f"Increased via PO #{po_id} item update (Item ID: {item_id})",
-                tenant_id=tenant_id
-            )
-            db.add(audit)
-        else:
-            # delta < 0 -> decrease inventory (handled elsewhere/optional)
-            inv.current_stock = (inv.current_stock or 0) + delta
-            db.add(inv)
-
-    db.commit()
-    db.refresh(db_po_item)
-    db.refresh(db_po) # Refresh the PO to reflect updated total
-
-    # Refresh with relationships for the response
+    """
+    Update a specific item in a purchase order.
+    - If the inventory_item_id is changed, it's treated as a 'reversal' of the old item
+      and an 'add' of the new item to ensure correct stock and cost accounting.
+    - If only quantity/price is changed, it adjusts the stock based on the delta.
+    """
     db_po = db.query(PurchaseOrderModel).options(
-        selectinload(PurchaseOrderModel.items),
-        selectinload(PurchaseOrderModel.payments)
+        selectinload(PurchaseOrderModel.items).selectinload(PurchaseOrderItemModel.inventory_item)
     ).filter(PurchaseOrderModel.id == po_id, PurchaseOrderModel.tenant_id == tenant_id).first()
 
-    logger.info(f"Item ID {item_id} in Purchase Order (ID: {po_id}) updated by user {get_user_identifier(user)} for tenant {tenant_id}")
+    if not db_po:
+        raise HTTPException(status_code=404, detail="Purchase Order not found")
+
+    item_to_update = next((item for item in db_po.items if item.id == item_id), None)
+    if not item_to_update:
+        raise HTTPException(status_code=404, detail="Purchase Order Item not found")
+
+    if db_po.status == PurchaseOrderStatus.PAID:
+        raise HTTPException(status_code=400, detail=f"Cannot modify items for a purchase order with status '{db_po.status.value}'.")
+
+    update_data = item_update.model_dump(exclude_unset=True)
+    new_inventory_item_id = update_data.get("inventory_item_id")
+    is_item_change = new_inventory_item_id and new_inventory_item_id != item_to_update.inventory_item_id
+
+    if is_item_change:
+        # --- Handle full item change (revert old, add new) ---
+
+        # 1. Revert stock for the OLD item
+        old_inv_item = item_to_update.inventory_item
+        if old_inv_item:
+            old_stock = old_inv_item.current_stock or 0
+            old_inv_item.current_stock = old_stock - item_to_update.quantity
+            db.add(old_inv_item)
+            audit = InventoryItemAudit(
+                inventory_item_id=old_inv_item.id, change_type="purchase_reversal",
+                change_amount=-item_to_update.quantity, old_quantity=old_stock,
+                new_quantity=old_inv_item.current_stock, changed_by=get_user_identifier(user),
+                note=f"Item changed on PO #{po_id}", tenant_id=tenant_id
+            )
+            db.add(audit)
+
+        # 2. Validate and add stock for the NEW item
+        new_inv_item = db.query(InventoryItemModel).filter(InventoryItemModel.id == new_inventory_item_id, InventoryItemModel.tenant_id == tenant_id).first()
+        if not new_inv_item:
+            raise HTTPException(status_code=400, detail=f"New Inventory Item with ID {new_inventory_item_id} not found.")
+
+        new_quantity = Decimal(update_data.get('quantity', item_to_update.quantity))
+        new_price = Decimal(update_data.get('price_per_unit', item_to_update.price_per_unit))
+
+        # Add stock for the new item
+        current_stock_new_item = new_inv_item.current_stock or 0
+        current_avg_cost = new_inv_item.average_cost or 0
+        
+        if current_stock_new_item + new_quantity > 0:
+            new_avg_cost = ((current_stock_new_item * current_avg_cost) + (new_quantity * new_price)) / (current_stock_new_item + new_quantity)
+            new_inv_item.average_cost = new_avg_cost
+
+        new_inv_item.current_stock = current_stock_new_item + new_quantity
+        db.add(new_inv_item)
+        audit = InventoryItemAudit(
+            inventory_item_id=new_inv_item.id, change_type="purchase",
+            change_amount=new_quantity, old_quantity=current_stock_new_item,
+            new_quantity=new_inv_item.current_stock, changed_by=get_user_identifier(user),
+            note=f"Item changed on PO #{po_id}", tenant_id=tenant_id
+        )
+        db.add(audit)
+        
+        # 3. Update the PO item in the database
+        for key, value in update_data.items():
+            setattr(item_to_update, key, value)
+
+    else:
+        # --- Handle only quantity/price change ---
+        old_qty = item_to_update.quantity
+        new_qty = Decimal(update_data.get('quantity', old_qty))
+        delta = new_qty - old_qty
+
+        if delta != 0:
+            inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_to_update.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).with_for_update().first()
+            
+            # Adjust average cost only if quantity is increasing
+            if delta > 0:
+                purchase_price = Decimal(update_data.get('price_per_unit', item_to_update.price_per_unit))
+                current_stock = inv.current_stock or 0
+                current_avg_cost = inv.average_cost or 0
+                if current_stock + delta > 0:
+                    new_avg_cost = ((current_stock * current_avg_cost) + (delta * purchase_price)) / (current_stock + delta)
+                    inv.average_cost = new_avg_cost
+
+            old_stock = inv.current_stock or 0
+            inv.current_stock = old_stock + delta
+            db.add(inv)
+            
+            audit = InventoryItemAudit(
+                inventory_item_id=inv.id, change_type="purchase_adjustment",
+                change_amount=delta, old_quantity=old_stock,
+                new_quantity=inv.current_stock, changed_by=get_user_identifier(user),
+                note=f"Quantity updated on PO #{po_id}", tenant_id=tenant_id
+            )
+            db.add(audit)
+
+        for key, value in update_data.items():
+            setattr(item_to_update, key, value)
+
+    # Recalculate totals and commit
+    item_to_update.line_total = item_to_update.quantity * item_to_update.price_per_unit
+    
+    db.flush() # Flush the session to update the item's line_total before summing
+
+    db_po.total_amount = sum(item.line_total for item in db_po.items)
+    db_po.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
+    db_po.updated_by = get_user_identifier(user)
+
+    db.commit()
+    db.refresh(db_po)
+
+    logger.info(f"Purchase Order Item (ID: {item_id}) of Purchase Order (ID: {po_id}) updated by user {get_user_identifier(user)} for tenant {tenant_id}")
     return db_po
 
 @router.delete("/{po_id}/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)

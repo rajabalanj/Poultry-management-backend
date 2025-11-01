@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import func
 from typing import List, Optional
@@ -9,6 +10,7 @@ import os
 import uuid
 from utils.auth_utils import get_current_user, get_user_identifier
 from utils.tenancy import get_tenant_id
+from utils.receipt_utils import generate_sales_order_receipt
 import pytz
 from crud.audit_log import create_audit_log
 from schemas.audit_log import AuditLogCreate
@@ -171,9 +173,9 @@ def create_sales_order(
         ).first()
 
         if egg_room_report:
-            egg_room_report.table_transfer += table_egg_qty
-            egg_room_report.jumbo_transfer += jumbo_egg_qty
-            egg_room_report.grade_c_transfer += grade_c_egg_qty
+            egg_room_report.table_transfer += int(table_egg_qty)
+            egg_room_report.jumbo_transfer += int(jumbo_egg_qty)
+            egg_room_report.grade_c_transfer += int(grade_c_egg_qty)
             db.add(egg_room_report)
             db.commit()
 
@@ -315,9 +317,9 @@ def update_sales_order(
                 EggRoomReportModel.tenant_id == tenant_id
             ).first()
             if old_egg_room_report:
-                old_egg_room_report.table_transfer -= egg_items_by_type["Table Egg"]
-                old_egg_room_report.jumbo_transfer -= egg_items_by_type["Jumbo Egg"]
-                old_egg_room_report.grade_c_transfer -= egg_items_by_type["Grade C Egg"]
+                old_egg_room_report.table_transfer -= int(egg_items_by_type["Table Egg"])
+                old_egg_room_report.jumbo_transfer -= int(egg_items_by_type["Jumbo Egg"])
+                old_egg_room_report.grade_c_transfer -= int(egg_items_by_type["Grade C Egg"])
                 db.add(old_egg_room_report)
 
             # Apply to new date report
@@ -335,9 +337,9 @@ def update_sales_order(
                     user_id=get_user_identifier(user)
                 )
             
-            new_egg_room_report.table_transfer += egg_items_by_type["Table Egg"]
-            new_egg_room_report.jumbo_transfer += egg_items_by_type["Jumbo Egg"]
-            new_egg_room_report.grade_c_transfer += egg_items_by_type["Grade C Egg"]
+            new_egg_room_report.table_transfer += int(egg_items_by_type["Table Egg"])
+            new_egg_room_report.jumbo_transfer += int(egg_items_by_type["Jumbo Egg"])
+            new_egg_room_report.grade_c_transfer += int(egg_items_by_type["Grade C Egg"])
             db.add(new_egg_room_report)
 
     # Note: SHIPPED and CANCELLED statuses are not set anywhere in backend.
@@ -387,16 +389,17 @@ def add_item_to_sales_order(
     if not db_so:
         raise HTTPException(status_code=404, detail="Sales Order not found")
 
-    # Restrict adding items based on SO status (only prevent adding when fully paid)
     if db_so.status == SalesOrderStatus.PAID:
         raise HTTPException(status_code=400, detail=f"Cannot add items to a sales order with status '{db_so.status.value}'.")
 
-    # Validate that the inventory item exists
-    db_inventory_item = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_request.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).first()
+    db_inventory_item = db.query(InventoryItemModel).filter(
+        InventoryItemModel.id == item_request.inventory_item_id, 
+        InventoryItemModel.tenant_id == tenant_id
+    ).first()
     if not db_inventory_item:
         raise HTTPException(status_code=400, detail=f"Inventory Item with ID {item_request.inventory_item_id} not found.")
 
-    # --- Stock validation logic --- 
+    # Stock validation
     if db_inventory_item.name in EGG_ITEM_NAMES:
         available_stock = _get_available_egg_stock(db, tenant_id, db_so.order_date, db_inventory_item.name)
         if available_stock < item_request.quantity:
@@ -404,9 +407,7 @@ def add_item_to_sales_order(
     else:
         if db_inventory_item.current_stock < item_request.quantity:
             raise HTTPException(status_code=400, detail=f"Insufficient stock for item '{db_inventory_item.name}'. Available: {db_inventory_item.current_stock}, Requested: {item_request.quantity}")
-    # --- End stock validation logic --- 
 
-    # Check if item already exists in this SO to prevent duplicates
     existing_item = db.query(SalesOrderItemModel).filter(
         SalesOrderItemModel.sales_order_id == so_id,
         SalesOrderItemModel.inventory_item_id == item_request.inventory_item_id,
@@ -426,61 +427,39 @@ def add_item_to_sales_order(
     )
     db.add(db_so_item)
     
-    # Update the total_amount on the parent Sales Order
     db_so.total_amount += line_total
-    db_so.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
-    db_so.updated_by = get_user_identifier(user)
-    # Deduct inventory for this added item
+    
+    # Stock deduction and EggRoomReport update
     inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_request.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).with_for_update().first()
-    if inv is None:
-        raise HTTPException(status_code=400, detail=f"Inventory Item with ID {item_request.inventory_item_id} not found when updating stock.")
-    
-    # --- Stock deduction logic --- 
     if inv.name in EGG_ITEM_NAMES:
-        # For eggs, stock is managed via EggRoomReport, so no deduction from InventoryItem.current_stock
-        pass # Stock deduction for eggs happens in the EggRoomReport update section below
-    else:
-        if inv.current_stock is None or inv.current_stock < item_request.quantity:
-            raise HTTPException(status_code=400, detail=f"Insufficient stock for item '{getattr(inv, 'name', item_request.inventory_item_id)}'. Available: {inv.current_stock}, Required: {item_request.quantity}")
-
-        old_stock = inv.current_stock or 0
-        inv.current_stock -= item_request.quantity
-        db.add(inv)
-
-        # Create audit record for inventory decrease from adding SO item
-        audit = InventoryItemAudit(
-            inventory_item_id=inv.id,
-            change_type="sale",
-            change_amount=item_request.quantity,
-            old_quantity=old_stock,
-            new_quantity=inv.current_stock,
-            changed_by=get_user_identifier(user),
-            note=f"Added to SO #{so_id}",
-            tenant_id=tenant_id
-        )
-        db.add(audit)
-    # --- End stock deduction logic --- 
-    
-    db.commit()
-
-    # ADDED: Update egg room report for egg sales
-    db_inventory_item = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_request.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).first()
-    if db_inventory_item:
         egg_room_report = db.query(EggRoomReportModel).filter(
             EggRoomReportModel.report_date == db_so.order_date,
             EggRoomReportModel.tenant_id == tenant_id
         ).first()
-
         if egg_room_report:
-            if db_inventory_item.name == "Table Egg":
-                egg_room_report.table_transfer += item_request.quantity
-            elif db_inventory_item.name == "Jumbo Egg":
-                egg_room_report.jumbo_transfer += item_request.quantity
-            elif db_inventory_item.name == "Grade C Egg":
-                egg_room_report.grade_c_transfer += item_request.quantity
+            if inv.name == "Table Egg":
+                egg_room_report.table_transfer += int(item_request.quantity)
+            elif inv.name == "Jumbo Egg":
+                egg_room_report.jumbo_transfer += int(item_request.quantity)
+            elif inv.name == "Grade C Egg":
+                egg_room_report.grade_c_transfer += int(item_request.quantity)
             db.add(egg_room_report)
-            db.commit()
+    else:
+        old_stock = inv.current_stock or 0
+        inv.current_stock -= item_request.quantity
+        db.add(inv)
+        audit = InventoryItemAudit(
+            inventory_item_id=inv.id, change_type="sale",
+            change_amount=item_request.quantity, old_quantity=old_stock,
+            new_quantity=inv.current_stock, changed_by=get_user_identifier(user),
+            note=f"Added to SO #{so_id}", tenant_id=tenant_id
+        )
+        db.add(audit)
 
+    db_so.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
+    db_so.updated_by = get_user_identifier(user)
+    
+    db.commit()
     db.refresh(db_so)
 
     # Re-query with relationships for a complete response object
@@ -493,6 +472,7 @@ def add_item_to_sales_order(
     logger.info(f"Item {db_inventory_item.name} added to Sales Order (ID: {so_id}) by user {get_user_identifier(user)} for tenant {tenant_id}")
     return db_so
 
+
 @router.patch("/{so_id}/items/{item_id}", response_model=SalesOrderSchema)
 def update_sales_order_item(
     so_id: int,
@@ -502,113 +482,146 @@ def update_sales_order_item(
     user: dict = Depends(get_current_user),
     tenant_id: str = Depends(get_tenant_id)
 ):
-    """Update a specific item in a sales order."""
-    db_so = (
-        db.query(SalesOrderModel)
-        .options(selectinload(SalesOrderModel.items))
-        .filter(SalesOrderModel.id == so_id, SalesOrderModel.tenant_id == tenant_id)
-        .first()
-    )
+    logger.info(f"Updating sales order item {item_id} for SO {so_id} with data: {item_update.model_dump_json()}")
+    """
+    Update a specific item in a sales order.
+    - If the inventory_item_id is changed, it's treated as a 'delete' of the old item
+      and an 'add' of the new item to ensure correct stock and report handling.
+    - If only quantity/price is changed, it adjusts the stock based on the delta.
+    """
+    db_so = db.query(SalesOrderModel).options(
+        selectinload(SalesOrderModel.items).selectinload(SalesOrderItemModel.inventory_item)
+    ).filter(SalesOrderModel.id == so_id, SalesOrderModel.tenant_id == tenant_id).first()
+
     if not db_so:
         raise HTTPException(status_code=404, detail="Sales Order not found")
 
-    item_to_update = None
-    for item in db_so.items:
-        if item.id == item_id:
-            item_to_update = item
-            break
-
+    item_to_update = next((item for item in db_so.items if item.id == item_id), None)
     if not item_to_update:
         raise HTTPException(status_code=404, detail="Sales Order Item not found")
 
-    # Do not allow item updates for finalized sales orders
     if db_so.status == SalesOrderStatus.PAID:
         raise HTTPException(status_code=400, detail=f"Cannot modify items for a sales order with status '{db_so.status.value}'.")
 
-    # Capture old quantity then apply updates and adjust inventory by the delta
-    old_qty = item_to_update.quantity
     update_data = item_update.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(item_to_update, key, value)
+    new_inventory_item_id = update_data.get("inventory_item_id")
+    is_item_change = new_inventory_item_id and new_inventory_item_id != item_to_update.inventory_item_id
 
-    # Recalculate line total and order total amount
-    item_to_update.line_total = item_to_update.quantity * item_to_update.price_per_unit
-    # Adjust inventory by the difference
-    new_qty = item_to_update.quantity
-    delta = new_qty - old_qty
-
-    # ADDED: Update egg room report for egg sales
-    if delta != 0:
-        inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_to_update.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).first()
-        if inv:
-            egg_room_report = db.query(EggRoomReportModel).filter(
-                EggRoomReportModel.report_date == db_so.order_date,
-                EggRoomReportModel.tenant_id == tenant_id
-            ).first()
-
-            if egg_room_report:
-                if inv.name == "Table Egg":
-                    egg_room_report.table_transfer += delta
-                elif inv.name == "Jumbo Egg":
-                    egg_room_report.jumbo_transfer += delta
-                elif inv.name == "Grade C Egg":
-                    egg_room_report.grade_c_transfer += delta
-                db.add(egg_room_report)
-
-    if delta != 0:
-        inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item_to_update.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).with_for_update().first()
-        if inv is None:
-            raise HTTPException(status_code=400, detail=f"Inventory Item with ID {item_to_update.inventory_item_id} not found when updating stock.")
+    if is_item_change:
+        # --- Handle full item change (delete old, add new) ---
         
-        # --- Stock validation and deduction logic --- 
-        if inv.name in EGG_ITEM_NAMES:
-            if delta > 0: # If quantity increased, check egg stock
-                available_stock = _get_available_egg_stock(db, tenant_id, db_so.order_date, inv.name)
-                if available_stock < delta:
-                    raise HTTPException(status_code=400, detail=f"Insufficient stock for item '{inv.name}'. Available: {available_stock}, Required additional: {delta}")
-            # No direct deduction from InventoryItem.current_stock for eggs
-            pass
-        else:
-            if delta > 0:
-                # Need more stock
-                if inv.current_stock is None or inv.current_stock < delta:
-                    raise HTTPException(status_code=400, detail=f"Insufficient stock for item '{getattr(inv, 'name', item_to_update.inventory_item_id)}'. Available: {inv.current_stock}, Required additional: {delta}")
-                old_stock = inv.current_stock or 0
-                inv.current_stock -= delta
-                db.add(inv)
-
-                # Create audit record for inventory decrease due to increasing SO item quantity
+        # 1. Restore stock for the OLD item
+        old_inv_item = item_to_update.inventory_item
+        if old_inv_item:
+            if old_inv_item.name in EGG_ITEM_NAMES:
+                egg_room_report = db.query(EggRoomReportModel).filter(
+                    EggRoomReportModel.report_date == db_so.order_date,
+                    EggRoomReportModel.tenant_id == tenant_id
+                ).first()
+                if egg_room_report:
+                    if old_inv_item.name == "Table Egg": egg_room_report.table_transfer -= int(item_to_update.quantity)
+                    elif old_inv_item.name == "Jumbo Egg": egg_room_report.jumbo_transfer -= int(item_to_update.quantity)
+                    elif old_inv_item.name == "Grade C Egg": egg_room_report.grade_c_transfer -= int(item_to_update.quantity)
+                    db.add(egg_room_report)
+            else:
+                old_stock = old_inv_item.current_stock or 0
+                old_inv_item.current_stock += item_to_update.quantity
+                db.add(old_inv_item)
                 audit = InventoryItemAudit(
-                    inventory_item_id=inv.id,
-                    change_type="sale",
-                    change_amount=delta,
-                    old_quantity=old_stock,
-                    new_quantity=inv.current_stock,
-                    changed_by=get_user_identifier(user),
-                    note=f"Increased quantity on SO #{so_id} (Item ID: {item_id})",
-                    tenant_id=tenant_id
+                    inventory_item_id=old_inv_item.id, change_type="return",
+                    change_amount=item_to_update.quantity, old_quantity=old_stock,
+                    new_quantity=old_inv_item.current_stock, changed_by=get_user_identifier(user),
+                    note=f"Item changed on SO #{so_id}", tenant_id=tenant_id
                 )
                 db.add(audit)
-            else:
-                # Returned/reduced quantity -> restore stock
-                restore_amount = -delta
-                old_stock = inv.current_stock or 0
-                inv.current_stock = (inv.current_stock or 0) + restore_amount
-                db.add(inv)
-                # (Optional) create a return/adjustment audit if desired
-        # --- End stock validation and deduction logic --- 
 
-    total_amount = sum(item.line_total for item in db_so.items)
-    db_so.total_amount = total_amount
+        # 2. Validate and deduct stock for the NEW item
+        new_inv_item = db.query(InventoryItemModel).filter(InventoryItemModel.id == new_inventory_item_id, InventoryItemModel.tenant_id == tenant_id).first()
+        if not new_inv_item:
+            raise HTTPException(status_code=400, detail=f"New Inventory Item with ID {new_inventory_item_id} not found.")
+
+        new_quantity = Decimal(update_data.get('quantity', item_to_update.quantity))
+
+        if new_inv_item.name in EGG_ITEM_NAMES:
+            available_stock = _get_available_egg_stock(db, tenant_id, db_so.order_date, new_inv_item.name)
+            if available_stock < new_quantity:
+                raise HTTPException(status_code=400, detail=f"Insufficient stock for new item '{new_inv_item.name}'. Available: {available_stock}, Requested: {new_quantity}")
+            
+            egg_room_report = db.query(EggRoomReportModel).filter(EggRoomReportModel.report_date == db_so.order_date, EggRoomReportModel.tenant_id == tenant_id).first()
+            if egg_room_report:
+                if new_inv_item.name == "Table Egg": egg_room_report.table_transfer += int(new_quantity)
+                elif new_inv_item.name == "Jumbo Egg": egg_room_report.jumbo_transfer += int(new_quantity)
+                elif new_inv_item.name == "Grade C Egg": egg_room_report.grade_c_transfer += int(new_quantity)
+                db.add(egg_room_report)
+        else:
+            if new_inv_item.current_stock < new_quantity:
+                raise HTTPException(status_code=400, detail=f"Insufficient stock for new item '{new_inv_item.name}'. Available: {new_inv_item.current_stock}, Requested: {new_quantity}")
+            
+            old_stock = new_inv_item.current_stock or 0
+            new_inv_item.current_stock -= new_quantity
+            db.add(new_inv_item)
+            audit = InventoryItemAudit(
+                inventory_item_id=new_inv_item.id, change_type="sale",
+                change_amount=new_quantity, old_quantity=old_stock,
+                new_quantity=new_inv_item.current_stock, changed_by=get_user_identifier(user),
+                note=f"Item changed on SO #{so_id}", tenant_id=tenant_id
+            )
+            db.add(audit)
+        
+        # 3. Update the item in the database
+        for key, value in update_data.items():
+            setattr(item_to_update, key, value)
+
+    else:
+        # --- Handle only quantity/price change ---
+        old_qty = item_to_update.quantity
+        new_qty = Decimal(update_data.get('quantity', old_qty))
+        delta = new_qty - old_qty
+
+        if delta != 0:
+            inv = item_to_update.inventory_item
+            if inv.name in EGG_ITEM_NAMES:
+                if delta > 0:
+                    available_stock = _get_available_egg_stock(db, tenant_id, db_so.order_date, inv.name)
+                    if available_stock < delta:
+                        raise HTTPException(status_code=400, detail=f"Insufficient stock for item '{inv.name}'. Available: {available_stock}, Required additional: {delta}")
+                
+                egg_room_report = db.query(EggRoomReportModel).filter(EggRoomReportModel.report_date == db_so.order_date, EggRoomReportModel.tenant_id == tenant_id).first()
+                if egg_room_report:
+                    if inv.name == "Table Egg": egg_room_report.table_transfer += int(delta)
+                    elif inv.name == "Jumbo Egg": egg_room_report.jumbo_transfer += int(delta)
+                    elif inv.name == "Grade C Egg": egg_room_report.grade_c_transfer += int(delta)
+                    db.add(egg_room_report)
+            else:
+                inv_with_lock = db.query(InventoryItemModel).filter(InventoryItemModel.id == inv.id, InventoryItemModel.tenant_id == tenant_id).with_for_update().first()
+                if delta > 0 and inv_with_lock.current_stock < delta:
+                    raise HTTPException(status_code=400, detail=f"Insufficient stock for item '{inv.name}'. Available: {inv_with_lock.current_stock}, Required additional: {delta}")
+                
+                old_stock = inv_with_lock.current_stock or 0
+                inv_with_lock.current_stock -= delta
+                db.add(inv_with_lock)
+                audit = InventoryItemAudit(
+                    inventory_item_id=inv.id, change_type="sale_adjustment",
+                    change_amount=-delta, old_quantity=old_stock,
+                    new_quantity=inv_with_lock.current_stock, changed_by=get_user_identifier(user),
+                    note=f"Quantity updated on SO #{so_id}", tenant_id=tenant_id
+                )
+                db.add(audit)
+
+        for key, value in update_data.items():
+            setattr(item_to_update, key, value)
+
+    # Recalculate totals and commit
+    item_to_update.line_total = item_to_update.quantity * item_to_update.price_per_unit
+    
+    db_so.total_amount = sum(item.line_total for item in db_so.items)
     db_so.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
     db_so.updated_by = get_user_identifier(user)
 
     db.commit()
     db.refresh(db_so)
 
-    logger.info(
-        f"Sales Order Item (ID: {item_id}) of Sales Order (ID: {so_id}) updated by user {get_user_identifier(user)} for tenant {tenant_id}"
-    )
+    logger.info(f"Sales Order Item (ID: {item_id}) of Sales Order (ID: {so_id}) updated by user {get_user_identifier(user)} for tenant {tenant_id}")
     return db_so
 
 @router.delete("/{so_id}/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -657,11 +670,11 @@ def delete_sales_order_item(
 
             if egg_room_report:
                 if inv.name == "Table Egg":
-                    egg_room_report.table_transfer -= item_to_delete.quantity
+                    egg_room_report.table_transfer -= int(item_to_delete.quantity)
                 elif inv.name == "Jumbo Egg":
-                    egg_room_report.jumbo_transfer -= item_to_delete.quantity
+                    egg_room_report.jumbo_transfer -= int(item_to_delete.quantity)
                 elif inv.name == "Grade C Egg":
-                    egg_room_report.grade_c_transfer -= item_to_delete.quantity
+                    egg_room_report.grade_c_transfer -= int(item_to_delete.quantity)
                 db.add(egg_room_report)
         else:
             # For non-egg items, restore current_stock
@@ -737,9 +750,9 @@ def delete_sales_order(
         ).first()
 
         if egg_room_report:
-            egg_room_report.table_transfer -= table_egg_qty
-            egg_room_report.jumbo_transfer -= jumbo_egg_qty
-            egg_room_report.grade_c_transfer -= grade_c_egg_qty
+            egg_room_report.table_transfer -= int(table_egg_qty)
+            egg_room_report.jumbo_transfer -= int(jumbo_egg_qty)
+            egg_room_report.grade_c_transfer -= int(grade_c_egg_qty)
             db.add(egg_room_report)
 
     # Restore inventory for items on the deleted sales order
@@ -764,6 +777,27 @@ def delete_sales_order(
     db.commit()
     logger.info(f"Sales Order (ID: {so_id}) soft deleted by user {get_user_identifier(user)} for tenant {tenant_id}")
     return {"message": "Sales Order deleted successfully"}
+
+
+@router.get("/{so_id}/receipt", response_class=FileResponse)
+def get_sales_order_receipt(so_id: int, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
+    """
+    Generate and return a PDF receipt for a single sales order.
+    """
+    db_so = db.query(SalesOrderModel).filter(SalesOrderModel.id == so_id, SalesOrderModel.tenant_id == tenant_id).first()
+    if db_so is None:
+        raise HTTPException(status_code=404, detail="Sales Order not found")
+
+    try:
+        filepath = generate_sales_order_receipt(db, so_id)
+        filename = os.path.basename(filepath)
+        return FileResponse(filepath, media_type='application/pdf', filename=filename)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.exception(f"Failed to generate receipt for SO {so_id}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate receipt: {str(e)}")
+
 
 class ReceiptUploadRequest(BaseModel):
     filename: str

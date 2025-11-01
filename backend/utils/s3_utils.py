@@ -3,6 +3,7 @@ from botocore.exceptions import ClientError
 import os
 import logging
 import uuid
+from fastapi import UploadFile
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,30 @@ def get_s3_client():
             logger.exception("Failed to create boto3 S3 client")
             raise
     return S3_CLIENT
+
+def upload_generated_receipt_to_s3(tenant_id: str, object_id: int, filepath: str) -> str:
+    """
+    Uploads a generated receipt file to S3 and returns the S3 path.
+
+    Args:
+        tenant_id: The ID of the tenant.
+        object_id: The ID of the object (e.g., payment_id).
+        filepath: The local path to the generated receipt file.
+
+    Returns:
+        The S3 path of the uploaded object.
+    """
+    s3_client = get_s3_client()
+    filename = os.path.basename(filepath)
+    s3_key = f"receipts/{tenant_id}/{filename}"
+
+    try:
+        s3_client.upload_file(filepath, S3_BUCKET_NAME, s3_key)
+        logger.info(f"File uploaded to S3 key: {s3_key}")
+        return f"s3://{S3_BUCKET_NAME}/{s3_key}"
+    except ClientError as e:
+        logger.exception(f"Failed to upload file to S3 key: {s3_key}")
+        raise RuntimeError(f"Could not upload file to S3: {e}")
 
 # --- Pre-signed URL Generation (Optimization 3 - Best) ---
 

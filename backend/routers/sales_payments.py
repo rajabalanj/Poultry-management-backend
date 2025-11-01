@@ -12,12 +12,13 @@ from crud.audit_log import create_audit_log
 from schemas.audit_log import AuditLogCreate
 from utils import sqlalchemy_to_dict
 from pydantic import BaseModel
+from utils.receipt_utils import generate_sales_receipt
 
 try:
-    from utils.s3_utils import generate_presigned_upload_url, generate_presigned_download_url
+    from utils.s3_utils import generate_presigned_download_url, upload_generated_receipt_to_s3
 except ImportError:
-    generate_presigned_upload_url = None
     generate_presigned_download_url = None
+    upload_generated_receipt_to_s3 = None
 
 from database import get_db
 from models.sales_payments import SalesPayment as SalesPaymentModel
@@ -34,12 +35,10 @@ def create_sales_payment(
     user: dict = Depends(require_group(["admin", "payment-group"])),
     tenant_id: str = Depends(get_tenant_id)
 ):
-    """Record a new payment for a sales order."""
+    """Record a new payment for a sales order and generate a receipt."""
     db_so = db.query(SalesOrderModel).filter(SalesOrderModel.id == payment.sales_order_id, SalesOrderModel.tenant_id == tenant_id).first()
     if db_so is None:
         raise HTTPException(status_code=404, detail="Sales Order not found for this payment.")
-
-    # No CANCELLED status present in enum; continue with payment logic
 
     remaining_amount = db_so.total_amount - db_so.total_amount_paid
     if payment.amount_paid > remaining_amount:
@@ -52,6 +51,30 @@ def create_sales_payment(
     db.add(db_payment)
     db.commit()
     db.refresh(db_payment)
+
+    # Generate and upload receipt
+    receipt_path = None
+    try:
+        logger.debug(f"Attempting to generate receipt for payment {db_payment.id}.")
+        receipt_path = generate_sales_receipt(db, db_payment.id)
+        logger.debug(f"Receipt generated at: {receipt_path}")
+
+        if upload_generated_receipt_to_s3:
+            logger.debug(f"S3 upload functionality is configured. Attempting to upload receipt {receipt_path} to S3.")
+            s3_path = upload_generated_receipt_to_s3(tenant_id, db_payment.id, receipt_path)
+            db_payment.payment_receipt = s3_path
+            db.commit()
+            db.refresh(db_payment)
+            logger.debug(f"Receipt uploaded to S3: {s3_path} and payment_receipt field updated for payment {db_payment.id}.")
+        else:
+            logger.warning(f"S3 upload functionality is NOT configured. Receipt for payment {db_payment.id} will NOT be uploaded to S3 and payment_receipt field will remain None.")
+    except Exception as e:
+        logger.exception(f"Failed to generate or upload receipt for payment {db_payment.id}. Payment record still exists but receipt might be missing.")
+        # Decide if you want to raise an error to the user or just log it
+    finally:
+        if receipt_path and os.path.exists(receipt_path):
+            os.remove(receipt_path)
+            logger.debug(f"Temporary receipt file removed: {receipt_path}")
 
     # Update total_amount_paid and SO status
     db_so.total_amount_paid += payment.amount_paid
@@ -194,41 +217,7 @@ def delete_sales_payment(
     logger.info(f"Sales Payment ID {payment_id} deleted for Sales Order ID {db_payment.sales_order_id}  by user {get_user_identifier(user)} for tenant {tenant_id}")
     return {"message": "Sales Payment deleted successfully"}
 
-class ReceiptUploadRequest(BaseModel):
-    filename: str
 
-@router.post("/{payment_id}/receipt-upload-url")
-def get_receipt_upload_url(
-    payment_id: int,
-    request_body: ReceiptUploadRequest,
-    db: Session = Depends(get_db),
-    user: dict = Depends(require_group(["admin", "payment-group"])),
-    tenant_id: str = Depends(get_tenant_id)
-):
-    """Get a pre-signed URL for uploading a payment receipt."""
-    if not generate_presigned_upload_url:
-        raise HTTPException(status_code=501, detail="S3 upload functionality is not configured.")
-
-    db_payment = db.query(SalesPaymentModel).filter(SalesPaymentModel.id == payment_id, SalesPaymentModel.tenant_id == tenant_id).first()
-    if not db_payment:
-        raise HTTPException(status_code=404, detail="Sales Payment not found")
-
-    try:
-        upload_data = generate_presigned_upload_url(
-            tenant_id=tenant_id,
-            object_id=payment_id,
-            filename=request_body.filename
-        )
-        
-        # Save the final S3 path to the database immediately
-        db_payment.payment_receipt = upload_data["s3_path"]
-        db.commit()
-
-        return {"upload_url": upload_data["upload_url"], "s3_path": upload_data["s3_path"]}
-
-    except Exception as e:
-        logger.exception(f"Failed to generate presigned URL for payment {payment_id}")
-        raise HTTPException(status_code=500, detail=f"Failed to generate upload URL: {str(e)}")
 
 @router.get("/{payment_id}/receipt-download-url")
 def get_receipt_download_url(
@@ -237,21 +226,33 @@ def get_receipt_download_url(
     tenant_id: str = Depends(get_tenant_id)
 ):
     """Get a pre-signed URL for downloading a payment receipt."""
+    logger.debug(f"Attempting to get receipt download URL for payment_id: {payment_id}, tenant_id: {tenant_id}")
+
     if not generate_presigned_download_url:
+        logger.warning(f"S3 download functionality is not configured for tenant_id: {tenant_id}. Raising 501.")
         raise HTTPException(status_code=501, detail="S3 download functionality is not configured.")
 
     db_payment = db.query(SalesPaymentModel).filter(SalesPaymentModel.id == payment_id, SalesPaymentModel.tenant_id == tenant_id).first()
-    if not db_payment or not db_payment.payment_receipt:
-        raise HTTPException(status_code=404, detail="Receipt not found")
+    if not db_payment:
+        logger.warning(f"Sales Payment with ID {payment_id} not found for tenant_id: {tenant_id}. Raising 404.")
+        raise HTTPException(status_code=404, detail="Sales Payment not found")
 
+    if not db_payment.payment_receipt:
+        logger.warning(f"Sales Payment {payment_id} has no payment_receipt recorded for tenant_id: {tenant_id}. Raising 404.")
+        raise HTTPException(status_code=404, detail="Receipt not found")
+    
+    logger.debug(f"Payment {payment_id} payment_receipt value: {db_payment.payment_receipt}")
     if not db_payment.payment_receipt.startswith('s3://'):
+        logger.warning(f"Payment {payment_id} receipt path '{db_payment.payment_receipt}' is not an S3 path for tenant_id: {tenant_id}. Raising 400.")
         raise HTTPException(status_code=400, detail="Receipt is not stored in S3.")
 
     try:
         download_url = generate_presigned_download_url(s3_path=db_payment.payment_receipt)
+        logger.debug(f"Successfully generated download URL for payment {payment_id}.")
         return {"download_url": download_url}
     except FileNotFoundError as e:
+        logger.error(f"S3 file not found for payment {payment_id} at path {db_payment.payment_receipt}: {e}", exc_info=True)
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        logger.exception(f"Failed to generate download URL for payment {payment_id}")
+        logger.exception(f"Failed to generate download URL for payment {payment_id} for tenant_id: {tenant_id}")
         raise HTTPException(status_code=500, detail=f"Failed to generate download URL: {str(e)}")

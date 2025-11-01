@@ -48,3 +48,9 @@ backend/tests/test_crud/test_egg_room_reports.py
 pytest.ini
 backend/tests/test_routers/test_purchase_orders.py
 backend/tests/test_routers/test_sales_orders.py
+backend/tests/test_routers/README_PURCHASE_ORDER_TESTS.md
+backend/tests/test_routers/test_purchase_orders_final.py
+backend/tests/test_routers/test_purchase_orders_pytest.py
+backend/tests/test_routers/test_purchase_orders_simple.py
+backend/tests/test_routers/test_sales_orders_pytest.py
+backend/test_db.db
