@@ -194,6 +194,8 @@ def get_weekly_layer_report(
     tenant_id: str = Depends(get_tenant_id)
 ):
     """Get weekly report for layer birds based on age range (e.g., week 18 = 18.1 to 18.7)"""
+    if week < 1:
+        raise HTTPException(status_code=400, detail="Week must be 1 or greater.")
     
     # Calculate age range for the week
     start_age = f"{week}.1"

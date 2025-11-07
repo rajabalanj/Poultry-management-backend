@@ -102,14 +102,34 @@ def get_report(report_date: str, db: Session = Depends(get_db), tenant_id: str =
                 report.grade_c_shed_received = daily_batch_sums.grade_c_shed_received or 0
                 update_required = True
 
-            if prev_report and (
-                report.table_opening != prev_report.table_closing or
+            # Always update opening values if there's a previous report
+        if prev_report:
+            if (report.table_opening != prev_report.table_closing or
                 report.jumbo_opening != prev_report.jumbo_closing or
-                report.grade_c_opening != prev_report.grade_c_closing
-            ):
+                report.grade_c_opening != prev_report.grade_c_closing):
                 report.table_opening = prev_report.table_closing
                 report.jumbo_opening = prev_report.jumbo_closing
                 report.grade_c_opening = prev_report.grade_c_closing
+                update_required = True
+        # If no previous report exists, get opening values from app_config
+        else:
+            table_opening_config = db.query(AppConfig).filter(
+                AppConfig.name == 'table_opening', AppConfig.tenant_id == tenant_id).first()
+            jumbo_opening_config = db.query(AppConfig).filter(
+                AppConfig.name == 'jumbo_opening', AppConfig.tenant_id == tenant_id).first()
+            grade_c_opening_config = db.query(AppConfig).filter(
+                AppConfig.name == 'grade_c_opening', AppConfig.tenant_id == tenant_id).first()
+
+            table_opening = int(table_opening_config.value) if table_opening_config else 0
+            jumbo_opening = int(jumbo_opening_config.value) if jumbo_opening_config else 0
+            grade_c_opening = int(grade_c_opening_config.value) if grade_c_opening_config else 0
+
+            if (report.table_opening != table_opening or
+                report.jumbo_opening != jumbo_opening or
+                report.grade_c_opening != grade_c_opening):
+                report.table_opening = table_opening
+                report.jumbo_opening = jumbo_opening
+                report.grade_c_opening = grade_c_opening
                 update_required = True
 
             if update_required:

@@ -1,3 +1,4 @@
+import datetime
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from sqlalchemy.orm import Session
 from typing import List
@@ -20,7 +21,177 @@ from utils.tenancy import get_tenant_id
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+
+@router.post("/daily-batch/upload-weekly-report/{batch_id}")
+def upload_weekly_report_excel(
+    batch_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """
+    Upload and process an Excel file with weekly report data for a specific batch.
+    """
+    # First, check if the batch exists
+    batch_obj = db.query(BatchModel).filter(BatchModel.id == batch_id, BatchModel.tenant_id == tenant_id).first()
+    if not batch_obj:
+        raise HTTPException(status_code=404, detail=f"Batch with id {batch_id} not found.")
+
+    try:
+        contents = file.file.read()
+        df = pd.read_excel(io.BytesIO(contents), header=None)
+
+        # Find all occurrences of "AGE" in the first column (stripping whitespace)
+        if 0 in df.columns:
+            df[0] = df[0].astype(str).str.strip()
+        age_indices = df.index[df[0] == 'AGE'].tolist()
+        if not age_indices:
+            raise HTTPException(status_code=400, detail="No 'AGE' rows found in the Excel file.")
+
+        all_daily_batches_to_create = []
+
+        for age_idx in age_indices:
+            # Extract the age (week number)
+            try:
+                week_number = int(df.iloc[age_idx, 1])
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=400, detail=f"Invalid week number at row {age_idx + 1}.")
+
+            # Find the header row for the data
+            header_row_idx = age_idx + 1
+            header_row = [str(x).strip() for x in df.iloc[header_row_idx]]
+            expected_header = ['DATE', 'OPEN STOCK', 'MORT', 'CULLS', 'CLOSING STOCK', 'TABLE', 'JUMBO', 'CR', 'TOTAL', 'HD%', 'FEED KGS', 'REMARKS']
+            if header_row[:len(expected_header)] != expected_header:
+                raise HTTPException(status_code=400, detail=f"Invalid header at row {header_row_idx + 1}.")
+
+            # Read the 7 days of data
+            data_start_row = header_row_idx + 1
+            weekly_data = df.iloc[data_start_row:data_start_row + 7]
+
+            if len(weekly_data) != 7:
+                raise HTTPException(status_code=400, detail=f"Expected 7 days of data for week {week_number}, but found {len(weekly_data)}.")
+
+            for i, row in weekly_data.iterrows():
+                try:
+                    batch_date_str = row[0]
+                    if isinstance(batch_date_str, datetime.datetime):
+                        batch_date = batch_date_str.date()
+                    else:
+                        try:
+                            batch_date = pd.to_datetime(batch_date_str, format='%d-%m-%Y').date()
+                        except ValueError:
+                            batch_date = pd.to_datetime(batch_date_str, format='%Y-%m-%d %H:%M:%S').date()
+                    opening_count = int(row[1])
+                    mortality = int(row[2])
+                    culls = int(row[3])
+                    table_eggs = int(row[5])
+                    jumbo_eggs = int(row[6])
+                    cr_eggs = int(row[7])
+                except (ValueError, TypeError) as e:
+                    raise HTTPException(status_code=400, detail=f"Invalid data in row {i + 1} for week {week_number}: {e}")
+
+                day_of_week = i - data_start_row + 1
+                age = f"{week_number}.{day_of_week}"
+
+                daily_batch_data = DailyBatchCreate(
+                    batch_id=batch_id,
+                    tenant_id=tenant_id,
+                    shed_no=batch_obj.shed_no,
+                    batch_no=batch_obj.batch_no,
+                    upload_date=date.today(),
+                    batch_date=batch_date,
+                    age=age,
+                    opening_count=opening_count,
+                    mortality=mortality,
+                    culls=culls,
+                    table_eggs=table_eggs,
+                    jumbo=jumbo_eggs,
+                    cr=cr_eggs,
+                )
+                all_daily_batches_to_create.append(daily_batch_data)
+
+        # Now that all data is validated and collected, create or update the records
+        processed_records_count = 0
+        for daily_batch_data in all_daily_batches_to_create:
+            existing_daily_batch = crud_daily_batch.get_batch(db, daily_batch_data.batch_id, daily_batch_data.batch_date, tenant_id)
+            if existing_daily_batch:
+                # Update existing record
+                old_values = sqlalchemy_to_dict(existing_daily_batch)
+                for key, value in daily_batch_data.dict().items():
+                    if key in ['closing_count', 'total_eggs', 'hd', 'standard_hen_day_percentage']:
+                        continue
+                    setattr(existing_daily_batch, key, value)
+                
+                new_values = sqlalchemy_to_dict(existing_daily_batch)
+                log_entry = AuditLogCreate(
+                    table_name='daily_batch',
+                    record_id=f"{existing_daily_batch.batch_id}_{existing_daily_batch.batch_date}",
+                    changed_by=get_user_identifier(user),
+                    action='UPDATE',
+                    old_values=old_values,
+                    new_values=new_values
+                )
+                create_audit_log(db=db, log_entry=log_entry)
+
+            else:
+                # Create new record
+                created = crud_daily_batch.create_daily_batch(db=db, daily_batch_data=daily_batch_data, tenant_id=tenant_id)
+                new_values = sqlalchemy_to_dict(created)
+                log_entry = AuditLogCreate(
+                    table_name='daily_batch',
+                    record_id=f"{created.batch_id}_{created.batch_date}",
+                    changed_by=get_user_identifier(user),
+                    action='CREATE',
+                    old_values={},
+                    new_values=new_values
+                )
+                create_audit_log(db=db, log_entry=log_entry)
+
+            # Propagation logic
+            subsequent_rows = db.query(DailyBatchModel).filter(
+                DailyBatchModel.batch_id == daily_batch_data.batch_id,
+                DailyBatchModel.batch_date > daily_batch_data.batch_date,
+                DailyBatchModel.tenant_id == tenant_id
+            ).order_by(DailyBatchModel.batch_date.asc()).all()
+
+            current_record = crud_daily_batch.get_batch(db, daily_batch_data.batch_id, daily_batch_data.batch_date, tenant_id)
+
+            if current_record:
+                prev_closing = current_record.closing_count
+                prev_date = current_record.batch_date
+                try:
+                    prev_age = float(current_record.age)
+                except (ValueError, TypeError):
+                    prev_age = 0.0
+
+                from utils.age_utils import calculate_age_progression
+                for row_to_update in subsequent_rows:
+                    row_to_update.opening_count = prev_closing
+
+                    days_diff = (row_to_update.batch_date.date() - prev_date.date()).days
+                    new_age = calculate_age_progression(prev_age, days_diff)
+                    row_to_update.age = str(round(new_age, 1))
+
+                    prev_closing = row_to_update.closing_count
+                    prev_date = row_to_update.batch_date
+
+            processed_records_count += 1
+        
+        db.commit()
+
+        return {"message": f"File '{file.filename}' processed. {processed_records_count} daily batch records created or updated for batch {batch_id}."}
+
+    except HTTPException as he:
+        db.rollback()
+        raise he
+    except Exception as e:
+        db.rollback()
+        logger.exception(f"Unhandled error during weekly report upload: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to process file: {e}")
+
 @router.post("/daily-batch/upload-excel/")
+
 def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends(get_db), user: dict = Depends(get_current_user), tenant_id: str = Depends(get_tenant_id)):
     """
     Upload and process an Excel file for daily batch data.
@@ -316,7 +487,7 @@ def update_daily_batch(
             # Propagate age
             days_diff = (row.batch_date.date() - prev_date.date()).days
             prev_age = calculate_age_progression(prev_age, days_diff)
-            row.age = str(prev_age)
+            row.age = str(round(prev_age, 1))
             
             # Update for next iteration
             prev_closing = row.closing_count

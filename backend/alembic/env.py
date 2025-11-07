@@ -6,6 +6,30 @@ import sys
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from database import Base  # Import your Base and any models
+from models import (
+    app_config,
+    audit_log,
+    audit_mixin,
+    batch,
+    bovanswhitelayerperformance,
+    business_partners,
+    composition_usage_history,
+    composition_usage_item,
+    composition,
+    daily_batch,
+    egg_room_reports,
+    inventory_item_audit,
+    inventory_item_in_composition,
+    inventory_item_usage_history,
+    inventory_items,
+    operational_expenses,
+    payments,
+    purchase_order_items,
+    purchase_orders,
+    sales_order_items,
+    sales_orders,
+    sales_payments,
+)
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config

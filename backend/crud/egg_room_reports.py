@@ -36,11 +36,24 @@ def create_report(db: Session, report: EggRoomReportCreate, tenant_id: str, user
         EggRoomReport.tenant_id == tenant_id
     ).order_by(EggRoomReport.report_date.desc()).first()
 
-    opening_values = {
-        'table_opening': prev_report.table_closing if prev_report else 0,
-        'jumbo_opening': prev_report.jumbo_closing if prev_report else 0,
-        'grade_c_opening': prev_report.grade_c_closing if prev_report else 0
-    }
+    # If previous report exists, use its closing values as opening
+    if prev_report:
+        opening_values = {
+            'table_opening': prev_report.table_closing,
+            'jumbo_opening': prev_report.jumbo_closing,
+            'grade_c_opening': prev_report.grade_c_closing
+        }
+    # If no previous report exists, get opening values from app_config
+    else:
+        table_opening_config = crud_app_config.get_config(db, tenant_id, name="table_opening")
+        jumbo_opening_config = crud_app_config.get_config(db, tenant_id, name="jumbo_opening")
+        grade_c_opening_config = crud_app_config.get_config(db, tenant_id, name="grade_c_opening")
+
+        opening_values = {
+            'table_opening': int(table_opening_config.value) if table_opening_config else 0,
+            'jumbo_opening': int(jumbo_opening_config.value) if jumbo_opening_config else 0,
+            'grade_c_opening': int(grade_c_opening_config.value) if grade_c_opening_config else 0
+        }
 
     # Calculate sums from daily_batch
     daily_batch_sums = db.query(

@@ -1,8 +1,6 @@
 from pydantic import BaseModel, validator, computed_field
 from datetime import date
 from typing import Optional
-import re
-
 class DailyBatchBase(BaseModel):
     shed_no: str
     batch_no: str
@@ -18,14 +16,13 @@ class DailyBatchBase(BaseModel):
     batch_id: int
 
     @validator('age')
-    def validate_age_format(cls, v):
-        if not re.match(r'^\d+\.\d+$', v):
-            raise ValueError('Age must be in the format week.day (e.g., "1.1")')
-        week, day = map(int, v.split('.'))
-        if day < 1 or day > 7:
-            raise ValueError('Day must be between 1 and 7')
-        if week < 1:
-            raise ValueError('Week must be greater than 0')
+    def validate_age(cls, v):
+        try:
+            age_float = float(v)
+            if age_float < 1.1:
+                raise ValueError('Age must be 1.1 or greater')
+        except ValueError:
+            raise ValueError('Age must be a valid number')
         return v
 
     @validator('opening_count')

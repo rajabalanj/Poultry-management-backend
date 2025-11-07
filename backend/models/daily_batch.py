@@ -15,7 +15,7 @@ import pytz
 class DailyBatch(Base, TimestampMixin):
     __tablename__ = "daily_batch"
     batch_id = Column(Integer, ForeignKey("batch.id"), primary_key=True)
-    tenant_id = Column(String, index=True)
+    tenant_id = Column(String, primary_key=True, index=True)
     batch = relationship("Batch", back_populates="daily_batches")
     shed_no = Column(String)
     batch_no = Column(String)

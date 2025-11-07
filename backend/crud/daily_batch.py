@@ -1,3 +1,4 @@
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from models.daily_batch import DailyBatch
 from schemas.daily_batch import DailyBatchCreate
@@ -6,7 +7,7 @@ from typing import Optional
 from models.daily_batch import DailyBatch as DailyBatchORM
 
 def get_batch(db: Session, batch_id: int, date: date, tenant_id: str):
-    return db.query(DailyBatch).filter(DailyBatch.batch_id == batch_id, DailyBatch.batch_date == date, DailyBatch.tenant_id == tenant_id).first()
+    return db.query(DailyBatch).filter(DailyBatch.batch_id == batch_id, func.date(DailyBatch.batch_date) == date, DailyBatch.tenant_id == tenant_id).first()
 
 def get_all_batches(db: Session, tenant_id: str, skip: int = 0, limit: int = 100):
     return db.query(DailyBatch).filter(DailyBatch.tenant_id == tenant_id).offset(skip).limit(limit).all()

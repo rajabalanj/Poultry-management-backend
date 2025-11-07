@@ -9,12 +9,20 @@ class BatchBase(BaseModel):
     shed_no: str
     date: date
 
-
-
     @validator('opening_count')
     def validate_opening_count(cls, v):
         if v < 0:
             raise ValueError('Opening count must be greater than or equal to 0')
+        return v
+
+    @validator('age')
+    def validate_age(cls, v):
+        try:
+            age_float = float(v)
+            if age_float < 1.1:
+                raise ValueError('Age must be 1.1 or greater')
+        except ValueError:
+            raise ValueError('Age must be a valid number')
         return v
 
 class BatchCreate(BatchBase):
@@ -26,4 +34,4 @@ class Batch(BatchBase):
     batch_type: Optional[str] = None
 
     class Config:
-        from_attributes = True 
+        from_attributes = True

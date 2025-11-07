@@ -124,9 +124,9 @@ def update_batch(
 
     # Handle shed_no update with a specific date
     if 'shed_no' in batch_data:
-        if 'shed_change_date' not in batch_data:
-            raise HTTPException(status_code=400, detail="shed_change_date is required when updating shed_no.")
-        
+        if not batch_data.get('shed_change_date'):
+            raise HTTPException(status_code=400, detail="shed_change_date is required when updating shed_no and cannot be empty.")
+
         try:
             shed_change_date_obj = parser.parse(batch_data['shed_change_date']).date()
         except (ValueError, TypeError):
