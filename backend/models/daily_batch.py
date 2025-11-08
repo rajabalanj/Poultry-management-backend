@@ -62,25 +62,42 @@ class DailyBatch(Base, TimestampMixin):
     @hybrid_property
     def standard_hen_day_percentage(self):
         session = object_session(self)
+        # self.age is "weeks.days" (e.g., "18.3"). int(18.3) gives 18 completed weeks.
+        age_in_weeks = int(float(self.age))
+        if age_in_weeks >= 100:
+            lookup_age = 100
+        else:
+            # We add 1 to get the current week of life (e.g. 19th week for age 18.3) to match the standards table.
+            lookup_age = age_in_weeks + 1
+
         bovans_performance = session.query(BovansWhiteLayerPerformance).filter(
-            BovansWhiteLayerPerformance.age_weeks == int(float(self.age)) + 1
+            BovansWhiteLayerPerformance.age_weeks == lookup_age
         ).first()
         return bovans_performance.lay_percent if bovans_performance else None
 
     @standard_hen_day_percentage.expression
     def standard_hen_day_percentage(cls):
         # Create a subquery to get the lay_percent based on age
-        from sqlalchemy import select, Integer
+        from sqlalchemy import select, Integer, case, cast
+        age_in_weeks_expr = cast(cls.age, Integer)
+        lookup_age_expr = case((age_in_weeks_expr >= 100, 100), else_=age_in_weeks_expr + 1)
         subquery = select(BovansWhiteLayerPerformance.lay_percent).where(
-            BovansWhiteLayerPerformance.age_weeks == cast(cls.age, Integer) + 1
+            BovansWhiteLayerPerformance.age_weeks == lookup_age_expr
         ).limit(1).label('lay_percent')
         return subquery
     
     @hybrid_property
     def standard_feed_in_grams(self):
         session = object_session(self)
+        # self.age is "weeks.days" (e.g., "18.3"). int(18.3) gives 18 completed weeks.
+        age_in_weeks = int(float(self.age))
+        if age_in_weeks >= 100:
+            lookup_age = 100
+        else:
+            # We add 1 to get the current week of life (e.g. 19th week for age 18.3) to match the standards table.
+            lookup_age = age_in_weeks + 1
         bovans_performance = session.query(BovansWhiteLayerPerformance).filter(
-            BovansWhiteLayerPerformance.age_weeks == int(float(self.age)) + 1
+            BovansWhiteLayerPerformance.age_weeks == lookup_age
         ).first()
         # This will return the standard feed per bird. 
         # You might need to multiply this by closing_count in the frontend 
@@ -90,9 +107,11 @@ class DailyBatch(Base, TimestampMixin):
     @standard_feed_in_grams.expression
     def standard_feed_in_grams(cls):
         # Create a subquery to get the feed_intake_per_day_g based on age
-        from sqlalchemy import select
+        from sqlalchemy import select, case, cast, Integer
+        age_in_weeks_expr = cast(cls.age, Integer)
+        lookup_age_expr = case((age_in_weeks_expr >= 100, 100), else_=age_in_weeks_expr + 1)
         subquery = select(BovansWhiteLayerPerformance.feed_intake_per_day_g).where(
-            BovansWhiteLayerPerformance.age_weeks == cast(cls.age, Integer) + 1
+            BovansWhiteLayerPerformance.age_weeks == lookup_age_expr
         ).limit(1).label('feed_intake_per_day_g')
         return subquery
 

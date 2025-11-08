@@ -1,5 +1,6 @@
 import pytz
 from models.daily_batch import DailyBatch as DailyBatchModel
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi import APIRouter, Depends, HTTPException
 from utils.auth_utils import get_current_user, get_user_identifier, require_group
 from sqlalchemy.orm import Session
@@ -38,6 +39,10 @@ def create_batch(
         (BatchModel.is_active) &
         (BatchModel.tenant_id == tenant_id)
     ).first()
+
+    if float(batch.age) < 0:
+        raise HTTPException(status_code=400, detail="Age must be a non-negative number.")
+
     if existing:
         raise HTTPException(status_code=400, detail="An active batch with the same shed_no or batch_no already exists.")
     return crud_batch.create_batch(db=db, batch=batch, tenant_id=tenant_id, changed_by=get_user_identifier(user))

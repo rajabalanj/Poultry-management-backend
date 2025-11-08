@@ -19,8 +19,8 @@ class DailyBatchBase(BaseModel):
     def validate_age(cls, v):
         try:
             age_float = float(v)
-            if age_float < 1.1:
-                raise ValueError('Age must be 1.1 or greater')
+            if age_float < 0.1:
+                raise ValueError('Age must be 0.1 or greater')
         except ValueError:
             raise ValueError('Age must be a valid number')
         return v

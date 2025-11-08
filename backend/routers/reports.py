@@ -52,8 +52,10 @@ def _calculate_cumulative_report(db: Session, batch_id: int, current_week: int, 
         cum_feed_total += week_feed
     
     # Get Bovans standard data for current week
+    # If current_week > 100, use data for week 100.
+    lookup_week = 100 if current_week > 100 else current_week
     bovans_data = db.query(BovansWhiteLayerPerformance).filter(
-        BovansWhiteLayerPerformance.age_weeks == current_week,
+        BovansWhiteLayerPerformance.age_weeks == lookup_week,
         BovansWhiteLayerPerformance.tenant_id == tenant_id
     ).first()
     
@@ -197,9 +199,11 @@ def get_weekly_layer_report(
     if week < 1:
         raise HTTPException(status_code=400, detail="Week must be 1 or greater.")
     
-    # Calculate age range for the week
-    start_age = f"{week}.1"
-    end_age = f"{week}.7"
+    # The 'week' parameter refers to the week of life (e.g., week 1 is age 0.1-0.7).
+    # So, for the Nth week, the age starts at (N-1).
+    start_age_week = week - 1
+    start_age = f"{start_age_week}.1"
+    end_age = f"{start_age_week}.7"
     
     # Get daily batches for the specified age range
     daily_batches = db.query(DailyBatch).filter(

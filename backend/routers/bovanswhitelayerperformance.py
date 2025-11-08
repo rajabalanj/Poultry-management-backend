@@ -43,8 +43,11 @@ async def get_all_bovans_performance(
 async def get_bovans_performance_by_age(age_weeks: int, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
     """
     Retrieves performance data for a specific age (in weeks).
+    If the requested age is over 100 weeks, it returns the data for week 100.
     """
-    performance_data = db.query(BovansWhiteLayerPerformance).filter(BovansWhiteLayerPerformance.age_weeks == age_weeks, BovansWhiteLayerPerformance.tenant_id == tenant_id).first()
+    lookup_age = 100 if age_weeks > 100 else age_weeks
+    performance_data = db.query(BovansWhiteLayerPerformance).filter(BovansWhiteLayerPerformance.age_weeks == lookup_age, BovansWhiteLayerPerformance.tenant_id == tenant_id).first()
     if not performance_data:
-        raise HTTPException(status_code=404, detail=f"Performance data for age {age_weeks} not found")
+        # If original age was > 100, the error message should reflect the lookup age.
+        raise HTTPException(status_code=404, detail=f"Performance data for age {lookup_age} not found")
     return performance_data

@@ -441,6 +441,8 @@ def update_daily_batch(
         try:
             from utils import calculate_age_progression
             new_age = float(payload["age"])
+            if new_age < 0:
+                raise HTTPException(status_code=400, detail="Age must be a non-negative number")
             daily_batch.age = str(round(new_age, 1))
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid age value")
