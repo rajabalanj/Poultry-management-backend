@@ -69,3 +69,4 @@ urllib3==2.4.0
 uvicorn==0.24.0
 zope.event==5.0
 zope.interface==7.2
+fpdf2==2.8.4
