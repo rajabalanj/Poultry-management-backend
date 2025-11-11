@@ -316,6 +316,44 @@ def update_report(report_date: str, report: EggRoomReportUpdate, db: Session = D
 
 
 
+def _calculate_egg_room_summary(reports: list[EggRoomReport]):
+    """Helper function to calculate summary statistics for a list of egg room reports."""
+    if not reports:
+        return None
+
+    # Assuming reports are sorted by date
+    first_report = reports[0]
+    last_report = reports[-1]
+
+    summary = {
+        "table_opening": first_report.table_opening,
+        "jumbo_opening": first_report.jumbo_opening,
+        "grade_c_opening": first_report.grade_c_opening,
+        "table_closing": last_report.table_closing,
+        "jumbo_closing": last_report.jumbo_closing,
+        "grade_c_closing": last_report.grade_c_closing,
+        
+        "total_table_received": sum(r.table_received for r in reports),
+        "total_table_transfer": sum(r.table_transfer for r in reports),
+        "total_table_damage": sum(r.table_damage for r in reports),
+        "total_table_out": sum(r.table_out for r in reports),
+        "total_table_in": sum(r.table_in for r in reports),
+
+        "total_jumbo_received": sum(r.jumbo_received for r in reports),
+        "total_jumbo_transfer": sum(r.jumbo_transfer for r in reports),
+        "total_jumbo_waste": sum(r.jumbo_waste for r in reports),
+        "total_jumbo_in": sum(r.jumbo_in for r in reports),
+        "total_jumbo_out": sum(r.jumbo_out for r in reports),
+
+        "total_grade_c_shed_received": sum(r.grade_c_shed_received for r in reports),
+        "total_grade_c_room_received": sum(r.grade_c_room_received for r in reports),
+        "total_grade_c_transfer": sum(r.grade_c_transfer for r in reports),
+        "total_grade_c_labour": sum(r.grade_c_labour for r in reports),
+        "total_grade_c_waste": sum(r.grade_c_waste for r in reports),
+    }
+    return summary
+
+
 @router.get("/")
 def get_reports(start_date: str, end_date: str, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
     try:
@@ -339,9 +377,9 @@ def get_reports(start_date: str, end_date: str, db: Session = Depends(get_db), t
         reports = egg_crud.get_reports_by_date_range(
             db, start_date, end_date, tenant_id)
 
-        result = []
+        detailed_result = []
         for report in reports:
-            result.append({
+            detailed_result.append({
                 "report_date": report.report_date.isoformat(),
                 "table_received": report.table_received,
                 "table_transfer": report.table_transfer,
@@ -367,7 +405,15 @@ def get_reports(start_date: str, end_date: str, db: Session = Depends(get_db), t
                 "grade_c_opening": report.grade_c_opening,
                 "grade_c_closing": report.grade_c_closing,
             })
-        return JSONResponse(content=result)
+        
+        summary_data = _calculate_egg_room_summary(reports)
+        
+        response_content = {
+            "details": detailed_result,
+            "summary": summary_data
+        }
+        
+        return JSONResponse(content=response_content)
     except HTTPException:
         raise
     except Exception as e:
