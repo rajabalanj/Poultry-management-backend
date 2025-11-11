@@ -5,6 +5,7 @@ import logging
 
 from database import get_db
 from models.inventory_items import InventoryItem as InventoryItemModel
+from models.egg_room_reports import EggRoomReport
 from schemas.inventory_items import InventoryItem, InventoryItemCreate, InventoryItemUpdate
 from schemas.inventory_item_audit import InventoryItemAudit
 from utils.auth_utils import get_current_user, get_user_identifier
@@ -14,6 +15,21 @@ from utils.tenancy import get_tenant_id
 
 router = APIRouter(prefix="/inventory-items", tags=["Inventory Items"])
 logger = logging.getLogger("inventory_items")
+
+EGG_INVENTORY_NAMES = ["Table Egg", "Jumbo Egg", "Grade C Egg"]
+
+def _get_latest_egg_report_stock(db: Session, tenant_id: str) -> dict:
+    """
+    Helper to get the latest closing stock for all egg types.
+    """
+    latest_report = db.query(EggRoomReport).filter(EggRoomReport.tenant_id == tenant_id).order_by(EggRoomReport.report_date.desc()).first()
+    if latest_report:
+        return {
+            "Table Egg": latest_report.table_closing,
+            "Jumbo Egg": latest_report.jumbo_closing,
+            "Grade C Egg": latest_report.grade_c_closing,
+        }
+    return {}
 
 @router.post("/", response_model=InventoryItem, status_code=status.HTTP_201_CREATED)
 def create_inventory_item(
@@ -40,11 +56,19 @@ def read_inventory_items(
     tenant_id: str = Depends(get_tenant_id)
 ):
     """Retrieve a list of inventory items, with optional filtering by category."""
-    # The filtering logic will remain here, as it's a query parameter concern
     query = db.query(InventoryItemModel).filter(InventoryItemModel.tenant_id == tenant_id)
     if category:
         query = query.filter(InventoryItemModel.category == category)
     items = query.offset(skip).limit(limit).all()
+
+    # Get the latest egg stock data
+    latest_egg_stock = _get_latest_egg_report_stock(db, tenant_id)
+
+    # Override stock for egg items
+    for item in items:
+        if item.name in EGG_INVENTORY_NAMES:
+            item.current_stock = latest_egg_stock.get(item.name, item.current_stock)
+            
     return items
 
 @router.get("/{item_id}", response_model=InventoryItem)
@@ -53,6 +77,12 @@ def read_inventory_item(item_id: int, db: Session = Depends(get_db), tenant_id: 
     db_item = crud_inventory_items.get_inventory_item(db=db, item_id=item_id, tenant_id=tenant_id)
     if db_item is None:
         raise HTTPException(status_code=404, detail="Inventory item not found")
+
+    # If the item is an egg, override its stock value
+    if db_item.name in EGG_INVENTORY_NAMES:
+        latest_egg_stock = _get_latest_egg_report_stock(db, tenant_id)
+        db_item.current_stock = latest_egg_stock.get(db_item.name, db_item.current_stock)
+
     return db_item
 
 @router.patch("/{item_id}", response_model=InventoryItem)
