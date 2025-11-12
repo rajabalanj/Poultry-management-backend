@@ -35,6 +35,8 @@ import routers.daily_batch as daily_batch
 import routers.app_config as app_config
 import routers.composition as composition
 import routers.egg_room_reports as egg_room_reports
+import routers.shed as shed
+
 
 import logging
 import os
@@ -152,6 +154,7 @@ app.include_router(composition_usage_history.router)
 app.include_router(app_config.router)
 app.include_router(composition.router)
 app.include_router(daily_batch.router)
+app.include_router(shed.router)
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():

@@ -29,6 +29,7 @@ from models import (
     sales_order_items,
     sales_orders,
     sales_payments,
+    shed
 )
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

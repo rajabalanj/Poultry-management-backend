@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.hybrid import hybrid_property
 from datetime import datetime
@@ -11,7 +11,8 @@ class Batch(Base, TimestampMixin):
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_id = Column(String, index=True)
-    shed_no = Column(String)
+    shed_id = Column(Integer, ForeignKey("sheds.id"))
+    shed = relationship("Shed")
     batch_no = Column(String)
     date = Column(DateTime(timezone=True), default=lambda: datetime.now(pytz.timezone('Asia/Kolkata')).date())
     age = Column(String)  # Format: "week.day" (e.g., "1.1" for 8 days)
