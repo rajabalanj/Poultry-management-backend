@@ -20,7 +20,7 @@ class CompositionUsageHistory(CompositionUsageHistoryBase):
     id: int
     composition_name: Optional[str] = None
     items: List[CompositionUsageItem] = []
-    shed_no: Optional[str] = None
+    shed_id: Optional[int] = None
 
     class Config:
         from_attributes = True

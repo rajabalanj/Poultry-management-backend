@@ -1,4 +1,5 @@
 import pytz
+from models.shed import Shed
 from models.daily_batch import DailyBatch as DailyBatchModel
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi import APIRouter, Depends, HTTPException
@@ -35,7 +36,7 @@ def create_batch(
 ):
     # Application-level uniqueness check for active batches
     existing = db.query(BatchModel).filter(
-        ((BatchModel.shed_no == batch.shed_no) | (BatchModel.batch_no == batch.batch_no)) & 
+        ((BatchModel.shed_id == batch.shed_id) | (BatchModel.batch_no == batch.batch_no)) & 
         (BatchModel.is_active) &
         (BatchModel.tenant_id == tenant_id)
     ).first()
@@ -44,7 +45,14 @@ def create_batch(
         raise HTTPException(status_code=400, detail="Age must be a non-negative number.")
 
     if existing:
-        raise HTTPException(status_code=400, detail="An active batch with the same shed_no or batch_no already exists.")
+        if existing.shed_id == batch.shed_id:
+            shed = db.query(Shed).filter(Shed.id == batch.shed_id).first()
+            shed_no = shed.shed_no if shed else f"ID {batch.shed_id}"
+            raise HTTPException(status_code=400, detail=f"An active batch already exists in shed '{shed_no}'.")
+        if existing.batch_no == batch.batch_no:
+            raise HTTPException(status_code=400, detail=f"An active batch with batch number '{batch.batch_no}' already exists.")
+        # Fallback for unexpected cases
+        raise HTTPException(status_code=400, detail="An active batch with the same shed_id or batch_no already exists.")
     return crud_batch.create_batch(db=db, batch=batch, tenant_id=tenant_id, changed_by=get_user_identifier(user))
 
 @router.get("/all/", response_model=List[BatchSchema])
@@ -125,19 +133,19 @@ def update_batch(
 
     db_batch.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
     db_batch.updated_by = get_user_identifier(user)
-    logger.info(f"Batch found: {db_batch.batch_no}, current shed_no: {db_batch.shed_no}")
+    logger.info(f"Batch found: {db_batch.batch_no}, current shed_id: {db_batch.shed_id}")
 
-    # Handle shed_no update with a specific date
-    if 'shed_no' in batch_data:
+    # Handle shed_id update with a specific date
+    if 'shed_id' in batch_data:
         if not batch_data.get('shed_change_date'):
-            raise HTTPException(status_code=400, detail="shed_change_date is required when updating shed_no and cannot be empty.")
+            raise HTTPException(status_code=400, detail="shed_change_date is required when updating shed_id and cannot be empty.")
 
         try:
             shed_change_date_obj = parser.parse(batch_data['shed_change_date']).date()
         except (ValueError, TypeError):
             raise HTTPException(status_code=400, detail="Invalid shed_change_date format.")
 
-        new_shed_no = batch_data['shed_no']
+        new_shed_id = batch_data['shed_id']
 
         # 1. Log and Update historical and future DailyBatch records
         daily_batches_to_update = db.query(DailyBatchModel).filter(
@@ -148,30 +156,30 @@ def update_batch(
         
         logger.info(f"Found {len(daily_batches_to_update)} DailyBatch rows to update.")
         for row in daily_batches_to_update:
-            logger.info(f"  - DailyBatch with date: {row.batch_date}, Old shed_no: {row.shed_no}, New shed_no: {new_shed_no}")
+            logger.info(f"  - DailyBatch with date: {row.batch_date}, Old shed_id: {row.shed_id}, New shed_id: {new_shed_id}")
 
         rows_updated = db.query(DailyBatchModel).filter(
             DailyBatchModel.batch_id == batch_id,
             DailyBatchModel.batch_date >= shed_change_date_obj,
             DailyBatchModel.tenant_id == tenant_id
-        ).update({'shed_no': new_shed_no}, synchronize_session=False)
+        ).update({'shed_id': new_shed_id}, synchronize_session=False)
         db.flush()
         logger.info("Updated %d DailyBatch rows for batch_id=%s from date %s for tenant=%s",
                     rows_updated, batch_id, shed_change_date_obj, tenant_id)
 
         # 2. Update the shed_no on the parent Batch record
-        logger.info(f"Updating Batch {batch_id} shed_no from {db_batch.shed_no} to {new_shed_no}")
-        db_batch.shed_no = new_shed_no
+        logger.info(f"Updating Batch {batch_id} shed_id from {db_batch.shed_id} to {new_shed_id}")
+        db_batch.shed_id = new_shed_id
         db.flush()
         # Ensure the parent batch is in the session so change will be persisted
         try:
             db.add(db_batch)
         except Exception:
-            logger.exception("Failed to add db_batch to session after shed_no change for batch_id=%s", batch_id)
+            logger.exception("Failed to add db_batch to session after shed_id change for batch_id=%s", batch_id)
         
-        logger.info(f"Batch {batch_id} shed_no is now: {db_batch.shed_no}")
+        logger.info(f"Batch {batch_id} shed_id is now: {db_batch.shed_id}")
         # Remove these from batch_data so they are not processed again
-        del batch_data['shed_no']
+        del batch_data['shed_id']
         if 'shed_change_date' in batch_data:
             del batch_data['shed_change_date']
 
@@ -194,7 +202,7 @@ def update_batch(
                 changes[key] = {"old": old_value, "new": value}
                 setattr(db_batch, key, value)
 
-    if not changes and 'shed_no' not in batch_data: # if shed_no was the only change
+    if not changes and 'shed_id' not in batch_data: # if shed_id was the only change
         db.commit()
         db.refresh(db_batch)
         return db_batch
@@ -322,7 +330,7 @@ def update_batch(
     )
     create_audit_log(db=db, log_entry=log_entry)
 
-    logger.info(f"Successfully updated batch {batch_id}. New shed_no: {db_batch.shed_no}")
+    logger.info(f"Successfully updated batch {batch_id}. New shed_id: {db_batch.shed_id}")
     return db_batch
 
 @router.delete("/{batch_id}")

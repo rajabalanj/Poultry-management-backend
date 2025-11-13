@@ -6,7 +6,7 @@ class BatchBase(BaseModel):
     age: str
     opening_count: int
     batch_no: str
-    shed_no: str
+    shed_id: int
     date: date
 
     @validator('opening_count')

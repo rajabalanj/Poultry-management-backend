@@ -25,7 +25,7 @@ def create_daily_batch(db: Session, daily_batch_data: DailyBatchCreate, tenant_i
         tenant_id=tenant_id,
         batch_date=daily_batch_data.batch_date,
         upload_date=daily_batch_data.upload_date,
-        shed_no=daily_batch_data.shed_no,
+        shed_id=daily_batch_data.shed_id,
         batch_no=daily_batch_data.batch_no,
         age=daily_batch_data.age,
         opening_count=daily_batch_data.opening_count,

@@ -97,7 +97,7 @@ def upload_weekly_report_excel(
                 daily_batch_data = DailyBatchCreate(
                     batch_id=batch_id,
                     tenant_id=tenant_id,
-                    shed_no=batch_obj.shed_no,
+                    shed_id=batch_obj.shed_id,
                     batch_no=batch_obj.batch_no,
                     upload_date=date.today(),
                     batch_date=batch_date,
@@ -334,7 +334,7 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
                 daily_batch_instance = DailyBatchCreate(
                     batch_id=batch_id_for_daily_batch,
                     tenant_id=tenant_id,
-                    shed_no=batch_obj.shed_no,
+                    shed_id=batch_obj.shed_id,
                     batch_no=batch_no_excel,
                     upload_date=date.today(),
                     batch_date=report_date,
@@ -460,7 +460,7 @@ def update_daily_batch(
             setattr(daily_batch, key, payload[key])
 
     # Update other allowed fields dynamically
-    excluded_fields = {"shed_no", "age", "mortality", "culls", "opening_count", "table_eggs", "cr", "jumbo", "closing_count", "total_eggs", "hd", "standard_hen_day_percentage"}
+    excluded_fields = {"shed_id", "age", "mortality", "culls", "opening_count", "table_eggs", "cr", "jumbo", "closing_count", "total_eggs", "hd", "standard_hen_day_percentage"}
     for key, value in payload.items():
         if key not in excluded_fields and hasattr(daily_batch, key):
             setattr(daily_batch, key, value)
@@ -570,7 +570,7 @@ def create_or_get_daily_batches(
             if batch_date < batch.date.date():
                 result_list.append({
                     "batch_id": batch.id,
-                    "shed_no": batch.shed_no,
+                    "shed_id": batch.shed_id,
                     "batch_no": batch.batch_no,
                     "message": "Please modify batch start date in configuration screen to create batch for this date.",
                     "batch_start_date": batch.date.isoformat(),
@@ -604,7 +604,7 @@ def create_or_get_daily_batches(
             db_daily = DailyBatchModel(
                 batch_id=batch.id,
                 tenant_id=tenant_id,
-                shed_no=batch.shed_no,
+                shed_id=batch.shed_id,
                 batch_no=batch.batch_no,
                 upload_date=today,
                 batch_date=batch_date,

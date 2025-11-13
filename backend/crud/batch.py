@@ -45,7 +45,7 @@ def create_batch(db: Session, batch: BatchCreate, tenant_id: str, changed_by: st
         batch_id=db_batch.id,
         tenant_id=tenant_id,
         batch_no=db_batch.batch_no,
-        shed_no=db_batch.shed_no,
+        shed_id=db_batch.shed_id,
         batch_date=db_batch.date,
         upload_date=db_batch.date,
         age=db_batch.age,

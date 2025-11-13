@@ -96,7 +96,7 @@ def use_composition(db: Session, composition_id: int, batch_id: int, times: int,
             change_amount_for_audit_kg = new_quantity_for_audit_kg - old_quantity_for_audit_kg
 
             batch_obj = db.query(Batch).filter(Batch.id == batch_id, Batch.tenant_id == tenant_id).first()
-            shed_no = batch_obj.shed_no if batch_obj else "N/A"
+            batch_no = batch_obj.batch_no if batch_obj else None
 
             audit = InventoryItemAudit(
                 inventory_item_id=item.id,
@@ -105,7 +105,7 @@ def use_composition(db: Session, composition_id: int, batch_id: int, times: int,
                 old_quantity=old_quantity_for_audit_kg,
                 new_quantity=new_quantity_for_audit_kg,
                 changed_by=changed_by,
-                note=f"Used in composition '{composition_obj.name}' for batch '{shed_no}' ({times} times).",
+                note=f"Used in composition '{composition_obj.name}' for batch '{batch_no}' ({times} times).",
                 tenant_id=tenant_id
             )
             db.add(audit)
@@ -166,7 +166,7 @@ def revert_composition_usage(db: Session, usage_id: int, tenant_id: str, changed
     composition_name = usage_to_revert.composition_name
     
     batch_obj = db.query(Batch).filter(Batch.id == usage_to_revert.batch_id, Batch.tenant_id == tenant_id).first()
-    shed_no = batch_obj.shed_no if batch_obj else "N/A"
+    batch_no = batch_obj.batch_no if batch_obj else None
 
     for usage_item in usage_to_revert.items:
         item = db.query(InventoryItem).filter(InventoryItem.id == usage_item.inventory_item_id, InventoryItem.tenant_id == tenant_id).first()
@@ -203,7 +203,7 @@ def revert_composition_usage(db: Session, usage_id: int, tenant_id: str, changed
                 old_quantity=old_quantity_for_audit_kg,
                 new_quantity=new_quantity_for_audit_kg,
                 changed_by=changed_by,
-                note=f"Reverted usage of composition '{composition_name}' for batch '{shed_no}' ({times} times).",
+                note=f"Reverted usage of composition '{composition_name}' for batch '{batch_no}' ({times} times).",
                 tenant_id=tenant_id
             )
             db.add(audit)

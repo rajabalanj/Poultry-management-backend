@@ -23,7 +23,7 @@ def use_composition_endpoint(
     tenant_id: str = Depends(get_tenant_id)
 ):
     composition_id = data["compositionId"]
-    shed_no = data["shed_no"]
+    batch_no = data["batch_no"]
     times = data["times"]
     used_at = data.get("usedAt")
 
@@ -35,10 +35,10 @@ def use_composition_endpoint(
     else:
         used_at_dt = datetime.now()
 
-    # Find the batch_id based on shed_no
-    batch = db.query(BatchModel).filter(BatchModel.shed_no == shed_no, BatchModel.is_active, BatchModel.tenant_id == tenant_id).first()
+    # Find the batch_id based on batch_no
+    batch = db.query(BatchModel).filter(BatchModel.batch_no == batch_no, BatchModel.is_active, BatchModel.tenant_id == tenant_id).first()
     if not batch:
-        raise HTTPException(status_code=404, detail=f"Active batch with shed_no '{shed_no}' not found.")
+        raise HTTPException(status_code=404, detail=f"Active batch with batch number '{batch_no}' not found.")
     batch_id = batch.id
 
     # Call use_composition and pass changed_by (user from token)
