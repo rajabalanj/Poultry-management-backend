@@ -28,10 +28,21 @@ class BatchBase(BaseModel):
 class BatchCreate(BatchBase):
     pass
 
-class Batch(BatchBase):
+class Batch(BaseModel):
     id: int
+    age: str
+    opening_count: int
+    batch_no: str
+    date: date
     tenant_id: Optional[str] = None
     batch_type: Optional[str] = None
 
     class Config:
         from_attributes = True
+
+class ShedInfo(BaseModel):
+    id: int
+    shed_no: str
+
+class BatchResponse(Batch):
+    current_shed: Optional[ShedInfo] = None

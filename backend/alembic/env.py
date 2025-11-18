@@ -11,6 +11,7 @@ from models import (
     audit_log,
     audit_mixin,
     batch,
+    batch_shed_assignment,
     bovanswhitelayerperformance,
     business_partners,
     composition_usage_history,

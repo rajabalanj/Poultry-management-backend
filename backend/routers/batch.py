@@ -6,7 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from utils.auth_utils import get_current_user, get_user_identifier, require_group
 from sqlalchemy.orm import Session
 from models.batch import Batch as BatchModel
-from schemas.batch import BatchCreate, Batch as BatchSchema
+from models.batch_shed_assignment import BatchShedAssignment
+from schemas.batch import BatchCreate, Batch as BatchSchema, BatchResponse
 from datetime import date, datetime
 from typing import List
 import crud.batch as crud_batch
@@ -34,28 +35,112 @@ def create_batch(
     user: dict = Depends(get_current_user),
     tenant_id: str = Depends(get_tenant_id)
 ):
-    # Application-level uniqueness check for active batches
-    existing = db.query(BatchModel).filter(
-        ((BatchModel.shed_id == batch.shed_id) | (BatchModel.batch_no == batch.batch_no)) & 
-        (BatchModel.is_active) &
-        (BatchModel.tenant_id == tenant_id)
+    user_identifier = get_user_identifier(user)
+    now = datetime.now(pytz.timezone('Asia/Kolkata'))
+
+    # 1. Validation
+    # Check for active batch with the same batch_no
+    existing_batch_no = db.query(BatchModel).filter(
+        BatchModel.batch_no == batch.batch_no,
+        BatchModel.is_active == True,
+        BatchModel.tenant_id == tenant_id
     ).first()
+    if existing_batch_no:
+        raise HTTPException(status_code=400, detail=f"An active batch with batch number '{batch.batch_no}' already exists.")
+
+    # Check if the shed is occupied on the batch start date
+    conflicting_assignment = db.query(BatchShedAssignment).join(BatchModel).filter(
+        BatchShedAssignment.shed_id == batch.shed_id,
+        BatchShedAssignment.start_date <= batch.date,
+        (BatchShedAssignment.end_date == None) | (BatchShedAssignment.end_date >= batch.date),
+        BatchModel.is_active == True,
+        BatchModel.tenant_id == tenant_id
+    ).first()
+
+    if conflicting_assignment:
+        conflicting_batch = conflicting_assignment.batch
+        shed = db.query(Shed).filter(Shed.id == batch.shed_id).first()
+        shed_no = shed.shed_no if shed else f"ID {batch.shed_id}"
+        raise HTTPException(status_code=400, detail=f"Shed '{shed_no}' is already occupied by active batch '{conflicting_batch.batch_no}' on the selected start date.")
 
     if float(batch.age) < 0:
         raise HTTPException(status_code=400, detail="Age must be a non-negative number.")
 
-    if existing:
-        if existing.shed_id == batch.shed_id:
-            shed = db.query(Shed).filter(Shed.id == batch.shed_id).first()
-            shed_no = shed.shed_no if shed else f"ID {batch.shed_id}"
-            raise HTTPException(status_code=400, detail=f"An active batch already exists in shed '{shed_no}'.")
-        if existing.batch_no == batch.batch_no:
-            raise HTTPException(status_code=400, detail=f"An active batch with batch number '{batch.batch_no}' already exists.")
-        # Fallback for unexpected cases
-        raise HTTPException(status_code=400, detail="An active batch with the same shed_id or batch_no already exists.")
-    return crud_batch.create_batch(db=db, batch=batch, tenant_id=tenant_id, changed_by=get_user_identifier(user))
+    # 2. Execution
+    try:
+        # Step 2a: Create the Batch object
+        batch_data = batch.model_dump()
+        shed_id = batch_data.pop("shed_id")
+        db_batch = BatchModel(
+            **batch_data,
+            tenant_id=tenant_id,
+            created_by=user_identifier,
+            updated_by=user_identifier,
+            created_at=now,
+            updated_at=now
+        )
+        db.add(db_batch)
+        db.flush() # Use flush to get the db_batch.id for the next steps
 
-@router.get("/all/", response_model=List[BatchSchema])
+        # Step 2b: Create the initial shed assignment
+        db_shed_assignment = BatchShedAssignment(
+            batch_id=db_batch.id,
+            shed_id=shed_id,
+            start_date=db_batch.date,
+            end_date=None,
+            created_by=user_identifier,
+            updated_by=user_identifier,
+            created_at=now,
+            updated_at=now
+        )
+        db.add(db_shed_assignment)
+
+        # Step 2c: Create the initial entry in the daily_batch table
+        db_daily_batch = DailyBatchModel(
+            batch_id=db_batch.id,
+            tenant_id=tenant_id,
+            batch_no=db_batch.batch_no,
+            shed_id=shed_id,
+            batch_date=db_batch.date,
+            upload_date=db_batch.date,
+            age=db_batch.age,
+            opening_count=db_batch.opening_count,
+            mortality=0,
+            culls=0,
+            table_eggs=0,
+            jumbo=0,
+            cr=0,
+            created_by=user_identifier,
+            updated_by=user_identifier,
+            created_at=now,
+            updated_at=now
+        )
+        db.add(db_daily_batch)
+
+        # Step 2d: Create audit log
+        new_values = sqlalchemy_to_dict(db_batch)
+        log_entry = AuditLogCreate(
+            table_name='batch',
+            record_id=str(db_batch.id),
+            changed_by=user_identifier,
+            action='CREATE',
+            old_values=None,
+            new_values=new_values
+        )
+        # This function likely handles its own commit, or we can commit at the end
+        create_audit_log(db=db, log_entry=log_entry)
+
+        db.commit()
+        db.refresh(db_batch)
+        
+        return db_batch
+
+    except Exception as e:
+        db.rollback()
+        logger.exception("Error creating batch: %s", e)
+        raise HTTPException(status_code=500, detail="An internal error occurred while creating the batch.")
+
+@router.get("/all/", response_model=List[BatchResponse])
 def get_all_batches(
     skip: int = 0,
     limit: int = 100,
@@ -63,24 +148,48 @@ def get_all_batches(
     tenant_id: str = Depends(get_tenant_id)
 ):
     """
-    Fetch all active batches with pagination.
+    Fetch all active batches with pagination, including current shed info.
     """
-    try:
-        # Filter by the is_active hybrid property
-        batches = db.query(BatchModel).filter(BatchModel.is_active, BatchModel.tenant_id == tenant_id).order_by(BatchModel.batch_no).offset(skip).limit(limit).all()
-        result = []
-        for batch in batches:
-            d = batch.__dict__.copy()
-            try:
-                d['batch_type'] = batch.batch_type
-            except Exception:
-                d['batch_type'] = None
-            d.pop('_sa_instance_state', None)
-            result.append(d)
-        return result
-    except Exception as e:
-        logger.exception(f"Error fetching active batches (skip={skip}, limit={limit}): {e}")
-        raise HTTPException(status_code=500, detail="Internal server error while fetching active batches.")
+    # Get active batches
+    batches = db.query(BatchModel).filter(BatchModel.is_active, BatchModel.tenant_id == tenant_id).order_by(BatchModel.batch_no).offset(skip).limit(limit).all()
+    
+    batch_ids = [b.id for b in batches]
+    
+    # Get current shed assignments for these batches
+    assignments = db.query(BatchShedAssignment).filter(
+        BatchShedAssignment.batch_id.in_(batch_ids),
+        BatchShedAssignment.end_date == None
+    ).all()
+    
+    # Get shed details for the assignments
+    shed_ids = [a.shed_id for a in assignments]
+    sheds = db.query(Shed).filter(Shed.id.in_(shed_ids)).all()
+    shed_map = {s.id: s for s in sheds}
+    
+    assignment_map = {a.batch_id: a for a in assignments}
+    
+    result = []
+    for batch in batches:
+        assignment = assignment_map.get(batch.id)
+        shed_info = None
+        if assignment:
+            shed = shed_map.get(assignment.shed_id)
+            if shed:
+                shed_info = {"id": shed.id, "shed_no": shed.shed_no}
+        
+        batch_data = {
+            "id": batch.id,
+            "age": batch.age,
+            "opening_count": batch.opening_count,
+            "batch_no": batch.batch_no,
+            "date": batch.date,
+            "tenant_id": batch.tenant_id,
+            "batch_type": batch.batch_type,
+            "current_shed": shed_info
+        }
+        result.append(batch_data)
+        
+    return result
 
 @router.get("/")
 def read_batches(batch_date: date, skip: int = 0, limit: int = 100, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
@@ -98,7 +207,7 @@ def read_batches(batch_date: date, skip: int = 0, limit: int = 100, db: Session 
         result.append(d)
     return result
 
-@router.get("/{batch_id}", response_model=BatchSchema)
+@router.get("/{batch_id}", response_model=BatchResponse)
 def read_batch(batch_id: int, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
     logger.info("Fetching batch with batch_id=%d", batch_id)
     db_batch = db.query(BatchModel).filter(BatchModel.id == batch_id, BatchModel.tenant_id == tenant_id).first()
@@ -106,13 +215,31 @@ def read_batch(batch_id: int, db: Session = Depends(get_db), tenant_id: str = De
         logger.warning("Batch with batch_id=%d not found for tenant %s", batch_id, tenant_id)
         raise HTTPException(status_code=404, detail="Batch not found")
     logger.info("Fetched batch: %s", db_batch)
-    d = db_batch.__dict__.copy()
-    try:
-        d['batch_type'] = db_batch.batch_type
-    except Exception:
-        d['batch_type'] = None
-    d.pop('_sa_instance_state', None)
-    return d
+    
+    # Get the current shed assignment for this batch
+    assignment = db.query(BatchShedAssignment).filter(
+        BatchShedAssignment.batch_id == batch_id,
+        BatchShedAssignment.end_date == None
+    ).first()
+    
+    shed_info = None
+    if assignment:
+        shed = db.query(Shed).filter(Shed.id == assignment.shed_id).first()
+        if shed:
+            shed_info = {"id": shed.id, "shed_no": shed.shed_no}
+    
+    batch_data = {
+        "id": db_batch.id,
+        "age": db_batch.age,
+        "opening_count": db_batch.opening_count,
+        "batch_no": db_batch.batch_no,
+        "date": db_batch.date,
+        "tenant_id": db_batch.tenant_id,
+        "batch_type": db_batch.batch_type,
+        "current_shed": shed_info
+    }
+    
+    return batch_data
 
 @router.patch("/{batch_id}", response_model=BatchSchema)
 def update_batch(
@@ -133,56 +260,7 @@ def update_batch(
 
     db_batch.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
     db_batch.updated_by = get_user_identifier(user)
-    logger.info(f"Batch found: {db_batch.batch_no}, current shed_id: {db_batch.shed_id}")
-
-    # Handle shed_id update with a specific date
-    if 'shed_id' in batch_data:
-        if not batch_data.get('shed_change_date'):
-            raise HTTPException(status_code=400, detail="shed_change_date is required when updating shed_id and cannot be empty.")
-
-        try:
-            shed_change_date_obj = parser.parse(batch_data['shed_change_date']).date()
-        except (ValueError, TypeError):
-            raise HTTPException(status_code=400, detail="Invalid shed_change_date format.")
-
-        new_shed_id = batch_data['shed_id']
-
-        # 1. Log and Update historical and future DailyBatch records
-        daily_batches_to_update = db.query(DailyBatchModel).filter(
-            DailyBatchModel.batch_id == batch_id,
-            DailyBatchModel.batch_date >= shed_change_date_obj,
-            DailyBatchModel.tenant_id == tenant_id
-        ).all()
-        
-        logger.info(f"Found {len(daily_batches_to_update)} DailyBatch rows to update.")
-        for row in daily_batches_to_update:
-            logger.info(f"  - DailyBatch with date: {row.batch_date}, Old shed_id: {row.shed_id}, New shed_id: {new_shed_id}")
-
-        rows_updated = db.query(DailyBatchModel).filter(
-            DailyBatchModel.batch_id == batch_id,
-            DailyBatchModel.batch_date >= shed_change_date_obj,
-            DailyBatchModel.tenant_id == tenant_id
-        ).update({'shed_id': new_shed_id}, synchronize_session=False)
-        db.flush()
-        logger.info("Updated %d DailyBatch rows for batch_id=%s from date %s for tenant=%s",
-                    rows_updated, batch_id, shed_change_date_obj, tenant_id)
-
-        # 2. Update the shed_no on the parent Batch record
-        logger.info(f"Updating Batch {batch_id} shed_id from {db_batch.shed_id} to {new_shed_id}")
-        db_batch.shed_id = new_shed_id
-        db.flush()
-        # Ensure the parent batch is in the session so change will be persisted
-        try:
-            db.add(db_batch)
-        except Exception:
-            logger.exception("Failed to add db_batch to session after shed_id change for batch_id=%s", batch_id)
-        
-        logger.info(f"Batch {batch_id} shed_id is now: {db_batch.shed_id}")
-        # Remove these from batch_data so they are not processed again
-        del batch_data['shed_id']
-        if 'shed_change_date' in batch_data:
-            del batch_data['shed_change_date']
-
+    
     # --- 1. Calculate changes and update the master Batch object ---
     changes = {}
     old_values = sqlalchemy_to_dict(db_batch)
@@ -202,7 +280,7 @@ def update_batch(
                 changes[key] = {"old": old_value, "new": value}
                 setattr(db_batch, key, value)
 
-    if not changes and 'shed_id' not in batch_data: # if shed_id was the only change
+    if not changes:
         db.commit()
         db.refresh(db_batch)
         return db_batch
@@ -330,8 +408,155 @@ def update_batch(
     )
     create_audit_log(db=db, log_entry=log_entry)
 
-    logger.info(f"Successfully updated batch {batch_id}. New shed_id: {db_batch.shed_id}")
+    logger.info(f"Successfully updated batch {batch_id}.")
     return db_batch
+
+from pydantic import BaseModel
+from datetime import date, timedelta
+
+class BatchMovePayload(BaseModel):
+    new_shed_id: int
+    move_date: date
+
+@router.post("/{batch_id}/move-shed", summary="Move a batch to a new shed from a specific date onwards")
+def move_shed(
+    batch_id: int,
+    payload: BatchMovePayload,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_group(["admin"])),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    # 1. Validation
+    batch = db.query(BatchModel).filter(BatchModel.id == batch_id, BatchModel.tenant_id == tenant_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    if not batch.is_active:
+        raise HTTPException(status_code=400, detail="Cannot move a closed batch.")
+    
+    new_shed = db.query(Shed).filter(Shed.id == payload.new_shed_id, Shed.tenant_id == tenant_id).first()
+    if not new_shed:
+        raise HTTPException(status_code=404, detail="New shed not found.")
+
+    if payload.move_date < batch.date.date():
+        raise HTTPException(status_code=400, detail="Move date cannot be before the batch start date.")
+
+    # Check for shed conflicts
+    conflicting_assignment = db.query(BatchShedAssignment).join(BatchModel).filter(
+        BatchShedAssignment.shed_id == payload.new_shed_id,
+        BatchShedAssignment.batch_id != batch_id,
+        (BatchShedAssignment.end_date == None) | (BatchShedAssignment.end_date >= payload.move_date),
+        BatchModel.is_active == True,
+        BatchModel.tenant_id == tenant_id
+    ).first()
+
+    if conflicting_assignment:
+        raise HTTPException(status_code=409, detail=f"Shed '{new_shed.shed_no}' is occupied by batch '{conflicting_assignment.batch.batch_no}' during the selected period.")
+
+    # 2. Execution
+    # Find the assignment to be terminated or shortened
+    assignment_to_end = db.query(BatchShedAssignment).filter(
+        BatchShedAssignment.batch_id == batch_id,
+        BatchShedAssignment.start_date < payload.move_date,
+        (BatchShedAssignment.end_date == None) | (BatchShedAssignment.end_date >= payload.move_date)
+    ).first()
+
+    if not assignment_to_end:
+        raise HTTPException(status_code=400, detail="Could not find a current shed assignment for the batch on the specified move date.")
+
+    if assignment_to_end.shed_id == payload.new_shed_id:
+        raise HTTPException(status_code=400, detail="Batch is already assigned to this shed.")
+
+    # End the old assignment
+    assignment_to_end.end_date = payload.move_date - timedelta(days=1)
+    assignment_to_end.updated_by = get_user_identifier(user)
+    db.add(assignment_to_end)
+
+    # Create the new assignment
+    new_assignment = BatchShedAssignment(
+        batch_id=batch_id,
+        shed_id=payload.new_shed_id,
+        start_date=payload.move_date,
+        end_date=None,
+        created_by=get_user_identifier(user),
+        updated_by=get_user_identifier(user)
+    )
+    db.add(new_assignment)
+
+    # 3. Update DailyBatch records
+    db.query(DailyBatchModel).filter(
+        DailyBatchModel.batch_id == batch_id,
+        DailyBatchModel.batch_date >= payload.move_date
+    ).update({"shed_id": payload.new_shed_id})
+
+    db.commit()
+
+    return {"message": f"Batch '{batch.batch_no}' successfully moved to shed '{new_shed.shed_no}' from {payload.move_date}."}
+
+
+class BatchSwapPayload(BaseModel):
+    batch_id_1: int
+    batch_id_2: int
+    swap_date: date
+
+@router.post("/swap-sheds", summary="Swap the sheds of two active batches from a specific date onwards")
+def swap_sheds(
+    payload: BatchSwapPayload,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_group(["admin"])),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    user_identifier = get_user_identifier(user)
+    
+    # 1. Validation
+    if payload.batch_id_1 == payload.batch_id_2:
+        raise HTTPException(status_code=400, detail="Cannot swap a batch with itself.")
+
+    batch1 = db.query(BatchModel).filter(BatchModel.id == payload.batch_id_1, BatchModel.tenant_id == tenant_id).first()
+    batch2 = db.query(BatchModel).filter(BatchModel.id == payload.batch_id_2, BatchModel.tenant_id == tenant_id).first()
+
+    if not batch1 or not batch2:
+        raise HTTPException(status_code=404, detail="One or both batches not found.")
+    if not batch1.is_active or not batch2.is_active:
+        raise HTTPException(status_code=400, detail="One or both batches are not active.")
+
+    if payload.swap_date < batch1.date.date() or payload.swap_date < batch2.date.date():
+        raise HTTPException(status_code=400, detail="Swap date cannot be before the start date of either batch.")
+
+    # Find current assignments for both batches
+    assignment1 = db.query(BatchShedAssignment).filter(BatchShedAssignment.batch_id == payload.batch_id_1, BatchShedAssignment.end_date == None).first()
+    assignment2 = db.query(BatchShedAssignment).filter(BatchShedAssignment.batch_id == payload.batch_id_2, BatchShedAssignment.end_date == None).first()
+
+    if not assignment1 or not assignment2:
+        raise HTTPException(status_code=400, detail="Could not find current shed assignments for one or both batches.")
+
+    shed1_id = assignment1.shed_id
+    shed2_id = assignment2.shed_id
+
+    # 2. Execution
+    # End old assignments
+    assignment1.end_date = payload.swap_date - timedelta(days=1)
+    assignment1.updated_by = user_identifier
+    db.add(assignment1)
+
+    assignment2.end_date = payload.swap_date - timedelta(days=1)
+    assignment2.updated_by = user_identifier
+    db.add(assignment2)
+
+    # Create new assignments
+    new_assignment1 = BatchShedAssignment(batch_id=payload.batch_id_1, shed_id=shed2_id, start_date=payload.swap_date, created_by=user_identifier, updated_by=user_identifier)
+    new_assignment2 = BatchShedAssignment(batch_id=payload.batch_id_2, shed_id=shed1_id, start_date=payload.swap_date, created_by=user_identifier, updated_by=user_identifier)
+    db.add(new_assignment1)
+    db.add(new_assignment2)
+
+    # 3. Update DailyBatch records
+    db.query(DailyBatchModel).filter(DailyBatchModel.batch_id == payload.batch_id_1, DailyBatchModel.batch_date >= payload.swap_date).update({"shed_id": shed2_id})
+    db.query(DailyBatchModel).filter(DailyBatchModel.batch_id == payload.batch_id_2, DailyBatchModel.batch_date >= payload.swap_date).update({"shed_id": shed1_id})
+
+    db.commit()
+
+    return {"message": f"Successfully swapped sheds for batches '{batch1.batch_no}' and '{batch2.batch_no}' from {payload.swap_date}."}
+
+
 
 @router.delete("/{batch_id}")
 def delete_batch(
@@ -345,15 +570,59 @@ def delete_batch(
         raise HTTPException(status_code=404, detail="Batch not found")
     return {"message": "Batch deleted successfully"}
 
-@router.put("/{batch_id}/close")
-def close_batch(batch_id: int, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id), user: dict = Depends(require_group(["admin"]))):
+class BatchClosePayload(BaseModel):
+    closing_date: date
+
+@router.post("/{batch_id}/close")
+def close_batch(
+    batch_id: int, 
+    payload: BatchClosePayload,
+    db: Session = Depends(get_db), 
+    tenant_id: str = Depends(get_tenant_id), 
+    user: dict = Depends(require_group(["admin"]))
+):
     batch = db.query(BatchModel).filter(BatchModel.id == batch_id, BatchModel.tenant_id == tenant_id).first()
-    if batch:
-        batch.closing_date = date.today()
-        batch.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
-        batch.updated_by = get_user_identifier(user)
-        db.add(batch)
-        db.commit()
-        return {"message": "Batch closed successfully"}
-    else:
+    if not batch:
         raise HTTPException(status_code=404, detail="Batch not found")
+
+    if not batch.is_active:
+        raise HTTPException(status_code=400, detail="Batch is already closed.")
+
+    closing_date = payload.closing_date
+    
+    # Validation
+    if closing_date > date.today():
+        raise HTTPException(status_code=400, detail="Closing date cannot be in the future.")
+    
+    batch_start_date = batch.date if isinstance(batch.date, date) else batch.date.date()
+    if closing_date < batch_start_date:
+        raise HTTPException(status_code=400, detail=f"Closing date cannot be before the batch start date of {batch_start_date}.")
+
+    # Delete future daily_batch entries if closing retroactively
+    db.query(DailyBatchModel).filter(
+        DailyBatchModel.batch_id == batch_id,
+        DailyBatchModel.tenant_id == tenant_id,
+        DailyBatchModel.batch_date > closing_date
+    ).delete(synchronize_session=False)
+
+    batch.closing_date = closing_date
+    batch.is_active = False  # Explicitly mark as inactive
+    batch.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
+    batch.updated_by = get_user_identifier(user)
+
+    # Find and end the current shed assignment
+    current_assignment = db.query(BatchShedAssignment).filter(
+        BatchShedAssignment.batch_id == batch_id,
+        BatchShedAssignment.end_date == None,
+        BatchShedAssignment.batch.has(tenant_id=tenant_id) # Ensure tenancy
+    ).first()
+
+    if current_assignment:
+        current_assignment.end_date = closing_date
+        current_assignment.updated_by = get_user_identifier(user)
+        db.add(current_assignment)
+
+    db.add(batch)
+    db.commit()
+    
+    return {"message": f"Batch '{batch.batch_no}' closed successfully on {closing_date}."}

@@ -94,10 +94,22 @@ def upload_weekly_report_excel(
                 day_of_week = i - data_start_row + 1
                 age = f"{week_number}.{day_of_week}"
 
+                # Find the correct shed_id for this specific date
+                from models.batch_shed_assignment import BatchShedAssignment
+                assignment = db.query(BatchShedAssignment).filter(
+                    BatchShedAssignment.batch_id == batch_id,
+                    BatchShedAssignment.start_date <= batch_date,
+                    (BatchShedAssignment.end_date == None) | (BatchShedAssignment.end_date >= batch_date)
+                ).first()
+
+                shed_id_to_use = assignment.shed_id if assignment else None
+                if shed_id_to_use is None:
+                    logger.warning(f"Could not find shed assignment for batch {batch_id} on date {batch_date} during Excel upload. Shed ID will be null.")
+
                 daily_batch_data = DailyBatchCreate(
                     batch_id=batch_id,
                     tenant_id=tenant_id,
-                    shed_id=batch_obj.shed_id,
+                    shed_id=shed_id_to_use,
                     batch_no=batch_obj.batch_no,
                     upload_date=date.today(),
                     batch_date=batch_date,
@@ -331,10 +343,22 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
                 except Exception:
                     pass
             else:
+                # Find the correct shed_id for this specific date
+                from models.batch_shed_assignment import BatchShedAssignment
+                assignment = db.query(BatchShedAssignment).filter(
+                    BatchShedAssignment.batch_id == batch_id_for_daily_batch,
+                    BatchShedAssignment.start_date <= report_date,
+                    (BatchShedAssignment.end_date == None) | (BatchShedAssignment.end_date >= report_date)
+                ).first()
+
+                shed_id_to_use = assignment.shed_id if assignment else None
+                if shed_id_to_use is None:
+                    logger.warning(f"Could not find shed assignment for batch {batch_id_for_daily_batch} on date {report_date} during Excel upload. Shed ID will be null.")
+
                 daily_batch_instance = DailyBatchCreate(
                     batch_id=batch_id_for_daily_batch,
                     tenant_id=tenant_id,
-                    shed_id=batch_obj.shed_id,
+                    shed_id=shed_id_to_use,
                     batch_no=batch_no_excel,
                     upload_date=date.today(),
                     batch_date=report_date,
@@ -550,6 +574,16 @@ def create_or_get_daily_batches(
     ).all()
     existing_daily_batches_map = {db.batch_id: db for db in existing_daily_batches}
 
+    # Efficiently fetch all relevant shed assignments for the active batches on the given date
+    active_batch_ids = [b.id for b in active_batches]
+    from models.batch_shed_assignment import BatchShedAssignment
+    assignments = db.query(BatchShedAssignment).filter(
+        BatchShedAssignment.batch_id.in_(active_batch_ids),
+        BatchShedAssignment.start_date <= batch_date,
+        (BatchShedAssignment.end_date == None) | (BatchShedAssignment.end_date >= batch_date)
+    ).all()
+    assignment_map = {a.batch_id: a.shed_id for a in assignments}
+
     result_list = []
 
     for batch in active_batches:
@@ -568,9 +602,11 @@ def create_or_get_daily_batches(
         else:
             # Generate missing daily batch
             if batch_date < batch.date.date():
+                # Look up shed_id for display purposes even if batch hasn't started
+                shed_id_for_message = assignment_map.get(batch.id)
                 result_list.append({
                     "batch_id": batch.id,
-                    "shed_id": batch.shed_id,
+                    "shed_id": shed_id_for_message,
                     "batch_no": batch.batch_no,
                     "message": "Please modify batch start date in configuration screen to create batch for this date.",
                     "batch_start_date": batch.date.isoformat(),
@@ -601,10 +637,14 @@ def create_or_get_daily_batches(
                 days_diff = (batch_date - batch.date.date()).days
                 age = calculate_age_progression(base_age, days_diff)
 
+            shed_id_to_use = assignment_map.get(batch.id)
+            if shed_id_to_use is None:
+                logger.warning(f"Could not find shed assignment for batch {batch.id} on date {batch_date}. Shed ID will be null.")
+
             db_daily = DailyBatchModel(
                 batch_id=batch.id,
                 tenant_id=tenant_id,
-                shed_id=batch.shed_id,
+                shed_id=shed_id_to_use,
                 batch_no=batch.batch_no,
                 upload_date=today,
                 batch_date=batch_date,

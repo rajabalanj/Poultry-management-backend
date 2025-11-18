@@ -10,6 +10,7 @@ from schemas.batch import BatchCreate
 from datetime import date
 import routers.reports as reports
 from models.daily_batch import DailyBatch
+from models.batch_shed_assignment import BatchShedAssignment
 
 def get_batch(db: Session, batch_id: int, batch_date: date, tenant_id: str):
         return db.query(DailyBatch).join(Batch).filter(and_(DailyBatch.batch_id == batch_id, DailyBatch.batch_date == batch_date, Batch.tenant_id == tenant_id)).first()
@@ -30,22 +31,36 @@ def get_all_batches(db: Session, batch_date: date, tenant_id: str, skip: int = 0
 
 def create_batch(db: Session, batch: BatchCreate, tenant_id: str, changed_by: str):
     now = datetime.datetime.now(pytz.timezone('Asia/Kolkata'))
-    # Create new batch with calculated closing count
+    
+    batch_data = batch.model_dump()
+    shed_id = batch_data.pop("shed_id")
     db_batch = Batch(
-        **batch.model_dump(),
+        **batch_data,
         tenant_id=tenant_id,
-        created_by=changed_by
+        created_by=changed_by,
+        updated_by=changed_by
     )
     db.add(db_batch)
     db.commit()
     db.refresh(db_batch)
+
+    # Create the initial shed assignment
+    db_shed_assignment = BatchShedAssignment(
+        batch_id=db_batch.id,
+        shed_id=shed_id,
+        start_date=db_batch.date,
+        end_date=None,
+        created_by=changed_by,
+        updated_by=changed_by
+    )
+    db.add(db_shed_assignment)
 
     # Create a copy in daily_batch table
     db_daily_batch = DailyBatch(
         batch_id=db_batch.id,
         tenant_id=tenant_id,
         batch_no=db_batch.batch_no,
-        shed_id=db_batch.shed_id,
+        shed_id=shed_id,
         batch_date=db_batch.date,
         upload_date=db_batch.date,
         age=db_batch.age,
@@ -55,11 +70,12 @@ def create_batch(db: Session, batch: BatchCreate, tenant_id: str, changed_by: st
         table_eggs=0,
         jumbo=0,
         cr=0,
-        created_by=changed_by
+        created_by=changed_by,
+        updated_by=changed_by
     )
     db.add(db_daily_batch)
     db.commit()
-    db.refresh(db_daily_batch)
+    db.refresh(db_batch)
     return db_batch
 
 def delete_batch(db: Session, batch_id: int, tenant_id: str, changed_by: str):

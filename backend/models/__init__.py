@@ -20,5 +20,6 @@ from models.inventory_item_usage_history import InventoryItemUsageHistory
 from models.operational_expenses import OperationalExpense
 from models.audit_log import AuditLog
 from models.shed import Shed
+from models.batch_shed_assignment import BatchShedAssignment
 
-__all__ = ['AppConfig', 'Batch', 'BovansWhiteLayerPerformance', 'CompositionUsageHistory', 'CompositionUsageItem', 'Composition', 'DailyBatch', 'EggRoomReport', 'Payment', 'PurchaseOrder', 'PurchaseOrderItem', 'InventoryItem', 'SalesOrderItem', 'SalesOrder', 'SalesPayment', 'BusinessPartner', 'InventoryItemAudit', 'InventoryItemInComposition', 'InventoryItemUsageHistory', 'OperationalExpense', 'AuditLog', 'Shed']
+__all__ = ['AppConfig', 'Batch', 'BovansWhiteLayerPerformance', 'CompositionUsageHistory', 'CompositionUsageItem', 'Composition', 'DailyBatch', 'EggRoomReport', 'Payment', 'PurchaseOrder', 'PurchaseOrderItem', 'InventoryItem', 'SalesOrderItem', 'SalesOrder', 'SalesPayment', 'BusinessPartner', 'InventoryItemAudit', 'InventoryItemInComposition', 'InventoryItemUsageHistory', 'OperationalExpense', 'AuditLog', 'Shed', 'BatchShedAssignment']

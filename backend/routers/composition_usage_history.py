@@ -3,11 +3,10 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from database import get_db
 from crud.composition_usage_history import use_composition, get_composition_usage_history, revert_composition_usage, get_composition_usage_by_date
-from schemas.composition_usage_history import CompositionUsageHistory
+from schemas.composition_usage_history import CompositionUsageHistory, CompositionUsageByDate, CompositionUsageCreate
 from utils.auth_utils import get_current_user, get_user_identifier
 from utils.tenancy import get_tenant_id
 from datetime import datetime, date
-from dateutil import parser
 from models.batch import Batch as BatchModel
 
 router = APIRouter(
@@ -17,32 +16,21 @@ router = APIRouter(
 
 @router.post("/use-composition")
 def use_composition_endpoint(
-    data: dict,
+    data: CompositionUsageCreate,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
     tenant_id: str = Depends(get_tenant_id)
 ):
-    composition_id = data["compositionId"]
-    batch_no = data["batch_no"]
-    times = data["times"]
-    used_at = data.get("usedAt")
-
-    if used_at:
-        try:
-            used_at_dt = datetime.fromisoformat(used_at)
-        except ValueError:
-            used_at_dt = parser.parse(used_at)
-    else:
-        used_at_dt = datetime.now()
+    used_at_dt = data.usedAt or datetime.now()
 
     # Find the batch_id based on batch_no
-    batch = db.query(BatchModel).filter(BatchModel.batch_no == batch_no, BatchModel.is_active, BatchModel.tenant_id == tenant_id).first()
+    batch = db.query(BatchModel).filter(BatchModel.batch_no == data.batch_no, BatchModel.is_active, BatchModel.tenant_id == tenant_id).first()
     if not batch:
-        raise HTTPException(status_code=404, detail=f"Active batch with batch number '{batch_no}' not found.")
+        raise HTTPException(status_code=404, detail=f"Active batch with batch number '{data.batch_no}' not found.")
     batch_id = batch.id
 
     # Call use_composition and pass changed_by (user from token)
-    usage = use_composition(db, composition_id, batch_id, times, used_at_dt, changed_by=get_user_identifier(user), tenant_id=tenant_id)
+    usage = use_composition(db, data.compositionId, batch_id, data.times, used_at_dt, changed_by=get_user_identifier(user), tenant_id=tenant_id)
     
     # Now, 'usage' object should have its ID populated
     if usage and hasattr(usage, 'id'):
@@ -110,7 +98,7 @@ def revert_composition_usage_endpoint(
         raise HTTPException(status_code=404, detail=message)
     return {"message": message}
 
-@router.get("/usage-by-date/")
+@router.get("/usage-by-date/", response_model=CompositionUsageByDate)
 def get_usage_by_date_endpoint(
     usage_date: date,
     batch_id: Optional[int] = None,
