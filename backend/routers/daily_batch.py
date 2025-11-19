@@ -58,6 +58,8 @@ def upload_weekly_report_excel(
         expected_header = ['DATE', 'OPEN STOCK', 'MORT', 'CULLS', 'CLOSING STOCK', 'TABLE', 'JUMBO', 'CR', 'TOTAL', 'HD%', 'FEED KGS', 'REMARKS']
         if header_row[:len(expected_header)] != expected_header:
             raise HTTPException(status_code=400, detail=f"Invalid header at row {header_row_idx + 1}. Expected: {expected_header}")
+        
+        # Note: OPEN STOCK column is ignored - opening_count is calculated from parent batch
 
         # Read all data rows until an empty row or end of file
         data_start_row = header_row_idx + 1
@@ -77,7 +79,7 @@ def upload_weekly_report_excel(
                 batch_date_str = str(row[0]).strip()
                 batch_date = pd.to_datetime(batch_date_str, format='%d-%m-%Y').date()
                 
-                opening_count = int(row[1])
+                # Skip opening_count from Excel - will calculate from parent batch
                 mortality = int(row[2])
                 culls = int(row[3])
                 table_eggs = int(row[5])
@@ -86,15 +88,26 @@ def upload_weekly_report_excel(
             except (ValueError, TypeError) as e:
                 raise HTTPException(status_code=400, detail=f"Invalid data in row {i + 1}: {e}. Ensure 'DATE' is in DD-MM-YYYY format.")
 
-            # Calculate age dynamically
-            # Ensure both dates are date objects for proper subtraction
+            # Calculate age and opening_count from parent batch
             if isinstance(batch_start_date, datetime.datetime):
                 batch_start_date = batch_start_date.date()
             days_diff = (batch_date - batch_start_date).days
             if days_diff < 0:
                 raise HTTPException(status_code=400, detail=f"Batch date {batch_date} cannot be before batch start date {batch_start_date} in row {i + 1}.")
             
+            # Calculate age from parent batch
             age = str(round(calculate_age_progression(initial_batch_age, days_diff), 1))
+            
+            # Calculate opening_count from previous day's closing or parent batch
+            prev_daily = db.query(DailyBatchModel).filter(
+                DailyBatchModel.batch_id == batch_id,
+                DailyBatchModel.batch_date < batch_date
+            ).order_by(DailyBatchModel.batch_date.desc()).first()
+            
+            if prev_daily:
+                opening_count = prev_daily.closing_count
+            else:
+                opening_count = batch_obj.opening_count
 
             # Find the correct shed_id for this specific date
             assignment = db.query(BatchShedAssignment).filter(
@@ -107,22 +120,22 @@ def upload_weekly_report_excel(
             if shed_id_to_use is None:
                 logger.warning(f"Could not find shed assignment for batch {batch_id} on date {batch_date} during Excel upload. Shed ID will be null.")
 
-                daily_batch_data = DailyBatchCreate(
-                    batch_id=batch_id,
-                    tenant_id=tenant_id,
-                    shed_id=shed_id_to_use,
-                    batch_no=batch_obj.batch_no,
-                    upload_date=date.today(),
-                    batch_date=batch_date,
-                    age=age,
-                    opening_count=opening_count,
-                    mortality=mortality,
-                    culls=culls,
-                    table_eggs=table_eggs,
-                    jumbo=jumbo_eggs,
-                    cr=cr_eggs,
-                )
-                all_daily_batches_to_create.append(daily_batch_data)
+            daily_batch_data = DailyBatchCreate(
+                batch_id=batch_id,
+                tenant_id=tenant_id,
+                shed_id=shed_id_to_use,
+                batch_no=batch_obj.batch_no,
+                upload_date=date.today(),
+                batch_date=batch_date,
+                age=age,
+                opening_count=opening_count,
+                mortality=mortality,
+                culls=culls,
+                table_eggs=table_eggs,
+                jumbo=jumbo_eggs,
+                cr=cr_eggs,
+            )
+            all_daily_batches_to_create.append(daily_batch_data)
 
         # Now that all data is validated and collected, create or update the records
         processed_records_count = 0
@@ -182,7 +195,10 @@ def upload_weekly_report_excel(
                 for row_to_update in subsequent_rows:
                     row_to_update.opening_count = prev_closing
 
-                    days_diff = (row_to_update.batch_date.date() - prev_date.date()).days
+                    # Ensure both dates are date objects
+                    row_date = row_to_update.batch_date if isinstance(row_to_update.batch_date, date) else row_to_update.batch_date.date()
+                    prev_date_obj = prev_date if isinstance(prev_date, date) else prev_date.date()
+                    days_diff = (row_date - prev_date_obj).days
                     new_age = calculate_age_progression(prev_age, days_diff)
                     row_to_update.age = str(round(new_age, 1))
 
@@ -281,7 +297,9 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
                 logger.warning(f"Skipping row {row_idx} (Date: {report_date}) for batch '{batch_no_excel}' because it's before the batch start date ({batch_obj.date}).")
                 continue
 
-            # Using the top-level import
+            # Calculate age and opening_count from parent batch (not from Excel)
+            # Age is calculated based on days elapsed from batch start date
+            # Opening count is either from previous day's closing count or batch's initial opening count
             prev_daily = db.query(DailyBatchModel).filter(
                 DailyBatchModel.batch_id == batch_id_for_daily_batch,
                 DailyBatchModel.batch_date < report_date
@@ -293,7 +311,8 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
                     prev_age = float(prev_daily.age)
                 except (ValueError, TypeError):
                     prev_age = 0.0
-                days_diff = (report_date - prev_daily.batch_date.date()).days
+                prev_date_obj = prev_daily.batch_date if isinstance(prev_daily.batch_date, date) else prev_daily.batch_date.date()
+                days_diff = (report_date - prev_date_obj).days
                 age = calculate_age_progression(prev_age, days_diff)
             else:
                 opening_count = batch_obj.opening_count
@@ -407,7 +426,9 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
             for row_to_update in subsequent_rows:
                 row_to_update.opening_count = prev_closing
                 
-                days_diff = (row_to_update.batch_date.date() - prev_date.date()).days
+                row_date = row_to_update.batch_date if isinstance(row_to_update.batch_date, date) else row_to_update.batch_date.date()
+                prev_date_obj = prev_date if isinstance(prev_date, date) else prev_date.date()
+                days_diff = (row_date - prev_date_obj).days
                 prev_age = calculate_age_progression(prev_age, days_diff)
                 row_to_update.age = str(round(prev_age, 1))
                 
@@ -512,7 +533,9 @@ def update_daily_batch(
             row.opening_count = prev_closing
             
             # Propagate age
-            days_diff = (row.batch_date.date() - prev_date.date()).days
+            row_date = row.batch_date if isinstance(row.batch_date, date) else row.batch_date.date()
+            prev_date_obj = prev_date if isinstance(prev_date, date) else prev_date.date()
+            days_diff = (row_date - prev_date_obj).days
             prev_age = calculate_age_progression(prev_age, days_diff)
             row.age = str(round(prev_age, 1))
             

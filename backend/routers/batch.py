@@ -336,7 +336,7 @@ def update_batch(
         if all_rows and all_rows[0].batch_date == new_date:
             start_row = all_rows[0]
         else:
-            start_row = DailyBatchModel(batch_id=batch_id, tenant_id=tenant_id, batch_date=new_date)
+            start_row = DailyBatchModel(batch_id=batch_id, tenant_id=tenant_id, batch_date=new_date, batch_no=db_batch.batch_no, shed_id=db_batch.shed_id)
             db.add(start_row)
             db.flush()  # Flush the new row first
             # Re-query to get fresh instances and ensure the session identity map matches DB
