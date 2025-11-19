@@ -19,6 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from utils.auth_utils import get_current_user, get_user_identifier
 from utils.tenancy import get_tenant_id
 from utils.age_utils import calculate_age_progression
+from models.batch_shed_assignment import BatchShedAssignment
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
