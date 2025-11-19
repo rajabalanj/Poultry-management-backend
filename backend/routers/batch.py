@@ -39,6 +39,9 @@ def create_batch(
     now = datetime.now(pytz.timezone('Asia/Kolkata'))
 
     # 1. Validation
+    if not batch.batch_no or not batch.batch_no.strip():
+        raise HTTPException(status_code=400, detail="Batch number cannot be empty.")
+
     # Check for active batch with the same batch_no
     existing_batch_no = db.query(BatchModel).filter(
         BatchModel.batch_no == batch.batch_no,

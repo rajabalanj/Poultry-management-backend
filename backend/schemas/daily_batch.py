@@ -2,8 +2,8 @@ from pydantic import BaseModel, validator, computed_field
 from datetime import date
 from typing import Optional
 class DailyBatchBase(BaseModel):
-    shed_id: int
-    batch_no: str
+    shed_id: Optional[int] = None
+    batch_no: Optional[str] = None
     age: str
     opening_count: int
     mortality: int = 0
