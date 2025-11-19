@@ -87,6 +87,9 @@ def upload_weekly_report_excel(
                 raise HTTPException(status_code=400, detail=f"Invalid data in row {i + 1}: {e}. Ensure 'DATE' is in DD-MM-YYYY format.")
 
             # Calculate age dynamically
+            # Ensure both dates are date objects for proper subtraction
+            if isinstance(batch_start_date, datetime.datetime):
+                batch_start_date = batch_start_date.date()
             days_diff = (batch_date - batch_start_date).days
             if days_diff < 0:
                 raise HTTPException(status_code=400, detail=f"Batch date {batch_date} cannot be before batch start date {batch_start_date} in row {i + 1}.")
@@ -175,7 +178,7 @@ def upload_weekly_report_excel(
                 except (ValueError, TypeError):
                     prev_age = 0.0
 
-                from utils.age_utils import calculate_age_progression
+                # Using the top-level import
                 for row_to_update in subsequent_rows:
                     row_to_update.opening_count = prev_closing
 
@@ -278,7 +281,7 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
                 logger.warning(f"Skipping row {row_idx} (Date: {report_date}) for batch '{batch_no_excel}' because it's before the batch start date ({batch_obj.date}).")
                 continue
 
-            from utils.age_utils import calculate_age_progression
+            # Using the top-level import
             prev_daily = db.query(DailyBatchModel).filter(
                 DailyBatchModel.batch_id == batch_id_for_daily_batch,
                 DailyBatchModel.batch_date < report_date
@@ -461,7 +464,7 @@ def update_daily_batch(
     # Update fields on the current daily_batch from payload
     if "age" in payload:
         try:
-            from utils import calculate_age_progression
+            # Using the top-level import
             new_age = float(payload["age"])
             if new_age < 0:
                 raise HTTPException(status_code=400, detail="Age must be a non-negative number")
@@ -502,7 +505,7 @@ def update_daily_batch(
         except (ValueError, TypeError):
             prev_age = 0.0
         
-        from utils import calculate_age_progression
+        # Using the top-level import
 
         for row in subsequent_rows:
             # Propagate opening_count based on previous closing_count
@@ -546,7 +549,7 @@ def create_or_get_daily_batches(
     """
     from models.daily_batch import DailyBatch as DailyBatchModel
     from models.batch import Batch as BatchModel
-    from utils import calculate_age_progression
+    # Using the top-level import
     from dateutil import parser
 
     # Handle timezone format issues (+ becomes space in URL decoding)
