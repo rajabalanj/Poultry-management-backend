@@ -305,6 +305,19 @@ def update_batch(
 
     # --- 3. Propagation Logic ---
     if any(key in changes for key in ['date', 'age', 'opening_count', 'batch_no']):
+        # Handle BatchShedAssignment update if batch date changes
+        if 'date' in changes:
+            current_assignment = db.query(BatchShedAssignment).filter(
+                BatchShedAssignment.batch_id == batch_id,
+                BatchShedAssignment.end_date == None,
+                BatchShedAssignment.batch.has(tenant_id=tenant_id)
+            ).first()
+            if current_assignment:
+                current_assignment.start_date = new_date
+                db.add(current_assignment)
+                logger.info(f"Updated BatchShedAssignment start_date for batch {batch_id} to {new_date}")
+            else:
+                logger.warning(f"No active BatchShedAssignment found for batch {batch_id} when batch date was changed. This might lead to issues.")
         
         # Get all daily_batch rows from the new start date onwards
         all_rows = db.query(DailyBatchModel).filter(
