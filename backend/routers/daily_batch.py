@@ -15,8 +15,10 @@ import crud.daily_batch as crud_daily_batch
 from crud.audit_log import create_audit_log
 from schemas.audit_log import AuditLogCreate
 from utils import sqlalchemy_to_dict
+from sqlalchemy.exc import IntegrityError
 from utils.auth_utils import get_current_user, get_user_identifier
 from utils.tenancy import get_tenant_id
+from utils.age_utils import calculate_age_progression
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -42,69 +44,64 @@ def upload_weekly_report_excel(
         contents = file.file.read()
         df = pd.read_excel(io.BytesIO(contents), header=None)
 
-        # Find all occurrences of "AGE" in the first column (stripping whitespace)
-        if 0 in df.columns:
-            df[0] = df[0].astype(str).str.strip()
-        age_indices = df.index[df[0] == 'AGE'].tolist()
-        if not age_indices:
-            raise HTTPException(status_code=400, detail="No 'AGE' rows found in the Excel file.")
-
         all_daily_batches_to_create = []
 
-        for age_idx in age_indices:
-            # Extract the age (week number)
+        # Find the header row for the data
+        header_row_idx = df.index[df[0] == 'DATE'].tolist()
+        if not header_row_idx:
+            raise HTTPException(status_code=400, detail="No 'DATE' rows found in the Excel file.")
+        
+        # Assuming the first 'DATE' row is the start of the data block
+        header_row_idx = header_row_idx[0]
+        header_row = [str(x).strip() for x in df.iloc[header_row_idx]]
+        expected_header = ['DATE', 'OPEN STOCK', 'MORT', 'CULLS', 'CLOSING STOCK', 'TABLE', 'JUMBO', 'CR', 'TOTAL', 'HD%', 'FEED KGS', 'REMARKS']
+        if header_row[:len(expected_header)] != expected_header:
+            raise HTTPException(status_code=400, detail=f"Invalid header at row {header_row_idx + 1}. Expected: {expected_header}")
+
+        # Read all data rows until an empty row or end of file
+        data_start_row = header_row_idx + 1
+        weekly_data = df.iloc[data_start_row:]
+
+        if weekly_data.empty:
+            raise HTTPException(status_code=400, detail="No data rows found after header.")
+
+        initial_batch_age = float(batch_obj.age)
+        batch_start_date = batch_obj.date
+
+        for i, row in weekly_data.iterrows():
+            # Stop if the first column is empty, indicating end of data block
+            if pd.isna(row[0]):
+                break
             try:
-                week_number = int(df.iloc[age_idx, 1])
-            except (ValueError, TypeError):
-                raise HTTPException(status_code=400, detail=f"Invalid week number at row {age_idx + 1}.")
+                batch_date_str = str(row[0]).strip()
+                batch_date = pd.to_datetime(batch_date_str, format='%d-%m-%Y').date()
+                
+                opening_count = int(row[1])
+                mortality = int(row[2])
+                culls = int(row[3])
+                table_eggs = int(row[5])
+                jumbo_eggs = int(row[6])
+                cr_eggs = int(row[7])
+            except (ValueError, TypeError) as e:
+                raise HTTPException(status_code=400, detail=f"Invalid data in row {i + 1}: {e}. Ensure 'DATE' is in DD-MM-YYYY format.")
 
-            # Find the header row for the data
-            header_row_idx = age_idx + 1
-            header_row = [str(x).strip() for x in df.iloc[header_row_idx]]
-            expected_header = ['DATE', 'OPEN STOCK', 'MORT', 'CULLS', 'CLOSING STOCK', 'TABLE', 'JUMBO', 'CR', 'TOTAL', 'HD%', 'FEED KGS', 'REMARKS']
-            if header_row[:len(expected_header)] != expected_header:
-                raise HTTPException(status_code=400, detail=f"Invalid header at row {header_row_idx + 1}.")
+            # Calculate age dynamically
+            days_diff = (batch_date - batch_start_date).days
+            if days_diff < 0:
+                raise HTTPException(status_code=400, detail=f"Batch date {batch_date} cannot be before batch start date {batch_start_date} in row {i + 1}.")
+            
+            age = str(round(calculate_age_progression(initial_batch_age, days_diff), 1))
 
-            # Read the 7 days of data
-            data_start_row = header_row_idx + 1
-            weekly_data = df.iloc[data_start_row:data_start_row + 7]
+            # Find the correct shed_id for this specific date
+            assignment = db.query(BatchShedAssignment).filter(
+                BatchShedAssignment.batch_id == batch_id,
+                BatchShedAssignment.start_date <= batch_date,
+                (BatchShedAssignment.end_date == None) | (BatchShedAssignment.end_date >= batch_date)
+            ).first()
 
-            if len(weekly_data) != 7:
-                raise HTTPException(status_code=400, detail=f"Expected 7 days of data for week {week_number}, but found {len(weekly_data)}.")
-
-            for i, row in weekly_data.iterrows():
-                try:
-                    batch_date_str = row[0]
-                    if isinstance(batch_date_str, datetime.datetime):
-                        batch_date = batch_date_str.date()
-                    else:
-                        try:
-                            batch_date = pd.to_datetime(batch_date_str, format='%d-%m-%Y').date()
-                        except ValueError:
-                            batch_date = pd.to_datetime(batch_date_str, format='%Y-%m-%d %H:%M:%S').date()
-                    opening_count = int(row[1])
-                    mortality = int(row[2])
-                    culls = int(row[3])
-                    table_eggs = int(row[5])
-                    jumbo_eggs = int(row[6])
-                    cr_eggs = int(row[7])
-                except (ValueError, TypeError) as e:
-                    raise HTTPException(status_code=400, detail=f"Invalid data in row {i + 1} for week {week_number}: {e}")
-
-                day_of_week = i - data_start_row + 1
-                age = f"{week_number}.{day_of_week}"
-
-                # Find the correct shed_id for this specific date
-                from models.batch_shed_assignment import BatchShedAssignment
-                assignment = db.query(BatchShedAssignment).filter(
-                    BatchShedAssignment.batch_id == batch_id,
-                    BatchShedAssignment.start_date <= batch_date,
-                    (BatchShedAssignment.end_date == None) | (BatchShedAssignment.end_date >= batch_date)
-                ).first()
-
-                shed_id_to_use = assignment.shed_id if assignment else None
-                if shed_id_to_use is None:
-                    logger.warning(f"Could not find shed assignment for batch {batch_id} on date {batch_date} during Excel upload. Shed ID will be null.")
+            shed_id_to_use = assignment.shed_id if assignment else None
+            if shed_id_to_use is None:
+                logger.warning(f"Could not find shed assignment for batch {batch_id} on date {batch_date} during Excel upload. Shed ID will be null.")
 
                 daily_batch_data = DailyBatchCreate(
                     batch_id=batch_id,
@@ -626,7 +623,7 @@ def create_or_get_daily_batches(
                     prev_age = float(prev_daily.age)
                 except (ValueError, TypeError):
                     prev_age = 0.0
-                days_diff = (batch_date - prev_daily.batch_date.date()).days
+                days_diff = (batch_date - prev_daily.batch_date).days
                 age = calculate_age_progression(prev_age, days_diff)
             else:
                 opening_count = batch.opening_count
@@ -634,46 +631,57 @@ def create_or_get_daily_batches(
                     base_age = float(batch.age)
                 except (ValueError, TypeError):
                     base_age = 0.0
-                days_diff = (batch_date - batch.date.date()).days
+                days_diff = (batch_date - batch.date).days
                 age = calculate_age_progression(base_age, days_diff)
 
             shed_id_to_use = assignment_map.get(batch.id)
             if shed_id_to_use is None:
                 logger.warning(f"Could not find shed assignment for batch {batch.id} on date {batch_date}. Shed ID will be null.")
 
-            db_daily = DailyBatchModel(
-                batch_id=batch.id,
-                tenant_id=tenant_id,
-                shed_id=shed_id_to_use,
-                batch_no=batch.batch_no,
-                upload_date=today,
-                batch_date=batch_date,
-                age=str(round(age, 1)),
-                opening_count=opening_count,
-                mortality=0,
-                culls=0,
-                table_eggs=0,
-                jumbo=0,
-                cr=0,
-            )
-            db.add(db_daily)
-            db.commit()
-            db.refresh(db_daily)
-
-            # Audit log for created daily_batch
             try:
-                new_values = sqlalchemy_to_dict(db_daily)
-                log_entry = AuditLogCreate(
-                    table_name='daily_batch',
-                    record_id=f"{db_daily.batch_id}_{db_daily.batch_date}",
-                    changed_by=get_user_identifier(user),
-                    action='CREATE',
-                    old_values={},
-                    new_values=new_values or {}
+                db_daily = DailyBatchModel(
+                    batch_id=batch.id,
+                    tenant_id=tenant_id,
+                    shed_id=shed_id_to_use,
+                    batch_no=batch.batch_no,
+                    upload_date=today,
+                    batch_date=batch_date,
+                    age=str(round(age, 1)),
+                    opening_count=opening_count,
+                    mortality=0,
+                    culls=0,
+                    table_eggs=0,
+                    jumbo=0,
+                    cr=0,
                 )
-                create_audit_log(db=db, log_entry=log_entry)
-            except Exception:
-                pass
+                db.add(db_daily)
+                db.commit()
+                db.refresh(db_daily)
+
+                # Audit log for created daily_batch
+                try:
+                    new_values = sqlalchemy_to_dict(db_daily)
+                    log_entry = AuditLogCreate(
+                        table_name='daily_batch',
+                        record_id=f"{db_daily.batch_id}_{db_daily.batch_date}",
+                        changed_by=get_user_identifier(user),
+                        action='CREATE',
+                        old_values={},
+                        new_values=new_values or {}
+                    )
+                    create_audit_log(db=db, log_entry=log_entry)
+                except Exception:
+                    pass
+            
+            except IntegrityError:
+                db.rollback()
+                # The record was likely created by a concurrent request. Fetch it.
+                db_daily = db.query(DailyBatchModel).filter(
+                    DailyBatchModel.batch_id == batch.id,
+                    DailyBatchModel.batch_date == batch_date,
+                    DailyBatchModel.tenant_id == tenant_id
+                ).one()
+
 
             d = {c.name: getattr(db_daily, c.name) for c in db_daily.__table__.columns}
             d['closing_count'] = db_daily.closing_count
