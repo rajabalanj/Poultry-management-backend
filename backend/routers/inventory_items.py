@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import date
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import logging
@@ -134,7 +135,13 @@ def delete_inventory_item(
     return {"message": "Inventory item deleted successfully"}
 
 @router.get("/{item_id}/audit", response_model=List[InventoryItemAudit])
-def get_inventory_item_audit_history(item_id: int, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
+def get_inventory_item_audit_history(
+    item_id: int, 
+    db: Session = Depends(get_db), 
+    tenant_id: str = Depends(get_tenant_id),
+    start_date: Optional[date] = Query(None, description="Start date for filtering audit history"),
+    end_date: Optional[date] = Query(None, description="End date for filtering audit history")
+):
     """
     Retrieve the audit history for a specific inventory item.
     """
@@ -142,5 +149,11 @@ def get_inventory_item_audit_history(item_id: int, db: Session = Depends(get_db)
     if db_item is None:
         raise HTTPException(status_code=404, detail="Inventory item not found")
     
-    audit_history = crud_inventory_item_audit.get_inventory_item_audits(db=db, inventory_item_id=item_id, tenant_id=tenant_id)
+    audit_history = crud_inventory_item_audit.get_inventory_item_audits(
+        db=db, 
+        inventory_item_id=item_id, 
+        tenant_id=tenant_id,
+        start_date=start_date,
+        end_date=end_date
+    )
     return audit_history
