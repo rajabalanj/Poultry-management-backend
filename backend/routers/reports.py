@@ -1,7 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 import os
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime, date
 from models.daily_batch import DailyBatch
 from openpyxl import Workbook, load_workbook
@@ -12,6 +12,10 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import and_, func, Float, cast
 import models
 from models.batch import Batch
+from models.inventory_items import InventoryItem
+from models.sales_order_items import SalesOrderItem
+from models.sales_orders import SalesOrder, SalesOrderStatus
+from schemas.reports import TopSellingItem
 from utils.tenancy import get_tenant_id
 from models.bovanswhitelayerperformance import BovansWhiteLayerPerformance
 
@@ -34,6 +38,43 @@ router = APIRouter(
     prefix="/reports",
     tags=["reports"],
 )
+
+@router.get("/top-selling-items", response_model=List[TopSellingItem], tags=["Sales Reports"])
+def get_top_selling_items_report(
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    limit: int = 10,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """
+    Generate a report of top-selling inventory items based on sales orders.
+    """
+    query = (
+        db.query(
+            InventoryItem.id.label("item_id"),
+            InventoryItem.name,
+            func.sum(SalesOrderItem.quantity).label("total_quantity_sold")
+        )
+        .join(SalesOrderItem, InventoryItem.id == SalesOrderItem.inventory_item_id)
+        .join(SalesOrder, SalesOrderItem.sales_order_id == SalesOrder.id)
+        .filter(SalesOrder.tenant_id == tenant_id)
+        .filter(SalesOrder.status.in_([SalesOrderStatus.APPROVED, SalesOrderStatus.PAID]))
+    )
+
+    if start_date:
+        query = query.filter(SalesOrder.order_date >= start_date)
+    if end_date:
+        query = query.filter(SalesOrder.order_date <= end_date)
+
+    top_items = (
+        query.group_by(InventoryItem.id, InventoryItem.name)
+        .order_by(func.sum(SalesOrderItem.quantity).desc())
+        .limit(limit)
+        .all()
+    )
+    
+    return top_items
 
 def _calculate_cumulative_report(db: Session, batch_id: int, current_week: int, hen_housing: int, current_summary: dict, tenant_id: str):
     """Calculate cumulative report data"""

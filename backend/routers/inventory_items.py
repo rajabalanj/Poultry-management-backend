@@ -1,6 +1,7 @@
 from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from typing import List, Optional
 import logging
 
@@ -9,6 +10,7 @@ from models.inventory_items import InventoryItem as InventoryItemModel
 from models.egg_room_reports import EggRoomReport
 from schemas.inventory_items import InventoryItem, InventoryItemCreate, InventoryItemUpdate
 from schemas.inventory_item_audit import InventoryItemAudit
+from schemas.reports import InventoryValue
 from utils.auth_utils import get_current_user, get_user_identifier
 from crud import inventory_items as crud_inventory_items
 from crud import inventory_item_audit as crud_inventory_item_audit
@@ -71,6 +73,52 @@ def read_inventory_items(
             item.current_stock = latest_egg_stock.get(item.name, item.current_stock)
             
     return items
+
+@router.get("/reports/stock-levels", response_model=List[InventoryItem], tags=["Inventory Reports"])
+def get_stock_levels_report(
+    category: Optional[str] = None,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """Generate a report of current stock levels for all inventory items."""
+    query = db.query(InventoryItemModel).filter(InventoryItemModel.tenant_id == tenant_id)
+    if category:
+        query = query.filter(InventoryItemModel.category == category)
+    items = query.all()
+
+    latest_egg_stock = _get_latest_egg_report_stock(db, tenant_id)
+    for item in items:
+        if item.name in EGG_INVENTORY_NAMES:
+            item.current_stock = latest_egg_stock.get(item.name, item.current_stock)
+            
+    return items
+
+@router.get("/reports/low-stock", response_model=List[InventoryItem], tags=["Inventory Reports"])
+def get_low_stock_report(db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
+    """Generate a report of items that are below their reorder level."""
+    items = db.query(InventoryItemModel).filter(
+        InventoryItemModel.tenant_id == tenant_id,
+        InventoryItemModel.reorder_level.isnot(None),
+        InventoryItemModel.current_stock < InventoryItemModel.reorder_level
+    ).all()
+    
+    latest_egg_stock = _get_latest_egg_report_stock(db, tenant_id)
+    for item in items:
+        if item.name in EGG_INVENTORY_NAMES:
+            item.current_stock = latest_egg_stock.get(item.name, item.current_stock)
+
+    return items
+
+@router.get("/reports/inventory-value", response_model=InventoryValue, tags=["Inventory Reports"])
+def get_inventory_value_report(db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
+    """Calculate the total monetary value of the current inventory."""
+    # We need to handle egg inventory separately if its cost is managed differently
+    # For now, we assume average_cost is accurate for all items
+    total_value = db.query(func.sum(InventoryItemModel.current_stock * InventoryItemModel.average_cost)).filter(
+        InventoryItemModel.tenant_id == tenant_id
+    ).scalar()
+    
+    return {"total_inventory_value": total_value or 0.0}
 
 @router.get("/{item_id}", response_model=InventoryItem)
 def read_inventory_item(item_id: int, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
