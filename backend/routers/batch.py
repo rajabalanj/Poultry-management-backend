@@ -13,6 +13,7 @@ from sqlalchemy.orm.exc import StaleDataError
 
 # Local application imports
 import crud.batch as crud_batch
+from crud.audit_log import create_audit_log
 from database import get_db
 from models.batch import Batch as BatchModel
 from models.batch_shed_assignment import BatchShedAssignment

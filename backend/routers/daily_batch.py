@@ -559,9 +559,9 @@ def update_daily_batch(
     db.refresh(daily_batch)
     return daily_batch
 
-@router.post("/daily-batch/", response_model=List[dict])
+@router.get("/daily-batch/", response_model=List[dict])
 def create_or_get_daily_batches(
-    batch_date: str = Query(..., description="Date for which to fetch daily batches"),
+    batch_date: date = Query(..., description="Date for which to fetch daily batches"),
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
     tenant_id: str = Depends(get_tenant_id)
@@ -573,12 +573,7 @@ def create_or_get_daily_batches(
     """
     # Imports are now at the top of the file
 
-    # Handle timezone format issues (+ becomes space in URL decoding)
-    batch_date_str = batch_date.replace(' ', '+')
-    try:
-        batch_date = parser.parse(batch_date_str).date()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid batch_date format")
+    # FastAPI now handles date parsing automatically from the query parameter.
 
     today = date.today()
 
