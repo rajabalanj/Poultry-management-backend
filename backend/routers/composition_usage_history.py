@@ -1,13 +1,19 @@
+# Standard library imports
+from datetime import datetime, date
+from typing import Optional
+
+# Third-party imports
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from typing import Optional
-from database import get_db
+
+# Local application imports
 from crud.composition_usage_history import use_composition, get_composition_usage_history, revert_composition_usage, get_composition_usage_by_date
+from database import get_db
+from models.batch import Batch as BatchModel
+from models.composition_usage_history import CompositionUsageHistory as CompositionUsageHistoryModel
 from schemas.composition_usage_history import CompositionUsageHistory, CompositionUsageByDate, CompositionUsageCreate
 from utils.auth_utils import get_current_user, get_user_identifier
 from utils.tenancy import get_tenant_id
-from datetime import datetime, date
-from models.batch import Batch as BatchModel
 
 router = APIRouter(
     prefix="/compositions",
@@ -65,7 +71,7 @@ def get_filtered_composition_usage_history(
     """
     Get composition usage history for a specific date, with an optional filter for batch_id.
     """
-    from models.composition_usage_history import CompositionUsageHistory as CompositionUsageHistoryModel
+    # Import is now at the top of the file
 
     # Define the time range for the given date
     start_of_day = datetime.combine(batch_date, datetime.min.time())

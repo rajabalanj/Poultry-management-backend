@@ -1,25 +1,31 @@
+# Standard library imports
 import datetime
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
-from sqlalchemy.orm import Session
-from typing import List
-from datetime import date
-import pandas as pd
 import io
 import logging
+from datetime import date
+from typing import List
 
+# Third-party imports
+import pandas as pd
+import dateutil.parser
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
+from sqlalchemy import and_
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+# Local application imports
+import crud.daily_batch as crud_daily_batch
 from database import get_db
 from models.batch import Batch as BatchModel
+from models.batch_shed_assignment import BatchShedAssignment
 from models.daily_batch import DailyBatch as DailyBatchModel
-from schemas.daily_batch import DailyBatchCreate, DailyBatchUpdate
-import crud.daily_batch as crud_daily_batch
-from crud.audit_log import create_audit_log
 from schemas.audit_log import AuditLogCreate
+from schemas.daily_batch import DailyBatchCreate, DailyBatchUpdate
 from utils import sqlalchemy_to_dict
-from sqlalchemy.exc import IntegrityError
+from utils.age_utils import calculate_age_progression
 from utils.auth_utils import get_current_user, get_user_identifier
 from utils.tenancy import get_tenant_id
-from utils.age_utils import calculate_age_progression
-from models.batch_shed_assignment import BatchShedAssignment
+from crud.audit_log import create_audit_log
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -364,7 +370,7 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
                     pass
             else:
                 # Find the correct shed_id for this specific date
-                from models.batch_shed_assignment import BatchShedAssignment
+                # Import is now at the top of the file
                 assignment = db.query(BatchShedAssignment).filter(
                     BatchShedAssignment.batch_id == batch_id_for_daily_batch,
                     BatchShedAssignment.start_date <= report_date,
@@ -455,12 +461,7 @@ def update_daily_batch(
     tenant_id: str = Depends(get_tenant_id)
 ):
     """Update a daily batch row by batch_id and batch_date. Applies propagation logic for age, counts."""
-    from models.daily_batch import DailyBatch as DailyBatchModel
-    from sqlalchemy import and_
-    import dateutil.parser
-    from crud.audit_log import create_audit_log
-    from schemas.audit_log import AuditLogCreate
-    from utils import sqlalchemy_to_dict
+    # Imports are now at the top of the file
 
     # Parse date string
     try:
@@ -570,10 +571,7 @@ def create_or_get_daily_batches(
     If a daily_batch row for an active batch does not exist for the given date, it is generated.
     If the batch_date is before a batch's start date, a message is returned for that batch.
     """
-    from models.daily_batch import DailyBatch as DailyBatchModel
-    from models.batch import Batch as BatchModel
-    # Using the top-level import
-    from dateutil import parser
+    # Imports are now at the top of the file
 
     # Handle timezone format issues (+ becomes space in URL decoding)
     batch_date_str = batch_date.replace(' ', '+')
@@ -600,7 +598,7 @@ def create_or_get_daily_batches(
 
     # Efficiently fetch all relevant shed assignments for the active batches on the given date
     active_batch_ids = [b.id for b in active_batches]
-    from models.batch_shed_assignment import BatchShedAssignment
+    # Import is now at the top of the file
     assignments = db.query(BatchShedAssignment).filter(
         BatchShedAssignment.batch_id.in_(active_batch_ids),
         BatchShedAssignment.start_date <= batch_date,

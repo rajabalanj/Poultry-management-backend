@@ -1,24 +1,30 @@
-import pytz
-from models.shed import Shed
-from models.daily_batch import DailyBatch as DailyBatchModel
-from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi import APIRouter, Depends, HTTPException
-from utils.auth_utils import get_current_user, get_user_identifier, require_group
-from sqlalchemy.orm import Session
-from models.batch import Batch as BatchModel
-from models.batch_shed_assignment import BatchShedAssignment
-from schemas.batch import BatchCreate, Batch as BatchSchema, BatchResponse
-from datetime import date, datetime
+# Standard library imports
+import logging
+from datetime import date, datetime, timedelta
 from typing import List
+
+# Third-party imports
+import pytz
+from dateutil import parser
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+from sqlalchemy.orm.exc import StaleDataError
+
+# Local application imports
 import crud.batch as crud_batch
 from database import get_db
-from utils.tenancy import get_tenant_id
-from crud.audit_log import create_audit_log
+from models.batch import Batch as BatchModel
+from models.batch_shed_assignment import BatchShedAssignment
+from models.daily_batch import DailyBatch as DailyBatchModel
+from models.shed import Shed
 from schemas.audit_log import AuditLogCreate
-from utils import sqlalchemy_to_dict
+from schemas.batch import BatchCreate, Batch as BatchSchema, BatchResponse
+from utils.auth_utils import get_current_user, get_user_identifier, require_group
+from utils.tenancy import get_tenant_id
+from utils import sqlalchemy_to_dict, calculate_age_progression
 
-# --- Logging Configuration (import and get logger) ---
-import logging
+# --- Logging Configuration ---
 logger = logging.getLogger(__name__)
 
 
@@ -252,8 +258,7 @@ def update_batch(
     user: dict = Depends(require_group(["admin"])),
     tenant_id: str = Depends(get_tenant_id)
 ):
-    from utils import calculate_age_progression
-    from dateutil import parser
+    # Imports are now at the top of the file
 
     logger.info(f"Update batch called for batch_id={batch_id} with data: {batch_data}")
 
@@ -388,7 +393,7 @@ def update_batch(
         db.commit()
     except Exception as e:
         # Specific handling for SQLAlchemy stale data errors to capture more context
-        from sqlalchemy.orm.exc import StaleDataError
+        # Import is now at the top of the file
         if isinstance(e, StaleDataError):
             logger.exception("StaleDataError committing batch update for batch_id=%s: %s", batch_id, e)
             # For stale data errors, refresh the session and retry the operation once
@@ -429,8 +434,7 @@ def update_batch(
     logger.info(f"Successfully updated batch {batch_id}.")
     return db_batch
 
-from pydantic import BaseModel
-from datetime import date, timedelta
+# Imports are now at the top of the file
 
 class BatchMovePayload(BaseModel):
     new_shed_id: int

@@ -1,23 +1,29 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+# Standard library imports
 import os
-from typing import Optional, List
+from collections import defaultdict
 from datetime import datetime, date
-from models.daily_batch import DailyBatch
-from openpyxl import Workbook, load_workbook
-from openpyxl.styles import Font, PatternFill, Alignment
-from openpyxl.utils import get_column_letter
-from database import get_db
+from itertools import groupby
+from typing import List, Optional
+
+# Third-party imports
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
-from sqlalchemy import and_, func, Float, cast
-import models
+from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
+from sqlalchemy import Float, and_, cast, func
+from sqlalchemy.orm import Session
+
+# Local application imports
+from database import get_db
 from models.batch import Batch
+from models.bovanswhitelayerperformance import BovansWhiteLayerPerformance
+from models.daily_batch import DailyBatch
 from models.inventory_items import InventoryItem
 from models.sales_order_items import SalesOrderItem
 from models.sales_orders import SalesOrder, SalesOrderStatus
 from schemas.reports import TopSellingItem
 from utils.tenancy import get_tenant_id
-from models.bovanswhitelayerperformance import BovansWhiteLayerPerformance
 
 
 def _is_layer_age(age_str):
@@ -28,10 +34,10 @@ def _is_layer_age(age_str):
         return False
 
 def get_daily_batches_by_date_range(db: Session, start_date: date, end_date: date, tenant_id: str):
-    return db.query(models.DailyBatch).filter(
-        and_(models.DailyBatch.batch_date >= start_date,
-             models.DailyBatch.batch_date <= end_date,
-             models.DailyBatch.tenant_id == tenant_id)
+    return db.query(DailyBatch).filter(
+        and_(DailyBatch.batch_date >= start_date,
+             DailyBatch.batch_date <= end_date,
+             DailyBatch.tenant_id == tenant_id)
     ).all()
 
 router = APIRouter(
@@ -151,7 +157,7 @@ def _calculate_summary(batches: list[DailyBatch], query_start_date: date, query_
     summary_opening_count = 0
     summary_closing_count = 0
 
-    from itertools import groupby
+    # Import is now at the top of the file
 
     # The caller must sort batches by batch_id, then date.
     grouped_batches = groupby(batches, key=lambda b: b.batch_id)
@@ -438,7 +444,7 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
         )
 
         # Fetch all daily rows for the tenant & date range and aggregate in Python
-        from collections import defaultdict
+        # Import is now at the top of the file
 
         daily_rows = (
             db.query(DailyBatch)

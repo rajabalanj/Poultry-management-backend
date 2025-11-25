@@ -1,19 +1,24 @@
+# Standard library imports
 from datetime import date
-from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.orm import Session
-from sqlalchemy import func
-from typing import List, Optional
 import logging
+from typing import List, Optional
 
+# Third-party imports
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+# Local application imports
+from crud import inventory_item_audit as crud_inventory_item_audit
+from crud import inventory_items as crud_inventory_items
 from database import get_db
-from models.inventory_items import InventoryItem as InventoryItemModel
 from models.egg_room_reports import EggRoomReport
-from schemas.inventory_items import InventoryItem, InventoryItemCreate, InventoryItemUpdate
+from models.inventory_items import InventoryItem as InventoryItemModel
+from models.purchase_order_items import PurchaseOrderItem as PurchaseOrderItemModel
 from schemas.inventory_item_audit import InventoryItemAudit
+from schemas.inventory_items import InventoryItem, InventoryItemCreate, InventoryItemUpdate
 from schemas.reports import InventoryValue
 from utils.auth_utils import get_current_user, get_user_identifier
-from crud import inventory_items as crud_inventory_items
-from crud import inventory_item_audit as crud_inventory_item_audit
 from utils.tenancy import get_tenant_id
 
 router = APIRouter(prefix="/inventory-items", tags=["Inventory Items"])
@@ -170,7 +175,7 @@ def delete_inventory_item(
         raise HTTPException(status_code=404, detail="Inventory item not found")
 
     # Check for associated purchase order items
-    from models.purchase_order_items import PurchaseOrderItem as PurchaseOrderItemModel
+    # Import is now at the top of the file
     associated_po_items = db.query(PurchaseOrderItemModel).filter(PurchaseOrderItemModel.inventory_item_id == item_id).first()
     if associated_po_items:
         raise HTTPException(

@@ -10,7 +10,8 @@ class TopSellingItem(BaseModel):
     total_quantity_sold: float
 
     class Config:
-        orm_mode = True
+        # This is the correct Pydantic v2 attribute. If you are using v1, it's 'orm_mode = True'
+        from_attributes = True
 
 class TopSellingItemsReport(BaseModel):
     report_data: List[TopSellingItem]
