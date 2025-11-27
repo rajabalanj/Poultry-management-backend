@@ -78,31 +78,33 @@ def get_report(report_date: str, db: Session = Depends(get_db), tenant_id: str =
                 tenant_id=tenant_id
             )
             report = egg_crud.create_report(db, dummy_data, tenant_id, user_id)
-        else:
-            # Always update received values from daily_batch
-            daily_batch_sums = db.query(
-                func.sum(DailyBatch.table_eggs).label("table_received"),
-                func.sum(DailyBatch.jumbo).label("jumbo_received"),
-                func.sum(DailyBatch.cr).label("grade_c_shed_received")
-            ).filter(
-                DailyBatch.batch_date == requested_date,
-                DailyBatch.tenant_id == tenant_id
-            ).first()
+        
+        # Self-healing logic: Check for and correct stale data.
+        update_required = False
+        
+        # 1. Check and correct "received" amounts from daily_batch
+        daily_batch_sums = db.query(
+            func.sum(DailyBatch.table_eggs).label("table_received"),
+            func.sum(DailyBatch.jumbo).label("jumbo_received"),
+            func.sum(DailyBatch.cr).label("grade_c_shed_received")
+        ).filter(
+            DailyBatch.batch_date == requested_date,
+            DailyBatch.tenant_id == tenant_id
+        ).first()
 
-            update_required = False
-            if report.table_received != (daily_batch_sums.table_received or 0):
-                report.table_received = daily_batch_sums.table_received or 0
-                update_required = True
+        if report.table_received != (daily_batch_sums.table_received or 0):
+            report.table_received = daily_batch_sums.table_received or 0
+            update_required = True
 
-            if report.jumbo_received != (daily_batch_sums.jumbo_received or 0):
-                report.jumbo_received = daily_batch_sums.jumbo_received or 0
-                update_required = True
+        if report.jumbo_received != (daily_batch_sums.jumbo_received or 0):
+            report.jumbo_received = daily_batch_sums.jumbo_received or 0
+            update_required = True
 
-            if report.grade_c_shed_received != (daily_batch_sums.grade_c_shed_received or 0):
-                report.grade_c_shed_received = daily_batch_sums.grade_c_shed_received or 0
-                update_required = True
+        if report.grade_c_shed_received != (daily_batch_sums.grade_c_shed_received or 0):
+            report.grade_c_shed_received = daily_batch_sums.grade_c_shed_received or 0
+            update_required = True
 
-            # Always update opening values if there's a previous report
+        # 2. Check and correct "opening" amounts
         if prev_report:
             if (report.table_opening != prev_report.table_closing or
                 report.jumbo_opening != prev_report.jumbo_closing or
@@ -111,14 +113,10 @@ def get_report(report_date: str, db: Session = Depends(get_db), tenant_id: str =
                 report.jumbo_opening = prev_report.jumbo_closing
                 report.grade_c_opening = prev_report.grade_c_closing
                 update_required = True
-        # If no previous report exists, get opening values from app_config
-        else:
-            table_opening_config = db.query(AppConfig).filter(
-                AppConfig.name == 'table_opening', AppConfig.tenant_id == tenant_id).first()
-            jumbo_opening_config = db.query(AppConfig).filter(
-                AppConfig.name == 'jumbo_opening', AppConfig.tenant_id == tenant_id).first()
-            grade_c_opening_config = db.query(AppConfig).filter(
-                AppConfig.name == 'grade_c_opening', AppConfig.tenant_id == tenant_id).first()
+        else: # If no previous report, check against app_config
+            table_opening_config = db.query(AppConfig).filter(AppConfig.name == 'table_opening', AppConfig.tenant_id == tenant_id).first()
+            jumbo_opening_config = db.query(AppConfig).filter(AppConfig.name == 'jumbo_opening', AppConfig.tenant_id == tenant_id).first()
+            grade_c_opening_config = db.query(AppConfig).filter(AppConfig.name == 'grade_c_opening', AppConfig.tenant_id == tenant_id).first()
 
             table_opening = int(table_opening_config.value) if table_opening_config else 0
             jumbo_opening = int(jumbo_opening_config.value) if jumbo_opening_config else 0
@@ -132,13 +130,15 @@ def get_report(report_date: str, db: Session = Depends(get_db), tenant_id: str =
                 report.grade_c_opening = grade_c_opening
                 update_required = True
 
-            if update_required:
-                db.commit()
-                db.refresh(report)
+        # 3. If any data was corrected, commit and then get a fresh object
+        if update_required:
+            db.commit()
+            # Re-fetch the report to ensure all calculated properties are re-evaluated
+            # based on the now-corrected data.
+            report = egg_crud.get_report_by_date(db, report_date, tenant_id)
 
-        # Manually serialize the report including hybrid properties
+        # 4. Serialize the final, correct report for the response
         if report:
-            # ... (rest of your serialization logic remains the same) ...
             result = {
                 "report_date": report.report_date.isoformat(),
                 "table_received": report.table_received,
@@ -168,7 +168,7 @@ def get_report(report_date: str, db: Session = Depends(get_db), tenant_id: str =
             return JSONResponse(content=result)
         else:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Report not found after creation attempt")
+                status_code=status.HTTP_404_NOT_FOUND, detail="Report not found after creation/update attempt")
     except HTTPException:
         raise
     except Exception as e:

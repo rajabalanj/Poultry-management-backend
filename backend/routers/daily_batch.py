@@ -1,14 +1,13 @@
 # Standard library imports
-import datetime
 import io
 import logging
-from datetime import date
+from datetime import date, datetime
 from typing import List
 
 # Third-party imports
 import pandas as pd
 import dateutil.parser
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, BackgroundTasks
 from sqlalchemy import and_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -26,6 +25,7 @@ from utils.age_utils import calculate_age_progression
 from utils.auth_utils import get_current_user, get_user_identifier
 from utils.tenancy import get_tenant_id
 from crud.audit_log import create_audit_log
+from tasks.eod_tasks import propagate_egg_room_updates
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -95,7 +95,7 @@ def upload_weekly_report_excel(
                 raise HTTPException(status_code=400, detail=f"Invalid data in row {i + 1}: {e}. Ensure 'DATE' is in DD-MM-YYYY format.")
 
             # Calculate age and opening_count from parent batch
-            if isinstance(batch_start_date, datetime.datetime):
+            if isinstance(batch_start_date, datetime):
                 batch_start_date = batch_start_date.date()
             days_diff = (batch_date - batch_start_date).days
             if days_diff < 0:
@@ -451,18 +451,17 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
         logger.exception(f"Unhandled error during Excel upload: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to process file: {e}")
     
-@router.patch("/daily-batch/{batch_id}/{batch_date}", response_model=DailyBatchUpdate)
+@router.patch("/daily-batch/{batch_id}/{batch_date}")
 def update_daily_batch(
     batch_id: int,
     batch_date: str,
     payload: dict,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
     tenant_id: str = Depends(get_tenant_id)
 ):
     """Update a daily batch row by batch_id and batch_date. Applies propagation logic for age, counts."""
-    # Imports are now at the top of the file
-
     # Parse date string
     try:
         batch_date_obj = dateutil.parser.parse(batch_date).date()
@@ -486,7 +485,6 @@ def update_daily_batch(
     # Update fields on the current daily_batch from payload
     if "age" in payload:
         try:
-            # Using the top-level import
             new_age = float(payload["age"])
             if new_age < 0:
                 raise HTTPException(status_code=400, detail="Age must be a non-negative number")
@@ -512,7 +510,7 @@ def update_daily_batch(
         if key not in excluded_fields and hasattr(daily_batch, key):
             setattr(daily_batch, key, value)
 
-    # Propagation logic if any of the relevant fields were in the payload
+    # Propagation logic for subsequent daily_batch rows
     if any(key in payload for key in ["age", "mortality", "culls", "opening_count"]):
         subsequent_rows = db.query(DailyBatchModel).filter(
             DailyBatchModel.batch_id == batch_id,
@@ -527,20 +525,11 @@ def update_daily_batch(
         except (ValueError, TypeError):
             prev_age = 0.0
         
-        # Using the top-level import
-
         for row in subsequent_rows:
-            # Propagate opening_count based on previous closing_count
             row.opening_count = prev_closing
-            
-            # Propagate age
-            row_date = row.batch_date if isinstance(row.batch_date, date) else row.batch_date.date()
-            prev_date_obj = prev_date if isinstance(prev_date, date) else prev_date.date()
-            days_diff = (row_date - prev_date_obj).days
-            prev_age = calculate_age_progression(prev_age, days_diff)
-            row.age = str(round(prev_age, 1))
-            
-            # Update for next iteration
+            days_diff = (row.batch_date - prev_date).days
+            new_age = calculate_age_progression(prev_age, days_diff)
+            row.age = str(round(new_age, 1))
             prev_closing = row.closing_count
             prev_date = row.batch_date
 
@@ -557,7 +546,31 @@ def update_daily_batch(
 
     db.commit()
     db.refresh(daily_batch)
-    return daily_batch
+
+    # Trigger the background task to propagate changes to egg_room_reports
+    background_tasks.add_task(propagate_egg_room_updates, start_date=batch_date_obj, tenant_id=tenant_id)
+
+    # Manually construct response to include all fields and a message
+    response_data = {c.name: getattr(daily_batch, c.name) for c in daily_batch.__table__.columns}
+    response_data['closing_count'] = daily_batch.closing_count
+    response_data['total_eggs'] = daily_batch.total_eggs
+    response_data['hd'] = daily_batch.hd
+    response_data['standard_hen_day_percentage'] = daily_batch.standard_hen_day_percentage
+
+    # Ensure date objects are JSON serializable
+    if isinstance(response_data.get('batch_date'), date):
+        response_data['batch_date'] = response_data['batch_date'].isoformat()
+    if isinstance(response_data.get('upload_date'), date):
+        response_data['upload_date'] = response_data['upload_date'].isoformat()
+    if isinstance(response_data.get('created_at'), datetime):
+        response_data['created_at'] = response_data['created_at'].isoformat()
+    if isinstance(response_data.get('updated_at'), datetime):
+        response_data['updated_at'] = response_data['updated_at'].isoformat()
+
+    return {
+        "data": response_data,
+        "message": "Daily batch updated. Note: Dependent reports like the Egg Room Report will be updated in the background and may take a moment to reflect this change."
+    }
 
 @router.get("/daily-batch/", response_model=List[dict])
 def create_or_get_daily_batches(
