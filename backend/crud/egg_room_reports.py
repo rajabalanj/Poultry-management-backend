@@ -172,11 +172,6 @@ def update_report(db: Session, report_date: str, report: EggRoomReportUpdate, te
     db_report.jumbo_received = jumbo_received
     db_report.grade_c_shed_received = grade_c_shed_received
 
-    # Set computed closings explicitly
-    db_report.table_closing = table_closing_calc
-    db_report.jumbo_closing = jumbo_closing_calc
-    db_report.grade_c_closing = grade_c_closing_calc
-
     db_report.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
     db_report.updated_by = user_id
 
