@@ -36,3 +36,12 @@ def update_operational_expense(expense_id: int, expense: schemas.OperationalExpe
     if db_expense is None:
         raise HTTPException(status_code=404, detail="Expense not found")
     return db_expense
+
+@router.delete("/{expense_id}")
+def delete_operational_expense(expense_id: int, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id), user: dict = Depends(get_current_user)):
+    user_id = get_user_identifier(user)
+    db_expense = crud.get_operational_expense(db=db, expense_id=expense_id, tenant_id=tenant_id)
+    if db_expense is None:
+        raise HTTPException(status_code=404, detail="Expense not found")
+    crud.delete_operational_expense(db=db, expense_id=expense_id, tenant_id=tenant_id, user_id=user_id)
+    return {"message": "Expense deleted successfully"}

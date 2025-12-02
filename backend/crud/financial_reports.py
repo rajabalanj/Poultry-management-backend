@@ -12,7 +12,8 @@ def get_profit_and_loss(db: Session, start_date: date, end_date: date, tenant_id
     total_revenue = db.query(func.sum(sales_orders.SalesOrder.total_amount)).filter(
         sales_orders.SalesOrder.tenant_id == tenant_id,
         sales_orders.SalesOrder.order_date >= start_date,
-        sales_orders.SalesOrder.order_date <= end_date
+        sales_orders.SalesOrder.order_date <= end_date,
+        sales_orders.SalesOrder.deleted_at.is_(None)
     ).scalar() or Decimal(0)
 
     # 2. Calculate COGS (Cost of Goods Sold)
@@ -39,7 +40,8 @@ def get_profit_and_loss(db: Session, start_date: date, end_date: date, tenant_id
     operating_expenses = db.query(func.sum(operational_expenses.OperationalExpense.amount)).filter(
         operational_expenses.OperationalExpense.tenant_id == tenant_id,
         operational_expenses.OperationalExpense.date >= start_date,
-        operational_expenses.OperationalExpense.date <= end_date
+        operational_expenses.OperationalExpense.date <= end_date,
+        operational_expenses.OperationalExpense.deleted_at.is_(None)
     ).scalar() or Decimal(0)
 
     # 5. Calculate Net Income
@@ -58,22 +60,27 @@ def get_balance_sheet(db: Session, as_of_date: date, tenant_id: int) -> BalanceS
     # Cash
     total_sales_payments = db.query(func.sum(sales_payments.SalesPayment.amount_paid)).filter(
         sales_payments.SalesPayment.tenant_id == tenant_id,
-        sales_payments.SalesPayment.payment_date <= as_of_date
+        sales_payments.SalesPayment.payment_date <= as_of_date,
+        sales_payments.SalesPayment.deleted_at.is_(None)
     ).scalar() or Decimal(0)
     total_purchase_payments = db.query(func.sum(payments.Payment.amount_paid)).filter(
         payments.Payment.tenant_id == tenant_id,
-        payments.Payment.payment_date <= as_of_date
+        payments.Payment.payment_date <= as_of_date,
+        payments.Payment.deleted_at.is_(None)
     ).scalar() or Decimal(0)
     cash = total_sales_payments - total_purchase_payments
 
     # Accounts Receivable
     total_sales = db.query(func.sum(sales_orders.SalesOrder.total_amount)).filter(
         sales_orders.SalesOrder.tenant_id == tenant_id,
-        sales_orders.SalesOrder.order_date <= as_of_date
+        sales_orders.SalesOrder.order_date <= as_of_date,
+        sales_orders.SalesOrder.deleted_at.is_(None)
     ).scalar() or Decimal(0)
     total_sales_paid = db.query(func.sum(sales_payments.SalesPayment.amount_paid)).join(sales_orders.SalesOrder).filter(
         sales_orders.SalesOrder.tenant_id == tenant_id,
-        sales_orders.SalesOrder.order_date <= as_of_date
+        sales_orders.SalesOrder.order_date <= as_of_date,
+        sales_orders.SalesOrder.deleted_at.is_(None),
+        sales_payments.SalesPayment.deleted_at.is_(None)
     ).scalar() or Decimal(0)
     accounts_receivable = total_sales - total_sales_paid
 
@@ -85,8 +92,17 @@ def get_balance_sheet(db: Session, as_of_date: date, tenant_id: int) -> BalanceS
 
     # 2. Calculate Liabilities
     # Accounts Payable
-    total_purchases = db.query(func.sum(purchase_orders.PurchaseOrder.total_amount)).filter(purchase_orders.PurchaseOrder.tenant_id == tenant_id, purchase_orders.PurchaseOrder.order_date <= as_of_date).scalar() or Decimal(0)
-    total_purchases_paid = db.query(func.sum(payments.Payment.amount_paid)).join(purchase_orders.PurchaseOrder).filter(purchase_orders.PurchaseOrder.tenant_id == tenant_id, purchase_orders.PurchaseOrder.order_date <= as_of_date).scalar() or Decimal(0)
+    total_purchases = db.query(func.sum(purchase_orders.PurchaseOrder.total_amount)).filter(
+        purchase_orders.PurchaseOrder.tenant_id == tenant_id, 
+        purchase_orders.PurchaseOrder.order_date <= as_of_date,
+        purchase_orders.PurchaseOrder.deleted_at.is_(None)
+        ).scalar() or Decimal(0)
+    total_purchases_paid = db.query(func.sum(payments.Payment.amount_paid)).join(purchase_orders.PurchaseOrder).filter(
+        purchase_orders.PurchaseOrder.tenant_id == tenant_id, 
+        purchase_orders.PurchaseOrder.order_date <= as_of_date,
+        purchase_orders.PurchaseOrder.deleted_at.is_(None),
+        payments.Payment.deleted_at.is_(None)
+        ).scalar() or Decimal(0)
     accounts_payable = total_purchases - total_purchases_paid
 
     current_liabilities = CurrentLiabilities(accounts_payable=accounts_payable)
@@ -107,12 +123,14 @@ def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id:
 
     prior_sales_payments = db.query(sales_payments.SalesPayment).filter(
         sales_payments.SalesPayment.tenant_id == tenant_id,
-        sales_payments.SalesPayment.payment_date < start_date
+        sales_payments.SalesPayment.payment_date < start_date,
+        sales_payments.SalesPayment.deleted_at.is_(None)
     ).all()
 
     prior_purchase_payments = db.query(payments.Payment).filter(
         payments.Payment.tenant_id == tenant_id,
-        payments.Payment.payment_date < start_date
+        payments.Payment.payment_date < start_date,
+        payments.Payment.deleted_at.is_(None)
     ).all()
 
     # Calculate the net effect of prior transactions
@@ -130,13 +148,15 @@ def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id:
     sales_payments_query = db.query(sales_payments.SalesPayment).filter(
         sales_payments.SalesPayment.tenant_id == tenant_id,
         sales_payments.SalesPayment.payment_date >= start_date,
-        sales_payments.SalesPayment.payment_date <= end_date
+        sales_payments.SalesPayment.payment_date <= end_date,
+        sales_payments.SalesPayment.deleted_at.is_(None)
     ).all()
 
     purchase_payments_query = db.query(payments.Payment).filter(
         payments.Payment.tenant_id == tenant_id,
         payments.Payment.payment_date >= start_date,
-        payments.Payment.payment_date <= end_date
+        payments.Payment.payment_date <= end_date,
+        payments.Payment.deleted_at.is_(None)
     ).all()
 
     transactions = []
@@ -178,12 +198,13 @@ def get_purchase_ledger(db: Session, vendor_id: int, tenant_id: str) -> Purchase
     
     purchase_orders_query = db.query(purchase_orders.PurchaseOrder).filter(
         purchase_orders.PurchaseOrder.vendor_id == vendor_id,
-        purchase_orders.PurchaseOrder.tenant_id == tenant_id
+        purchase_orders.PurchaseOrder.tenant_id == tenant_id,
+        purchase_orders.PurchaseOrder.deleted_at.is_(None)
     ).all()
 
     entries = []
     for po in purchase_orders_query:
-        amount_paid = sum(p.amount_paid for p in po.payments)
+        amount_paid = sum(p.amount_paid for p in po.payments if p.deleted_at is None)
         balance_amount = po.total_amount - amount_paid
         entries.append(PurchaseLedgerEntry(
             date=po.order_date,
@@ -207,12 +228,13 @@ def get_sales_ledger(db: Session, customer_id: int, tenant_id: str) -> SalesLedg
 
     sales_orders_query = db.query(sales_orders.SalesOrder).filter(
         sales_orders.SalesOrder.customer_id == customer_id,
-        sales_orders.SalesOrder.tenant_id == tenant_id
+        sales_orders.SalesOrder.tenant_id == tenant_id,
+        sales_orders.SalesOrder.deleted_at.is_(None)
     ).all()
 
     entries = []
     for so in sales_orders_query:
-        amount_paid = sum(p.amount_paid for p in so.payments)
+        amount_paid = sum(p.amount_paid for p in so.payments if p.deleted_at is None)
         balance_amount = so.total_amount - amount_paid
         entries.append(SalesLedgerEntry(
             date=so.order_date,
@@ -238,13 +260,15 @@ def get_inventory_ledger(db: Session, item_id: int, start_date: date, end_date: 
     purchases_before = db.query(func.sum(purchase_order_items.PurchaseOrderItem.quantity)).join(purchase_orders.PurchaseOrder).filter(
         purchase_order_items.PurchaseOrderItem.inventory_item_id == item_id,
         purchase_orders.PurchaseOrder.tenant_id == tenant_id,
-        purchase_orders.PurchaseOrder.order_date < start_date
+        purchase_orders.PurchaseOrder.order_date < start_date,
+        purchase_orders.PurchaseOrder.deleted_at.is_(None)
     ).scalar() or 0.0
 
     sales_before = db.query(func.sum(sales_order_items.SalesOrderItem.quantity)).join(sales_orders.SalesOrder).filter(
         sales_order_items.SalesOrderItem.inventory_item_id == item_id,
         sales_orders.SalesOrder.tenant_id == tenant_id,
-        sales_orders.SalesOrder.order_date < start_date
+        sales_orders.SalesOrder.order_date < start_date,
+        sales_orders.SalesOrder.deleted_at.is_(None)
     ).scalar() or 0.0
 
     opening_quantity = float(purchases_before) - float(sales_before)
@@ -254,14 +278,16 @@ def get_inventory_ledger(db: Session, item_id: int, start_date: date, end_date: 
         purchase_order_items.PurchaseOrderItem.inventory_item_id == item_id,
         purchase_orders.PurchaseOrder.tenant_id == tenant_id,
         purchase_orders.PurchaseOrder.order_date >= start_date,
-        purchase_orders.PurchaseOrder.order_date <= end_date
+        purchase_orders.PurchaseOrder.order_date <= end_date,
+        purchase_orders.PurchaseOrder.deleted_at.is_(None)
     ).all()
 
     sales_items = db.query(sales_order_items.SalesOrderItem).join(sales_orders.SalesOrder).filter(
         sales_order_items.SalesOrderItem.inventory_item_id == item_id,
         sales_orders.SalesOrder.tenant_id == tenant_id,
         sales_orders.SalesOrder.order_date >= start_date,
-        sales_orders.SalesOrder.order_date <= end_date
+        sales_orders.SalesOrder.order_date <= end_date,
+        sales_orders.SalesOrder.deleted_at.is_(None)
     ).all()
 
     transactions = []
