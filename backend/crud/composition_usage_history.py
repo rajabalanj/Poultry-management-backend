@@ -190,7 +190,6 @@ def revert_composition_usage(db: Session, usage_id: int, tenant_id: str, changed
 
             item.current_stock += quantity_to_add_in_items_unit
             db.add(item)
-            db.flush()
 
             new_quantity_for_audit_kg = _convert_quantity(item.current_stock, item.unit, 'kg')
 
