@@ -5,10 +5,12 @@ from typing import List, Optional
 # General Ledger
 class GeneralLedgerEntry(BaseModel):
     date: date
-    transaction_type: str  # E.g., 'Sales Payment', 'Purchase Payment', 'Operational Expense'
-    party: str             # E.g., 'Customer Name', 'Vendor Name'
-    reference_document: Optional[str] = None # E.g., 'SO-13', 'PO-25'
-    details: str           # A more descriptive text about the transaction
+    transaction_type: str
+    party: str
+    reference_document: Optional[str] = None
+    transaction_id: Optional[int] = None  # ID of the payment (SP or PP)
+    reference_id: Optional[int] = None      # ID of the SO or PO
+    details: str
     debit: float = 0.0
     credit: float = 0.0
     balance: float
