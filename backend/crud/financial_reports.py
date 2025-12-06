@@ -145,14 +145,14 @@ def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id:
     report_opening_balance = initial_opening_balance + prior_net_effect
 
     # Get transactions within the date range
-    sales_payments_query = db.query(sales_payments.SalesPayment).filter(
+    sales_payments_query = db.query(sales_payments.SalesPayment).join(sales_orders.SalesOrder).join(business_partners.BusinessPartner).filter(
         sales_payments.SalesPayment.tenant_id == tenant_id,
         sales_payments.SalesPayment.payment_date >= start_date,
         sales_payments.SalesPayment.payment_date <= end_date,
         sales_payments.SalesPayment.deleted_at.is_(None)
     ).all()
 
-    purchase_payments_query = db.query(payments.Payment).filter(
+    purchase_payments_query = db.query(payments.Payment).join(purchase_orders.PurchaseOrder).join(business_partners.BusinessPartner).filter(
         payments.Payment.tenant_id == tenant_id,
         payments.Payment.payment_date >= start_date,
         payments.Payment.payment_date <= end_date,
@@ -163,8 +163,10 @@ def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id:
     for sp in sales_payments_query:
         transactions.append({
             "date": sp.payment_date,
-            "description": f"Payment from Customer for SO-{sp.sales_order_id}",
-            "journal_ref_id": f"SP-{sp.id}",
+            "transaction_type": "Sales Payment",
+            "party": sp.sales_order.customer.name,
+            "reference_document": f"SO-{sp.sales_order.so_number}",
+            "details": f"Payment received for Sales Order SO-{sp.sales_order.so_number}",
             "debit": 0.0,
             "credit": float(sp.amount_paid)
         })
@@ -172,8 +174,10 @@ def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id:
     for pp in purchase_payments_query:
         transactions.append({
             "date": pp.payment_date,
-            "description": f"Payment to Vendor for PO-{pp.purchase_order_id}",
-            "journal_ref_id": f"PP-{pp.id}",
+            "transaction_type": "Purchase Payment",
+            "party": pp.purchase_order.vendor.name,
+            "reference_document": f"PO-{pp.purchase_order.po_number}",
+            "details": f"Payment made for Purchase Order PO-{pp.purchase_order.po_number}",
             "debit": float(pp.amount_paid),
             "credit": 0.0
         })
