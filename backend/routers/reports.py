@@ -514,8 +514,13 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
                 "highest_age": round(highest_age, 1),
                 "batch_type": last.batch_type,
             })
+        # import pdb; pdb.set_trace()
 
         if detailed_result:
+            layer_batches_in_detailed = [r for r in detailed_result if r.get("batch_type") == "Layer"]
+            avg_hd = sum(r['hd'] for r in layer_batches_in_detailed) / len(layer_batches_in_detailed) if layer_batches_in_detailed else 0
+            avg_std_hd = sum(r['standard_hen_day_percentage'] for r in layer_batches_in_detailed) / len(layer_batches_in_detailed) if layer_batches_in_detailed else 0
+
             summary_data = {
                 "opening_count": sum(r['opening_count'] for r in detailed_result),
                 "mortality": sum(r['mortality'] for r in detailed_result),
@@ -525,8 +530,8 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
                 "jumbo": sum(r['jumbo'] for r in detailed_result),
                 "cr": sum(r['cr'] for r in detailed_result),
                 "total_eggs": sum(r['total_eggs'] for r in detailed_result),
-                "hd": round(sum(r['hd'] for r in detailed_result) / len(detailed_result), 4),
-                "standard_hen_day_percentage": round(sum(r['standard_hen_day_percentage'] for r in detailed_result) / len(detailed_result), 4),
+                "hd": round(avg_hd, 4),
+                "standard_hen_day_percentage": round(avg_std_hd, 4),
                 "highest_age": max(r['highest_age'] for r in detailed_result),
             }
 
