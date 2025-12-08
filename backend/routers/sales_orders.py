@@ -174,12 +174,22 @@ def create_sales_order(
             EggRoomReportModel.tenant_id == tenant_id
         ).first()
 
-        if egg_room_report:
-            egg_room_report.table_transfer += int(table_egg_qty)
-            egg_room_report.jumbo_transfer += int(jumbo_egg_qty)
-            egg_room_report.grade_c_transfer += int(grade_c_egg_qty)
-            db.add(egg_room_report)
-            db.commit()
+        if not egg_room_report:
+            logger.info(f"No egg room report found for {so.order_date}, creating one.")
+            report_create = EggRoomReportCreate(
+                report_date=so.order_date,
+                table_damage=0, table_out=0, grade_c_labour=0, grade_c_waste=0,
+                jumbo_waste=0, jumbo_out=0
+            )
+            egg_room_report = crud_egg_room_reports.create_report(
+                db=db, report=report_create, tenant_id=tenant_id, user_id=get_user_identifier(user)
+            )
+
+        egg_room_report.table_transfer += int(table_egg_qty)
+        egg_room_report.jumbo_transfer += int(jumbo_egg_qty)
+        egg_room_report.grade_c_transfer += int(grade_c_egg_qty)
+        db.add(egg_room_report)
+        db.commit()
 
     db.refresh(db_so)
     
@@ -447,14 +457,24 @@ def add_item_to_sales_order(
             EggRoomReportModel.report_date == db_so.order_date,
             EggRoomReportModel.tenant_id == tenant_id
         ).first()
-        if egg_room_report:
-            if inv.name == "Table Egg":
-                egg_room_report.table_transfer += int(item_request.quantity)
-            elif inv.name == "Jumbo Egg":
-                egg_room_report.jumbo_transfer += int(item_request.quantity)
-            elif inv.name == "Grade C Egg":
-                egg_room_report.grade_c_transfer += int(item_request.quantity)
-            db.add(egg_room_report)
+        if not egg_room_report:
+            logger.info(f"No egg room report found for {db_so.order_date} while adding item, creating one.")
+            report_create = EggRoomReportCreate(
+                report_date=db_so.order_date,
+                table_damage=0, table_out=0, grade_c_labour=0, grade_c_waste=0,
+                jumbo_waste=0, jumbo_out=0
+            )
+            egg_room_report = crud_egg_room_reports.create_report(
+                db=db, report=report_create, tenant_id=tenant_id, user_id=get_user_identifier(user)
+            )
+
+        if inv.name == "Table Egg":
+            egg_room_report.table_transfer += int(item_request.quantity)
+        elif inv.name == "Jumbo Egg":
+            egg_room_report.jumbo_transfer += int(item_request.quantity)
+        elif inv.name == "Grade C Egg":
+            egg_room_report.grade_c_transfer += int(item_request.quantity)
+        db.add(egg_room_report)
     else:
         old_stock = inv.current_stock or 0
         inv.current_stock -= item_request.quantity
@@ -626,11 +646,21 @@ def update_sales_order_item(
                         raise HTTPException(status_code=400, detail=f"Insufficient stock for item '{inv.name}'. Available: {available_stock}, Required additional: {delta}")
                 
                 egg_room_report = db.query(EggRoomReportModel).filter(EggRoomReportModel.report_date == db_so.order_date, EggRoomReportModel.tenant_id == tenant_id).first()
-                if egg_room_report:
-                    if inv.name == "Table Egg": egg_room_report.table_transfer += int(delta)
-                    elif inv.name == "Jumbo Egg": egg_room_report.jumbo_transfer += int(delta)
-                    elif inv.name == "Grade C Egg": egg_room_report.grade_c_transfer += int(delta)
-                    db.add(egg_room_report)
+                if not egg_room_report:
+                    logger.info(f"No egg room report found for {db_so.order_date} while updating item quantity, creating one.")
+                    report_create = EggRoomReportCreate(
+                        report_date=db_so.order_date,
+                        table_damage=0, table_out=0, grade_c_labour=0, grade_c_waste=0,
+                        jumbo_waste=0, jumbo_out=0
+                    )
+                    egg_room_report = crud_egg_room_reports.create_report(
+                        db=db, report=report_create, tenant_id=tenant_id, user_id=get_user_identifier(user)
+                    )
+                
+                if inv.name == "Table Egg": egg_room_report.table_transfer += int(delta)
+                elif inv.name == "Jumbo Egg": egg_room_report.jumbo_transfer += int(delta)
+                elif inv.name == "Grade C Egg": egg_room_report.grade_c_transfer += int(delta)
+                db.add(egg_room_report)
             else:
                 inv_with_lock = db.query(InventoryItemModel).filter(InventoryItemModel.id == inv.id, InventoryItemModel.tenant_id == tenant_id).with_for_update().first()
                 if delta > 0 and inv_with_lock.current_stock < delta:
