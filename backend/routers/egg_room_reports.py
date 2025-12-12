@@ -165,6 +165,10 @@ def get_report(report_date: str, db: Session = Depends(get_db), tenant_id: str =
                 "grade_c_opening": report.grade_c_opening,
                 "grade_c_closing": report.grade_c_closing,
             }
+            for key, value in result.items():
+                if key not in ['report_date', 'created_at', 'updated_at']:
+                    if value is None or value == '':
+                        result[key] = 0
             return JSONResponse(content=result)
         else:
             raise HTTPException(
