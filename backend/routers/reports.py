@@ -24,6 +24,7 @@ from models.sales_order_items import SalesOrderItem
 from models.sales_orders import SalesOrder, SalesOrderStatus
 from schemas.reports import TopSellingItem
 from utils.tenancy import get_tenant_id
+from crud.daily_batch import get_monthly_egg_production as get_monthly_egg_production_crud
 
 
 def _is_layer_age(age_str):
@@ -44,6 +45,19 @@ router = APIRouter(
     prefix="/reports",
     tags=["reports"],
 )
+
+@router.get("/monthly-egg-production", tags=["Egg Reports"])
+def get_monthly_egg_production(
+    start_date: date,
+    end_date: date,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """
+    Get a monthly report of egg production.
+    """
+    return get_monthly_egg_production_crud(db=db, start_date=start_date, end_date=end_date, tenant_id=tenant_id)
+
 
 @router.get("/top-selling-items", response_model=List[TopSellingItem], tags=["Sales Reports"])
 def get_top_selling_items_report(

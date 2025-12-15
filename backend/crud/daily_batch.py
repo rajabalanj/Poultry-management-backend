@@ -47,4 +47,26 @@ def create_daily_batch(db: Session, daily_batch_data: DailyBatchCreate, tenant_i
     db.refresh(db_daily_batch)
     return db_daily_batch
 
+def get_monthly_egg_production(db: Session, start_date: date, end_date: date, tenant_id: str):
+    """
+    Calculates the total egg production for each month within a given date range.
+    """
+    results = db.query(
+        func.to_char(DailyBatch.batch_date, 'YYYY-MM').label('month'),
+        func.sum(DailyBatch.total_eggs).label('total_eggs')
+    ).filter(
+        DailyBatch.batch_date >= start_date,
+        DailyBatch.batch_date <= end_date,
+        DailyBatch.tenant_id == tenant_id
+    ).group_by(
+        func.to_char(DailyBatch.batch_date, 'YYYY-MM')
+    ).order_by(
+        func.to_char(DailyBatch.batch_date, 'YYYY-MM')
+    ).all()
+
+    # The result from the query is a list of Row objects.
+    # We convert it to a list of dictionaries.
+    return [{"month": month, "total_eggs": total_eggs} for month, total_eggs in results]
+
+
 # You do NOT have create_multiple_daily_batches, so it's removed from this file.
