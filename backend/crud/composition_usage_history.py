@@ -258,15 +258,28 @@ def get_composition_usage_by_date_range(db: Session, start_date: date, end_date:
     start_datetime = datetime.combine(start_date, datetime.min.time())
     end_datetime = datetime.combine(end_date, datetime.max.time())
 
-    results = db.query(
-        CompositionUsageHistory.composition_name,
-        func.sum(CompositionUsageHistory.times).label('total_usage')
+    # Subquery to get the total weight of each composition usage
+    subquery = db.query(
+        CompositionUsageHistory.id.label("usage_id"),
+        (func.sum(CompositionUsageItem.weight) * CompositionUsageHistory.times).label("total_weight")
+    ).join(
+        CompositionUsageItem, CompositionUsageHistory.id == CompositionUsageItem.usage_history_id
     ).filter(
         CompositionUsageHistory.tenant_id == tenant_id,
         CompositionUsageHistory.used_at >= start_datetime,
         CompositionUsageHistory.used_at <= end_datetime
     ).group_by(
+        CompositionUsageHistory.id
+    ).subquery()
+
+    # Main query to sum up the total weights by composition name
+    results = db.query(
+        CompositionUsageHistory.composition_name,
+        func.sum(subquery.c.total_weight).label('total_usage')
+    ).join(
+        subquery, CompositionUsageHistory.id == subquery.c.usage_id
+    ).group_by(
         CompositionUsageHistory.composition_name
     ).all()
 
-    return [{"composition_name": name, "total_usage": total_usage} for name, total_usage in results]
+    return [{"composition_name": name, "total_usage": total_usage, "unit": "kg"} for name, total_usage in results]

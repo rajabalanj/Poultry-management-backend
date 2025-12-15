@@ -18,7 +18,8 @@ class TopSellingItemsReport(BaseModel):
 
 class CompositionUsage(BaseModel):
     composition_name: str
-    total_usage: int
+    total_usage: float
+    unit: str
 
 class CompositionUsageReport(BaseModel):
     report: List[CompositionUsage]
