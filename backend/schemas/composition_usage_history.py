@@ -39,3 +39,8 @@ class CompositionUsageCreate(BaseModel):
     batch_no: str
     times: float
     usedAt: Optional[datetime] = None
+
+
+class PaginatedCompositionUsageHistoryResponse(BaseModel):
+    data: List[CompositionUsageHistory]
+    total: int

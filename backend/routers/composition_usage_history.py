@@ -11,7 +11,7 @@ from crud.composition_usage_history import use_composition, get_composition_usag
 from database import get_db
 from models.batch import Batch as BatchModel
 from models.composition_usage_history import CompositionUsageHistory as CompositionUsageHistoryModel
-from schemas.composition_usage_history import CompositionUsageHistory, CompositionUsageByDate, CompositionUsageCreate
+from schemas.composition_usage_history import CompositionUsageHistory, CompositionUsageByDate, CompositionUsageCreate, PaginatedCompositionUsageHistoryResponse
 from utils.auth_utils import get_current_user, get_user_identifier
 from utils.tenancy import get_tenant_id
 
@@ -46,20 +46,24 @@ def use_composition_endpoint(
         raise HTTPException(status_code=500, detail="Failed to retrieve usage ID after processing composition.")
 
 
-@router.get("/{composition_id}/usage-history", response_model=list[CompositionUsageHistory])
+@router.get("/{composition_id}/usage-history", response_model=PaginatedCompositionUsageHistoryResponse)
 def get_composition_usage_history_endpoint(
     composition_id: int,
+    offset: int = 0,
+    limit: int = 10,
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_tenant_id)
 ):
-    return get_composition_usage_history(db, tenant_id, composition_id=composition_id)
+    return get_composition_usage_history(db, tenant_id, composition_id=composition_id, offset=offset, limit=limit)
 
-@router.get("/usage-history", response_model=list[CompositionUsageHistory])
+@router.get("/usage-history", response_model=PaginatedCompositionUsageHistoryResponse)
 def get_all_composition_usage_history(
+    offset: int = 0,
+    limit: int = 10,
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_tenant_id)
 ):
-    return get_composition_usage_history(db, tenant_id=tenant_id)
+    return get_composition_usage_history(db, tenant_id=tenant_id, offset=offset, limit=limit)
 
 @router.get("/usage-history/filtered", response_model=list[CompositionUsageHistory])
 def get_filtered_composition_usage_history(
