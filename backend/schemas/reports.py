@@ -16,3 +16,10 @@ class TopSellingItem(BaseModel):
 class TopSellingItemsReport(BaseModel):
     report_data: List[TopSellingItem]
 
+class CompositionUsage(BaseModel):
+    composition_name: str
+    total_usage: int
+
+class CompositionUsageReport(BaseModel):
+    report: List[CompositionUsage]
+

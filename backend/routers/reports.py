@@ -22,9 +22,10 @@ from models.daily_batch import DailyBatch
 from models.inventory_items import InventoryItem
 from models.sales_order_items import SalesOrderItem
 from models.sales_orders import SalesOrder, SalesOrderStatus
-from schemas.reports import TopSellingItem
+from schemas.reports import TopSellingItem, CompositionUsageReport
 from utils.tenancy import get_tenant_id
 from crud.daily_batch import get_monthly_egg_production as get_monthly_egg_production_crud
+from crud.composition_usage_history import get_composition_usage_by_date_range
 
 
 def _is_layer_age(age_str):
@@ -57,6 +58,19 @@ def get_monthly_egg_production(
     Get a monthly report of egg production.
     """
     return get_monthly_egg_production_crud(db=db, start_date=start_date, end_date=end_date, tenant_id=tenant_id)
+
+@router.get("/composition-usage-report", response_model=CompositionUsageReport, tags=["Composition Reports"])
+def get_composition_usage_report(
+    start_date: date,
+    end_date: date,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """
+    Get a report of composition usage within a date range.
+    """
+    report_data = get_composition_usage_by_date_range(db=db, start_date=start_date, end_date=end_date, tenant_id=tenant_id)
+    return {"report": report_data}
 
 
 @router.get("/top-selling-items", response_model=List[TopSellingItem], tags=["Sales Reports"])

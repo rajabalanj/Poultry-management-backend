@@ -1,4 +1,5 @@
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from models.composition_usage_history import CompositionUsageHistory
 from models.composition import Composition
 from models.inventory_item_in_composition import InventoryItemInComposition
@@ -248,3 +249,24 @@ def get_composition_usage_by_date(db: Session, usage_date: date, tenant_id: str,
         "total_feed": total_feed,
         "feed_breakdown": feed_breakdown_list
     }
+
+
+def get_composition_usage_by_date_range(db: Session, start_date: date, end_date: date, tenant_id: str):
+    """
+    Calculates the total usage of each composition within a given date range.
+    """
+    start_datetime = datetime.combine(start_date, datetime.min.time())
+    end_datetime = datetime.combine(end_date, datetime.max.time())
+
+    results = db.query(
+        CompositionUsageHistory.composition_name,
+        func.sum(CompositionUsageHistory.times).label('total_usage')
+    ).filter(
+        CompositionUsageHistory.tenant_id == tenant_id,
+        CompositionUsageHistory.used_at >= start_datetime,
+        CompositionUsageHistory.used_at <= end_datetime
+    ).group_by(
+        CompositionUsageHistory.composition_name
+    ).all()
+
+    return [{"composition_name": name, "total_usage": total_usage} for name, total_usage in results]
