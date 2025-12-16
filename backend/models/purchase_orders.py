@@ -16,6 +16,7 @@ class PurchaseOrder(Base, AuditMixin):
 
     id = Column(Integer, primary_key=True, index=True)
     po_number = Column(Integer, index=True) # Tenant-specific sequential number
+    bill_no = Column(String, nullable=True)
     vendor_id = Column(Integer, ForeignKey("business_partners.id"), nullable=False)
     order_date = Column(Date, nullable=False)
     total_amount = Column(Numeric(10, 3), default=0.0, nullable=False) # Increased precision

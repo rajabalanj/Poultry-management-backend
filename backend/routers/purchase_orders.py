@@ -126,7 +126,8 @@ def create_purchase_order(
         notes=po.notes,
         total_amount=total_amount,
         created_by=get_user_identifier(user),
-        tenant_id=tenant_id
+        tenant_id=tenant_id,
+        bill_no=po.bill_no
     )
     db.add(db_po)
     db.flush() # Flush to get db_po.id before adding items

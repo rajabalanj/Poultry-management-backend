@@ -36,6 +36,7 @@ class PurchaseOrderBase(BaseModel):
     status: Optional[PurchaseOrderStatus] = PurchaseOrderStatus.DRAFT
     notes: Optional[str] = None
     payment_receipt: Optional[str] = None
+    bill_no: Optional[str] = None
 
 class PurchaseOrderCreate(PurchaseOrderBase):
     # When creating, items are often part of the initial request
@@ -47,6 +48,7 @@ class PurchaseOrderUpdate(BaseModel):
     status: Optional[PurchaseOrderStatus] = None
     notes: Optional[str] = None
     payment_receipt: Optional[str] = None
+    bill_no: Optional[str] = None
     # Items updates are typically handled via separate endpoints (add/remove item from PO)
     # total_amount is system-calculated, not updated directly
 
@@ -60,6 +62,7 @@ class PurchaseOrder(PurchaseOrderBase):
     updated_by: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
+    bill_no: Optional[str] = None
     # Include related items and payments for detailed view
     items: List['PurchaseOrderItem'] = []
     payments: List['Payment'] = []

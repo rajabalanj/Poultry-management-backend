@@ -24,6 +24,7 @@ class SalesOrderBase(BaseModel):
     status: Optional[SalesOrderStatus] = SalesOrderStatus.DRAFT
     notes: Optional[str] = None
     payment_receipt: Optional[str] = None
+    bill_no: Optional[str] = None
 
 class SalesOrderCreate(SalesOrderBase):
     items: List[SalesOrderItemCreateRequest]
@@ -34,6 +35,7 @@ class SalesOrderUpdate(BaseModel):
     status: Optional[SalesOrderStatus] = None
     notes: Optional[str] = None
     payment_receipt: Optional[str] = None
+    bill_no: Optional[str] = None
 
 class SalesOrder(SalesOrderBase):
     id: int
@@ -47,6 +49,7 @@ class SalesOrder(SalesOrderBase):
     updated_at: Optional[datetime] = None
     items: List['SalesOrderItem'] = []
     payments: List[SalesPaymentSchema] = []
+    bill_no: Optional[str] = None
 
     class Config:
         from_attributes = True

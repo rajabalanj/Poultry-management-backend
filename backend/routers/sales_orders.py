@@ -110,7 +110,8 @@ def create_sales_order(
         notes=so.notes,
         total_amount=total_amount,
         created_by=get_user_identifier(user),
-        tenant_id=tenant_id
+        tenant_id=tenant_id,
+        bill_no=so.bill_no
     )
     db.add(db_so)
     db.flush()
