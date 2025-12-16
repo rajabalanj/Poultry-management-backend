@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, func, case, cast, Float
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, func, case, cast, Float, Date
 from sqlalchemy.orm import relationship
 from database import Base
 from datetime import datetime
@@ -20,8 +20,8 @@ class DailyBatch(Base, TimestampMixin):
     shed_id = Column(Integer, ForeignKey("sheds.id"), nullable=True)
     shed = relationship("Shed")
     batch_no = Column(String, nullable=True)
-    upload_date = Column(DateTime(timezone=True), default=lambda: datetime.now(pytz.timezone('Asia/Kolkata')).date())
-    batch_date = Column(DateTime(timezone=True), default=lambda: datetime.now(pytz.timezone('Asia/Kolkata')).date(), primary_key=True)
+    upload_date = Column(Date, default=lambda: datetime.now(pytz.timezone('Asia/Kolkata')).date())
+    batch_date = Column(Date, default=lambda: datetime.now(pytz.timezone('Asia/Kolkata')).date(), primary_key=True)
     age = Column(String)
     opening_count = Column(Integer)
     mortality = Column(Integer, default=0)

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Date
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.hybrid import hybrid_property
 from datetime import datetime
@@ -12,11 +12,11 @@ class Batch(Base, TimestampMixin):
     id = Column(Integer, primary_key=True, index=True)
     tenant_id = Column(String, index=True)
     batch_no = Column(String)
-    date = Column(DateTime(timezone=True), default=lambda: datetime.now(pytz.timezone('Asia/Kolkata')).date())
+    date = Column(Date, default=lambda: datetime.now(pytz.timezone('Asia/Kolkata')).date())
     age = Column(String)  # Format: "week.day" (e.g., "1.1" for 8 days)
     opening_count = Column(Integer)
     daily_batches = relationship("DailyBatch", back_populates="batch")
-    closing_date = Column(DateTime(timezone=True), nullable=True)
+    closing_date = Column(Date, nullable=True)
 
     @hybrid_property
     def is_active(self):
