@@ -149,10 +149,19 @@ def create_composition_usage_history(db: Session, composition_id: int, times: in
     db.refresh(usage)
     return usage
 
-def get_composition_usage_history(db: Session, tenant_id: str, composition_id: int = None, offset: int = 0, limit: int = 10):
+def get_composition_usage_history(db: Session, tenant_id: str, composition_id: int = None, offset: int = 0, limit: int = 10, start_date: date = None, end_date: date = None):
     query = db.query(CompositionUsageHistory).filter(CompositionUsageHistory.tenant_id == tenant_id)
     if composition_id:
         query = query.filter(CompositionUsageHistory.composition_id == composition_id)
+    
+    # Apply date range filter if provided
+    if start_date:
+        start_datetime = datetime.combine(start_date, datetime.min.time())
+        query = query.filter(CompositionUsageHistory.used_at >= start_datetime)
+    
+    if end_date:
+        end_datetime = datetime.combine(end_date, datetime.max.time())
+        query = query.filter(CompositionUsageHistory.used_at <= end_datetime)
     
     total = query.count()
     results = query.order_by(CompositionUsageHistory.used_at.desc()).offset(offset).limit(limit).all()

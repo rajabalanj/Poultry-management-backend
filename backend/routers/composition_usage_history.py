@@ -51,19 +51,23 @@ def get_composition_usage_history_endpoint(
     composition_id: int,
     offset: int = 0,
     limit: int = 10,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_tenant_id)
 ):
-    return get_composition_usage_history(db, tenant_id, composition_id=composition_id, offset=offset, limit=limit)
+    return get_composition_usage_history(db, tenant_id, composition_id=composition_id, offset=offset, limit=limit, start_date=start_date, end_date=end_date)
 
 @router.get("/usage-history", response_model=PaginatedCompositionUsageHistoryResponse)
 def get_all_composition_usage_history(
     offset: int = 0,
     limit: int = 10,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_tenant_id)
 ):
-    return get_composition_usage_history(db, tenant_id=tenant_id, offset=offset, limit=limit)
+    return get_composition_usage_history(db, tenant_id=tenant_id, offset=offset, limit=limit, start_date=start_date, end_date=end_date)
 
 @router.get("/usage-history/filtered", response_model=list[CompositionUsageHistory])
 def get_filtered_composition_usage_history(
