@@ -631,7 +631,7 @@ def create_or_get_daily_batches(
             result_list.append(d)
         else:
             # Generate missing daily batch
-            if batch_date < batch.date.date():
+            if batch_date < batch.date:
                 # Look up shed_id for display purposes even if batch hasn't started
                 shed_id_for_message = assignment_map.get(batch.id)
                 result_list.append({

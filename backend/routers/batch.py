@@ -628,8 +628,7 @@ def close_batch(
         DailyBatchModel.batch_date > closing_date
     ).delete(synchronize_session=False)
 
-    batch.closing_date = closing_date
-    batch.is_active = False  # Explicitly mark as inactive
+    batch.closing_date = closing_date  # This will automatically set is_active to False
     batch.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
     batch.updated_by = get_user_identifier(user)
 
