@@ -38,6 +38,15 @@ from schemas.purchase_orders import (
     PurchaseOrderItemCreateRequest,
 )
 
+import pandas as pd
+# Configure matplotlib for headless environments before importing plotting helpers
+import matplotlib
+matplotlib.use('Agg')
+import dataframe_image as dfi
+from fastapi.responses import StreamingResponse
+import io
+from enum import Enum
+
 router = APIRouter(prefix="/purchase-orders", tags=["Purchase Orders"])
 logger = logging.getLogger("purchase_orders")
 
@@ -210,6 +219,134 @@ def read_purchase_orders(
     ).offset(skip).limit(limit).all()
     
     return purchase_orders
+
+
+class ExportFormat(str, Enum):
+    excel = "excel"
+    pdf = "pdf"
+
+
+@router.get("/reports/detailed/export")
+def export_detailed_purchase_order_report(
+    format: ExportFormat,
+    vendor_id: Optional[int] = None,
+    status: Optional[PurchaseOrderStatus] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """
+    Export a detailed purchase order report as an Excel or PDF file.
+    """
+    query = db.query(PurchaseOrderModel).filter(PurchaseOrderModel.tenant_id == tenant_id)
+    if vendor_id:
+        query = query.filter(PurchaseOrderModel.vendor_id == vendor_id)
+    if status:
+        query = query.filter(PurchaseOrderModel.status == status)
+    if start_date:
+        query = query.filter(PurchaseOrderModel.order_date >= start_date)
+    if end_date:
+        query = query.filter(PurchaseOrderModel.order_date <= end_date)
+
+    purchase_orders = query.order_by(PurchaseOrderModel.order_date.desc(), PurchaseOrderModel.id.desc()).options(
+        selectinload(PurchaseOrderModel.items).selectinload(PurchaseOrderItemModel.inventory_item),
+        selectinload(PurchaseOrderModel.vendor)
+    ).all()
+
+    if not purchase_orders:
+        raise HTTPException(status_code=404, detail="No data available for the selected filters.")
+
+    # Flatten data
+    flattened = []
+    for po in purchase_orders:
+        if po.items:
+            for item in po.items:
+                flattened.append({
+                    "PO Number": po.po_number,
+                    "Bill No": po.bill_no,
+                    "Vendor Name": po.vendor.name if po.vendor else None,
+                    "Order Date": po.order_date,
+                    "Item Name": item.inventory_item.name if item.inventory_item else None,
+                    "Quantity": item.quantity,
+                    "Price Per Unit": item.price_per_unit,
+                    "Line Total": item.line_total,
+                    "Order Total Amount": po.total_amount,
+                    "Amount Paid": po.total_amount_paid,
+                    "Order Status": po.status.value if po.status else None,
+                })
+        else:
+            flattened.append({
+                "PO Number": po.po_number,
+                "Bill No": po.bill_no,
+                "Vendor Name": po.vendor.name if po.vendor else None,
+                "Order Date": po.order_date,
+                "Item Name": None,
+                "Quantity": 0,
+                "Price Per Unit": 0,
+                "Line Total": 0,
+                "Order Total Amount": po.total_amount,
+                "Amount Paid": po.total_amount_paid,
+                "Order Status": po.status.value if po.status else None,
+            })
+
+    df = pd.DataFrame(flattened)
+
+    if format == ExportFormat.excel:
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Purchase Report')
+        output.seek(0)
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=detailed_purchase_report.xlsx"}
+        )
+
+    elif format == ExportFormat.pdf:
+        try:
+            import matplotlib.pyplot as plt
+            from matplotlib.backends.backend_pdf import PdfPages
+            from pandas.plotting import table
+            import numpy as np
+            import textwrap
+
+            output = io.BytesIO()
+            with PdfPages(output) as pdf:
+                df_for_pdf = df.copy()
+                for col in ['Vendor Name', 'Item Name']:
+                    if col in df_for_pdf.columns:
+                        df_for_pdf[col] = df_for_pdf[col].apply(
+                            lambda x: '\n'.join(textwrap.wrap(str(x), width=20)) if isinstance(x, str) else x
+                        )
+
+                rows_per_page = 35
+                num_pages = int(np.ceil(len(df_for_pdf) / rows_per_page)) if len(df_for_pdf) > 0 else 1
+
+                for i in range(num_pages):
+                    chunk = df_for_pdf.iloc[i * rows_per_page : (i + 1) * rows_per_page]
+                    fig, ax = plt.subplots(figsize=(11.7, 8.3))
+                    ax.axis('off')
+                    ax.set_title(f"Detailed Purchase Report - Page {i + 1} of {num_pages}", fontsize=14, pad=20)
+                    the_table = table(ax, chunk, loc='center', cellLoc='left', colLoc='center')
+                    the_table.auto_set_font_size(False)
+                    the_table.set_fontsize(9)
+                    the_table.scale(1, 1.5)
+                    pdf.savefig(fig, bbox_inches='tight')
+                    plt.close(fig)
+
+            output.seek(0)
+            return StreamingResponse(
+                output,
+                media_type="application/pdf",
+                headers={"Content-Disposition": "attachment; filename=detailed_purchase_report.pdf"}
+            )
+        except Exception as e:
+            logger.error(f"Failed to generate PDF report: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to generate PDF report: {str(e)}")
+
+    else:
+        raise HTTPException(status_code=400, detail="Invalid format specified.")
 
 @router.get("/{po_id}", response_model=PurchaseOrderSchema)
 def read_purchase_order(po_id: int, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):

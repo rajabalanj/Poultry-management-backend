@@ -241,6 +241,187 @@ def _get_available_egg_stock(db: Session, tenant_id: str, order_date: date, egg_
     logger.info(f"Calculated available stock for {egg_type}: {available_stock} + tolerance {egg_stock_tolerance} = {final_available_stock}")
     return float(final_available_stock)
 
+from schemas.sales_order_reports import SalesOrderReport
+from crud import sales_order_reports as crud_sales_order_reports
+import pandas as pd
+# Add matplotlib configuration BEFORE importing dataframe_image
+import matplotlib
+matplotlib.use('Agg')
+import dataframe_image as dfi
+from fastapi.responses import StreamingResponse
+import io
+from enum import Enum
+
+
+class ExportFormat(str, Enum):
+    excel = "excel"
+    pdf = "pdf"
+
+
+@router.get("/reports/detailed", response_model=List[SalesOrderReport])
+def get_detailed_sales_order_report(
+    skip: int = 0,
+    limit: int = 100,
+    customer_id: Optional[int] = None,
+    status: Optional[SalesOrderStatus] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """
+    Retrieve a detailed sales order report.
+    """
+    return crud_sales_order_reports.get_sales_order_report(
+        db=db, 
+        tenant_id=tenant_id,
+        skip=skip,
+        limit=limit,
+        customer_id=customer_id,
+        status=status,
+        start_date=start_date,
+        end_date=end_date
+    )
+
+
+@router.get("/reports/detailed/export")
+def export_detailed_sales_order_report(
+    format: ExportFormat,
+    customer_id: Optional[int] = None,
+    status: Optional[SalesOrderStatus] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """
+    Export a detailed sales order report as an Excel or Image file.
+    """
+    # Fetch all data without pagination for export
+    report_data = crud_sales_order_reports.get_sales_order_report(
+        db=db, 
+        tenant_id=tenant_id,
+        skip=0,
+        limit=None,  # Get all records for export
+        customer_id=customer_id,
+        status=status,
+        start_date=start_date,
+        end_date=end_date
+    )
+
+    if not report_data:
+        raise HTTPException(status_code=404, detail="No data available for the selected filters.")
+
+    # Flatten the data
+    flattened_data = []
+    for report in report_data:
+        if report.items:
+            for item in report.items:
+                flat_item = {
+                    "SO Number": report.so_number,
+                    "Bill No": report.bill_no,
+                    "Customer Name": report.customer_name,
+                    "Order Date": report.order_date,
+                    "Item Name": item.inventory_item_name,
+                    "Quantity": item.quantity,
+                    "Price Per Unit": item.price_per_unit,
+                    "Line Total": item.line_total,
+                    "Order Total Amount": report.total_amount,
+                    "Amount Paid": report.total_amount_paid,
+                    "Order Status": report.status.value,
+                }
+                flattened_data.append(flat_item)
+        else:
+            # Include orders with no items
+            flat_item = {
+                "SO Number": report.so_number,
+                "Bill No": report.bill_no,
+                "Customer Name": report.customer_name,
+                "Order Date": report.order_date,
+                "Item Name": None,
+                "Quantity": 0,
+                "Price Per Unit": 0,
+                "Line Total": 0,
+                "Order Total Amount": report.total_amount,
+                "Amount Paid": report.total_amount_paid,
+                "Order Status": report.status.value,
+            }
+            flattened_data.append(flat_item)
+
+    df = pd.DataFrame(flattened_data)
+
+    if format == ExportFormat.excel:
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Sales Report')
+        
+        output.seek(0)
+        
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=detailed_sales_report.xlsx"}
+        )
+
+    elif format == ExportFormat.pdf:  # NOTE: This route now generates a PDF for scalability.
+        try:
+            import matplotlib.pyplot as plt
+            from matplotlib.backends.backend_pdf import PdfPages
+            from pandas.plotting import table
+            import textwrap
+            import numpy as np
+
+            output = io.BytesIO()
+            # Use PdfPages to create a multi-page PDF document
+            with PdfPages(output) as pdf:
+                df_for_pdf = df.copy()
+
+                # Wrap text for better layout
+                for col in ['Customer Name', 'Item Name']:
+                    if col in df_for_pdf.columns:
+                        df_for_pdf[col] = df_for_pdf[col].apply(
+                            lambda x: '\n'.join(textwrap.wrap(str(x), width=20)) if isinstance(x, str) else x
+                        )
+                
+                rows_per_page = 35  # Number of rows per PDF page
+                num_pages = int(np.ceil(len(df_for_pdf) / rows_per_page))
+
+                for i in range(num_pages):
+                    chunk = df_for_pdf.iloc[i * rows_per_page : (i + 1) * rows_per_page]
+                    
+                    # Standard A4 size in landscape for more width
+                    fig, ax = plt.subplots(figsize=(11.7, 8.3)) # A4 landscape
+                    ax.axis('off')
+                    
+                    # Add a title to each page
+                    ax.set_title(f"Detailed Sales Report - Page {i + 1} of {num_pages}", fontsize=14, pad=20)
+
+                    the_table = table(ax, chunk, loc='center', cellLoc='left', colLoc='center')
+                    the_table.auto_set_font_size(False)
+                    the_table.set_fontsize(9) # Slightly smaller font for more data
+                    the_table.scale(1, 1.5)  # Adjust vertical scaling
+
+                    pdf.savefig(fig, bbox_inches='tight')
+                    plt.close(fig)
+
+            output.seek(0)
+
+            # Return as PDF
+            return StreamingResponse(
+                output,
+                media_type="application/pdf",
+                headers={"Content-Disposition": "attachment; filename=detailed_sales_report.pdf"}
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to generate PDF report: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to generate PDF report: {str(e)}")
+
+    else:
+        # This case should not be reached due to Enum validation
+        raise HTTPException(status_code=400, detail="Invalid format specified.")
+
+
 @router.get("/", response_model=List[SalesOrderSchema])
 def read_sales_orders(
     skip: int = 0,
