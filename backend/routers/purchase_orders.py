@@ -42,7 +42,7 @@ import pandas as pd
 # Configure matplotlib for headless environments before importing plotting helpers
 import matplotlib
 matplotlib.use('Agg')
-import dataframe_image as dfi
+
 from fastapi.responses import StreamingResponse
 import io
 from enum import Enum

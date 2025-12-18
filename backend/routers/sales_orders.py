@@ -247,7 +247,6 @@ import pandas as pd
 # Add matplotlib configuration BEFORE importing dataframe_image
 import matplotlib
 matplotlib.use('Agg')
-import dataframe_image as dfi
 from fastapi.responses import StreamingResponse
 import io
 from enum import Enum
