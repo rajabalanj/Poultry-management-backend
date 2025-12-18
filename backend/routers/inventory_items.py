@@ -1,5 +1,5 @@
 # Standard library imports
-from datetime import date
+from datetime import date, datetime
 import logging
 from typing import List, Optional
 
@@ -20,6 +20,8 @@ from schemas.inventory_items import InventoryItem, InventoryItemCreate, Inventor
 from schemas.reports import InventoryValue
 from utils.auth_utils import get_current_user, get_user_identifier
 from utils.tenancy import get_tenant_id
+from database import get_db
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/inventory-items", tags=["Inventory Items"])
 logger = logging.getLogger("inventory_items")
@@ -210,3 +212,58 @@ def get_inventory_item_audit_history(
         end_date=end_date
     )
     return audit_history
+
+
+class AdjustStockRequest(BaseModel):
+    change_amount: float
+    change_type: Optional[str] = "manual"
+    note: Optional[str] = None
+
+
+@router.post("/{item_id}/adjust", response_model=InventoryItem)
+def adjust_inventory_item_stock(
+    item_id: int,
+    request: AdjustStockRequest,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """Manually adjust an inventory item's stock and create an audit record.
+
+    `change_amount` is positive to increase stock, negative to decrease.
+    """
+    db_item = crud_inventory_items.get_inventory_item(db=db, item_id=item_id, tenant_id=tenant_id)
+    if db_item is None:
+        raise HTTPException(status_code=404, detail="Inventory item not found")
+
+    try:
+        old_qty = float(db_item.current_stock or 0.0)
+        change_amt = float(request.change_amount)
+        new_qty = old_qty + change_amt
+
+        # Update the inventory item
+        db_item.current_stock = new_qty
+        db_item.updated_by = get_user_identifier(user)
+        db_item.updated_at = datetime.now()
+        db.commit()
+        db.refresh(db_item)
+
+        # Create an audit record
+        crud_inventory_item_audit.create_inventory_item_audit(
+            db=db,
+            inventory_item_id=item_id,
+            change_type=request.change_type or "manual",
+            change_amount=change_amt,
+            old_quantity=old_qty,
+            new_quantity=new_qty,
+            tenant_id=tenant_id,
+            changed_by=get_user_identifier(user),
+            note=request.note
+        )
+
+        logger.info(f"Inventory item (ID: {item_id}) adjusted by {get_user_identifier(user)}: {change_amt} for tenant {tenant_id}")
+        return db_item
+    except Exception as e:
+        db.rollback()
+        logger.exception("Failed to adjust inventory item stock")
+        raise HTTPException(status_code=500, detail=str(e))

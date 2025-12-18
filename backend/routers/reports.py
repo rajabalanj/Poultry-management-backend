@@ -115,6 +115,7 @@ def _calculate_cumulative_report(db: Session, batch_id: int, current_week: int, 
     
     # Calculate cumulative feed from week 18 to current week
     cum_feed_total = 0
+    cum_egg_total = 0
     for week_num in range(18, current_week + 1):
         week_batches = db.query(DailyBatch).filter(
             DailyBatch.batch_id == batch_id,
@@ -125,6 +126,9 @@ def _calculate_cumulative_report(db: Session, batch_id: int, current_week: int, 
         
         week_feed = sum(float(batch.feed_in_kg) for batch in week_batches if batch.feed_in_kg is not None)
         cum_feed_total += week_feed
+        
+        week_eggs = sum(batch.total_eggs for batch in week_batches if batch.total_eggs is not None)
+        cum_egg_total += week_eggs
     
     # Get Bovans standard data for current week
     # If current_week > 100, use data for week 100.
@@ -147,12 +151,26 @@ def _calculate_cumulative_report(db: Session, batch_id: int, current_week: int, 
             "actual": round(current_summary["actual_feed_consumed"] / hen_housing, 4) if hen_housing > 0 else 0,
             "standard": round((float(bovans_data.feed_intake_per_day_g) * 7 / 1000), 4) if bovans_data and bovans_data.feed_intake_per_day_g else 0,
             "diff": 0  # Will calculate after
+        },
+        "cum_egg": {
+            "cum": float(cum_egg_total),
+            "actual": round(cum_egg_total / hen_housing, 4) if hen_housing > 0 else 0,
+            "standard": float(bovans_data.eggs_per_bird_cum) if bovans_data and bovans_data.eggs_per_bird_cum else 0,
+            "diff": 0  # Will calculate after
+        },
+        "weekly_egg": {
+            "cum": float(current_summary["total_eggs"]),
+            "actual": round(current_summary["total_eggs"] / current_summary["opening_count"], 4) if current_summary["opening_count"] > 0 else 0,
+            "standard": 5,
+            "diff": 0  # Will calculate after
         }
     }
     
     # Calculate diff for section 1
     section1["cum_feed"]["diff"] = round(section1["cum_feed"]["actual"] - section1["cum_feed"]["standard"], 4)
     section1["weekly_feed"]["diff"] = round(section1["weekly_feed"]["actual"] - section1["weekly_feed"]["standard"], 4)
+    section1["cum_egg"]["diff"] = round(section1["cum_egg"]["actual"] - section1["cum_egg"]["standard"], 4)
+    section1["weekly_egg"]["diff"] = round(section1["weekly_egg"]["actual"] - section1["weekly_egg"]["standard"], 4)
     
     # Section 2: Performance data
     section2 = {
