@@ -7,6 +7,7 @@ class InventoryItemBase(BaseModel):
     name: str
     unit: str # e.g., "kg", "tons", "liters", "units"
     category: Optional[str] = None
+    default_wastage_percentage: Decimal = 0.0
     # current_stock and average_cost typically not set on create, managed by system
     reorder_level: Optional[Decimal] = None
     description: Optional[str] = None
@@ -18,6 +19,8 @@ class InventoryItemUpdate(BaseModel):
     name: Optional[str] = None
     unit: Optional[str] = None
     category: Optional[str] = None
+    default_wastage_percentage: Optional[Decimal] = None
+
     # current_stock and average_cost are system-managed, not directly updated via this schema
     reorder_level: Optional[Decimal] = None
     description: Optional[str] = None

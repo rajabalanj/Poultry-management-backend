@@ -1,9 +1,11 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Union
+from decimal import Decimal
 
 class InventoryItemInCompositionBase(BaseModel):
     inventory_item_id: int
     weight: float
+    wastage_percentage: Optional[Union[float, Decimal]] = None
     tenant_id: Optional[str] = None
 
 

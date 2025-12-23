@@ -2,6 +2,8 @@ from sqlalchemy.orm import Session
 from models.composition import Composition
 from models.inventory_item_in_composition import InventoryItemInComposition
 from schemas.composition import CompositionCreate
+from models.inventory_items import InventoryItem
+
 
 # Audit imports
 from crud.audit_log import create_audit_log
@@ -16,10 +18,16 @@ def create_composition(db: Session, composition: CompositionCreate, tenant_id: s
     db.add(db_composition)
     db.flush()
     for item in composition.inventory_items:
+        wastage_percentage = item.wastage_percentage
+        if wastage_percentage is None:
+            inventory_item = db.query(InventoryItem).filter(InventoryItem.id == item.inventory_item_id, InventoryItem.tenant_id == tenant_id).first()
+            if inventory_item:
+                wastage_percentage = inventory_item.default_wastage_percentage
         db_item = InventoryItemInComposition(
             composition_id=db_composition.id,
             inventory_item_id=item.inventory_item_id,
             weight=item.weight,
+            wastage_percentage=wastage_percentage,
             tenant_id=tenant_id
         )
         db.add(db_item)
@@ -64,10 +72,16 @@ def update_composition(db: Session, composition_id: int, composition: Compositio
     db_composition.updated_by = user_id
     db.query(InventoryItemInComposition).filter(InventoryItemInComposition.composition_id == composition_id, InventoryItemInComposition.tenant_id == tenant_id).delete()
     for item in composition.inventory_items:
+        wastage_percentage = item.wastage_percentage
+        if wastage_percentage is None:
+            inventory_item = db.query(InventoryItem).filter(InventoryItem.id == item.inventory_item_id, InventoryItem.tenant_id == tenant_id).first()
+            if inventory_item:
+                wastage_percentage = inventory_item.default_wastage_percentage
         db_item = InventoryItemInComposition(
             composition_id=composition_id,
             inventory_item_id=item.inventory_item_id,
             weight=item.weight,
+            wastage_percentage=wastage_percentage,
             tenant_id=tenant_id
         )
         db.add(db_item)

@@ -14,6 +14,7 @@ class InventoryItem(Base, TimestampMixin):
     category = Column(String, nullable=True) # e.g., "Feed", "Medicine", "Cleaning Supplies"
     current_stock = Column(Numeric(10, 3), default=0.0, nullable=False) # Increased precision
     average_cost = Column(Numeric(10, 3), default=0.0, nullable=False) # Increased precision
+    default_wastage_percentage = Column(Numeric(5, 2), default=0.0, nullable=False, server_default='0')
     reorder_level = Column(Numeric(10, 3), nullable=True) # For general alerts
     description = Column(Text, nullable=True)
 

@@ -16,4 +16,4 @@ class CompositionUsageHistory(Base):
     batch = relationship("Batch")  # Establish a relationship with the Batch model
     tenant_id = Column(String, index=True)
 
-    items = relationship("CompositionUsageItem", back_populates="usage_history")
+    items = relationship("CompositionUsageItem", back_populates="usage_history", cascade="all, delete-orphan")

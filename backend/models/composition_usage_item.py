@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, Float
+from sqlalchemy import Column, Integer, String, ForeignKey, Float, Numeric
 from sqlalchemy.orm import relationship
 from database import Base
 from models.inventory_items import InventoryItem
@@ -11,6 +11,7 @@ class CompositionUsageItem(Base):
     weight = Column(Float, nullable=False)
     item_name = Column(String) # Snapshot for historical accuracy
     item_category = Column(String) # Snapshot for historical accuracy
+    wastage_percentage = Column(Numeric(5, 2), nullable=True) # e.g., 2.50%
 
     usage_history = relationship("CompositionUsageHistory", back_populates="items")
     inventory_item = relationship("InventoryItem")

@@ -375,8 +375,24 @@ def export_detailed_sales_order_report(
             with PdfPages(output) as pdf:
                 df_for_pdf = df.copy()
 
+                # Drop columns not needed for PDF export
+                columns_to_drop = ['SO Number', 'Order Status']
+                df_for_pdf.drop(columns=[col for col in columns_to_drop if col in df_for_pdf.columns], inplace=True)
+
+                # Rename columns for shorter headers in PDF
+                df_for_pdf.rename(columns={
+                    "Price Per Unit": "Unit Price",
+                    "Bill No": "Bill#",
+                    "Customer Name": "Customer",
+                    "Order Date": "Date",
+                    "Item Name": "Item",
+                    "Line Total": "Item Total",
+                    "Order Total Amount": "SO Total",
+                    "Amount Paid": "Paid",
+                }, inplace=True)
+
                 # Wrap text for better layout
-                for col in ['Customer Name', 'Item Name']:
+                for col in ['Customer', 'Item']:
                     if col in df_for_pdf.columns:
                         df_for_pdf[col] = df_for_pdf[col].apply(
                             lambda x: '\n'.join(textwrap.wrap(str(x), width=20)) if isinstance(x, str) else x

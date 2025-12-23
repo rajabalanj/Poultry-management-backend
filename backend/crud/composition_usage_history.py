@@ -64,12 +64,21 @@ def use_composition(db: Session, composition_id: int, batch_id: int, times: int,
     for iic in items_in_comp:
         item = db.query(InventoryItem).filter(InventoryItem.id == iic.inventory_item_id, InventoryItem.tenant_id == tenant_id).first()
         if item:
+            wastage_percentage = iic.wastage_percentage
+            if wastage_percentage is None and item:
+                wastage_percentage = item.default_wastage_percentage
+            
+            if wastage_percentage is None:
+                wastage_percentage = Decimal('0')
+            else:
+                wastage_percentage = Decimal(str(wastage_percentage))
             usage_item = CompositionUsageItem(
                 usage_history_id=usage.id,
                 inventory_item_id=iic.inventory_item_id,
                 item_name=item.name,
                 item_category=item.category,
-                weight=iic.weight
+                weight=iic.weight,
+                wastage_percentage=wastage_percentage
             )
             usage.items.append(usage_item)
 
@@ -79,9 +88,11 @@ def use_composition(db: Session, composition_id: int, batch_id: int, times: int,
 
             total_iic_quantity_kg = Decimal(str(iic.weight)) * Decimal(str(times))
             
+            total_quantity_to_reduce_kg = total_iic_quantity_kg * (1 + wastage_percentage / 100)
+            
             try:
                 quantity_to_reduce_in_items_unit = _convert_quantity(
-                    total_iic_quantity_kg,
+                    total_quantity_to_reduce_kg,
                     'kg',
                     old_item_unit
                 )
@@ -106,7 +117,7 @@ def use_composition(db: Session, composition_id: int, batch_id: int, times: int,
                 old_quantity=old_quantity_for_audit_kg,
                 new_quantity=new_quantity_for_audit_kg,
                 changed_by=changed_by,
-                note=f"Used in composition '{composition_obj.name}' for batch '{batch_no}' ({times} times).",
+                note=f"Used in composition '{composition_obj.name}' for batch '{batch_no}' ({times} times). Wastage: {wastage_percentage}%.",
                 tenant_id=tenant_id
             )
             db.add(audit)
@@ -179,6 +190,9 @@ def revert_composition_usage(db: Session, usage_id: int, tenant_id: str, changed
     if not usage_to_revert:
         return False, "Composition usage record not found."
 
+    # Refresh the items relationship to ensure we have the latest data from the DB
+    db.refresh(usage_to_revert, attribute_names=['items'])
+
     times = usage_to_revert.times
     composition_name = usage_to_revert.composition_name
     
@@ -193,11 +207,14 @@ def revert_composition_usage(db: Session, usage_id: int, tenant_id: str, changed
 
             old_quantity_for_audit_kg = _convert_quantity(old_item_quantity, old_item_unit, 'kg')
 
-            total_iic_quantity_kg = Decimal(usage_item.weight) * Decimal(times)
+            total_iic_quantity_kg = Decimal(str(usage_item.weight)) * Decimal(str(times))
+            
+            wastage_percentage = usage_item.wastage_percentage if usage_item.wastage_percentage is not None else Decimal('0')
+            total_quantity_to_add_kg = total_iic_quantity_kg * (1 + wastage_percentage / 100)
 
             try:
                 quantity_to_add_in_items_unit = _convert_quantity(
-                    total_iic_quantity_kg,
+                    total_quantity_to_add_kg,
                     'kg',
                     old_item_unit
                 )
@@ -219,7 +236,7 @@ def revert_composition_usage(db: Session, usage_id: int, tenant_id: str, changed
                 old_quantity=old_quantity_for_audit_kg,
                 new_quantity=new_quantity_for_audit_kg,
                 changed_by=changed_by,
-                note=f"Reverted usage of composition '{composition_name}' for batch '{batch_no}' ({times} times).",
+                note=f"Reverted usage of composition '{composition_name}' for batch '{batch_no}' ({times} times). Wastage: {wastage_percentage}%.",
                 tenant_id=tenant_id
             )
             db.add(audit)

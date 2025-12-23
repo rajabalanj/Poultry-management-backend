@@ -314,13 +314,31 @@ def export_detailed_purchase_order_report(
             output = io.BytesIO()
             with PdfPages(output) as pdf:
                 df_for_pdf = df.copy()
-                for col in ['Vendor Name', 'Item Name']:
+                
+                # Drop columns not needed for PDF export
+                columns_to_drop = ['PO Number', 'Order Status']
+                df_for_pdf.drop(columns=[col for col in columns_to_drop if col in df_for_pdf.columns], inplace=True)
+
+
+                # Rename columns for shorter headers in PDF
+                df_for_pdf.rename(columns={
+                    "Price Per Unit": "Unit Price",
+                    "Bill No": "Bill#",
+                    "Vendor Name": "Vendor",
+                    "Order Date": "Date",
+                    "Item Name": "Item",
+                    "Line Total": "Item Total",
+                    "Order Total Amount": "PO Total",
+                    "Amount Paid": "Paid",
+                }, inplace=True)
+
+                for col in ['Vendor', 'Item']:
                     if col in df_for_pdf.columns:
                         df_for_pdf[col] = df_for_pdf[col].apply(
                             lambda x: '\n'.join(textwrap.wrap(str(x), width=20)) if isinstance(x, str) else x
                         )
 
-                rows_per_page = 35
+                rows_per_page = 20
                 num_pages = int(np.ceil(len(df_for_pdf) / rows_per_page)) if len(df_for_pdf) > 0 else 1
 
                 for i in range(num_pages):
