@@ -29,7 +29,7 @@ class Batch(Base, TimestampMixin):
     
     @hybrid_property
     def batch_type(self):
-        if float(self.age) < 16:
+        if float(self.age) < 9:
             return 'Chick'
         elif float(self.age) <= 18:  # include 18 in this range
             return 'Grower'
@@ -40,7 +40,7 @@ class Batch(Base, TimestampMixin):
     def batch_type(cls):
         from sqlalchemy import cast, Float, case
         return case(
-            (cast(cls.age, Float) < 16, 'Chick'),
+            (cast(cls.age, Float) < 9, 'Chick'),
             (cast(cls.age, Float) <= 18, 'Grower'),
             else_='Layer'
         )
