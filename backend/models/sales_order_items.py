@@ -12,7 +12,10 @@ class SalesOrderItem(Base):
     price_per_unit = Column(Numeric(10, 3), nullable=False)
     line_total = Column(Numeric(10, 3), nullable=False)
     tenant_id = Column(String, index=True)
+    variant_id = Column(Integer, ForeignKey("inventory_item_variants.id"), nullable=True)
+    variant_name = Column(String, nullable=True)
 
     # Relationships
     sales_order = relationship("SalesOrder", back_populates="items")
     inventory_item = relationship("InventoryItem")
+    variant = relationship("InventoryItemVariant")

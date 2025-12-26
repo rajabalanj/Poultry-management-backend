@@ -95,7 +95,9 @@ def create_sales_order(
                 quantity=item_data.quantity,
                 price_per_unit=price_per_unit,
                 line_total=line_total,
-                tenant_id=tenant_id
+                tenant_id=tenant_id,
+                variant_id=item_data.variant_id,
+                variant_name=item_data.variant_name
             )
         )
     
@@ -641,7 +643,9 @@ def add_item_to_sales_order(
         quantity=item_request.quantity,
         price_per_unit=item_request.price_per_unit,
         line_total=line_total,
-        tenant_id=tenant_id
+        tenant_id=tenant_id,
+        variant_id=item_request.variant_id,
+        variant_name=item_request.variant_name
     )
     db.add(db_so_item)
     

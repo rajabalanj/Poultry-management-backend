@@ -36,6 +36,7 @@ import routers.app_config as app_config
 import routers.composition as composition
 import routers.egg_room_reports as egg_room_reports
 import routers.shed as shed
+import routers.inventory_item_variant as inventory_item_variant_router
 
 
 import logging
@@ -156,6 +157,7 @@ app.include_router(app_config.router)
 app.include_router(composition.router)
 app.include_router(daily_batch.router)
 app.include_router(shed.router)
+app.include_router(inventory_item_variant_router.router)
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():

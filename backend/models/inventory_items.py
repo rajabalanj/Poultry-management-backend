@@ -22,3 +22,4 @@ class InventoryItem(Base, TimestampMixin):
     purchase_order_items = relationship("PurchaseOrderItem", back_populates="inventory_item")
     audits = relationship("InventoryItemAudit", back_populates="inventory_item")
     usage_history = relationship("InventoryItemUsageHistory", back_populates="inventory_item")
+    variants = relationship("InventoryItemVariant", back_populates="item", cascade="all, delete-orphan")

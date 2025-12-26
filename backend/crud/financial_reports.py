@@ -168,7 +168,7 @@ def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id:
             "reference_document": f"SO-{sp.sales_order.so_number}",
             "transaction_id": sp.id,
             "reference_id": sp.sales_order.id,
-            "details": f"Payment received for Sales Order SO-{sp.sales_order.so_number}",
+            "details": f"Payment for SO-{sp.sales_order.so_number}" + (f" ({sp.notes})" if sp.notes else ""),
             "debit": 0.0,
             "credit": float(sp.amount_paid)
         })
@@ -181,7 +181,7 @@ def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id:
             "reference_document": f"PO-{pp.purchase_order.po_number}",
             "transaction_id": pp.id,
             "reference_id": pp.purchase_order.id,
-            "details": f"Payment made for Purchase Order PO-{pp.purchase_order.po_number}",
+            "details": f"Payment for PO-{pp.purchase_order.po_number}" + (f" ({pp.notes})" if pp.notes else ""),
             "debit": float(pp.amount_paid),
             "credit": 0.0
         })
