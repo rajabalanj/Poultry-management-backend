@@ -9,6 +9,7 @@ class SalesOrderItemReport(BaseModel):
     quantity: Decimal
     price_per_unit: Decimal
     line_total: Decimal
+    variant_name: Optional[str] = None
 
     class Config:
         from_attributes = True

@@ -34,10 +34,14 @@ def update_shed(db: Session, shed_id: int, shed: ShedUpdate, tenant_id: str, use
 
 from models.batch import Batch
 from models.daily_batch import DailyBatch
+from models.batch_shed_assignment import BatchShedAssignment
 
 def delete_shed(db: Session, shed_id: int, tenant_id: str):
-    # Check if the shed is being used in Batch or DailyBatch
-    is_used_in_batch = db.query(Batch).filter(Batch.shed_id == shed_id, Batch.tenant_id == tenant_id).first()
+    # Check if the shed is being used in BatchShedAssignment or DailyBatch
+    is_used_in_batch = db.query(BatchShedAssignment).join(Batch).filter(
+        BatchShedAssignment.shed_id == shed_id,
+        Batch.tenant_id == tenant_id
+    ).first()
     is_used_in_daily_batch = db.query(DailyBatch).filter(DailyBatch.shed_id == shed_id, DailyBatch.tenant_id == tenant_id).first()
 
     if is_used_in_batch or is_used_in_daily_batch:

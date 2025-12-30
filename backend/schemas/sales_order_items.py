@@ -21,6 +21,8 @@ class SalesOrderItemUpdate(BaseModel):
     inventory_item_id: Optional[int] = None
     quantity: Optional[Decimal] = None
     price_per_unit: Optional[Decimal] = None
+    variant_id: Optional[int] = None
+    variant_name: Optional[str] = None
 
 class SalesOrderItem(SalesOrderItemBase):
     id: int

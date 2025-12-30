@@ -14,6 +14,8 @@ class SalesOrderItem(BaseModel):
     price_per_unit: Decimal
     line_total: Decimal
     tenant_id: Optional[str] = None
+    variant_id: Optional[int] = None
+    variant_name: Optional[str] = None
 
     class Config:
         from_attributes = True

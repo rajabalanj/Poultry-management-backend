@@ -53,6 +53,7 @@ def get_sales_order_report(
                 quantity=item.quantity,
                 price_per_unit=item.price_per_unit,
                 line_total=item.line_total,
+                variant_name=item.variant_name,
             )
             for item in so.items
         ]

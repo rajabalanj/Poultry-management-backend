@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 from models.inventory_item_variant import InventoryItemVariant
-from schemas.inventory_item_variant import InventoryItemVariantCreate
+from schemas.inventory_item_variant import InventoryItemVariantCreate, InventoryItemVariantUpdate
 
 def create_inventory_item_variant(db: Session, variant: InventoryItemVariantCreate, tenant_id: str):
     db_variant = InventoryItemVariant(**variant.model_dump(), tenant_id=tenant_id)
@@ -14,6 +14,16 @@ def get_inventory_item_variants_by_item(db: Session, item_id: int, tenant_id: st
 
 def get_inventory_item_variant(db: Session, variant_id: int, tenant_id: str):
     return db.query(InventoryItemVariant).filter(InventoryItemVariant.id == variant_id, InventoryItemVariant.tenant_id == tenant_id).first()
+
+def update_inventory_item_variant(db: Session, variant_id: int, variant_update: InventoryItemVariantUpdate, tenant_id: str):
+    db_variant = get_inventory_item_variant(db, variant_id, tenant_id)
+    if db_variant:
+        update_data = variant_update.model_dump(exclude_unset=True)
+        for key, value in update_data.items():
+            setattr(db_variant, key, value)
+        db.commit()
+        db.refresh(db_variant)
+    return db_variant
 
 def delete_inventory_item_variant(db: Session, variant_id: int, tenant_id: str):
     db_variant = get_inventory_item_variant(db, variant_id, tenant_id)

@@ -8,6 +8,9 @@ class InventoryItemVariantBase(BaseModel):
 class InventoryItemVariantCreate(InventoryItemVariantBase):
     pass
 
+class InventoryItemVariantUpdate(BaseModel):
+    name: Optional[str] = None
+
 class InventoryItemVariant(InventoryItemVariantBase):
     id: int
     tenant_id: str

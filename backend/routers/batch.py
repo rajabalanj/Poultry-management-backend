@@ -342,7 +342,17 @@ def update_batch(
         if all_rows and all_rows[0].batch_date == new_date:
             start_row = all_rows[0]
         else:
-            start_row = DailyBatchModel(batch_id=batch_id, tenant_id=tenant_id, batch_date=new_date, batch_no=db_batch.batch_no, shed_id=db_batch.shed_id)
+            assignment = db.query(BatchShedAssignment).filter(
+                BatchShedAssignment.batch_id == batch_id,
+                BatchShedAssignment.start_date <= new_date,
+                (BatchShedAssignment.end_date == None) | (BatchShedAssignment.end_date >= new_date)
+            ).order_by(BatchShedAssignment.start_date.desc()).first()
+
+            if not assignment:
+                raise HTTPException(status_code=409, detail=f"Cannot find a shed assignment for the batch on date {new_date}.")
+            
+            current_shed_id = assignment.shed_id
+            start_row = DailyBatchModel(batch_id=batch_id, tenant_id=tenant_id, batch_date=new_date, batch_no=db_batch.batch_no, shed_id=current_shed_id)
             db.add(start_row)
             db.flush()  # Flush the new row first
             # Re-query to get fresh instances and ensure the session identity map matches DB
