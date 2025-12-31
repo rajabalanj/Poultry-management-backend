@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, UniqueConstraint
+from sqlalchemy import Column, Integer, String, UniqueConstraint, Boolean
 from database import Base
 from models.audit_mixin import TimestampMixin
 
@@ -9,3 +9,4 @@ class Shed(Base, TimestampMixin):
     id = Column(Integer, primary_key=True, index=True)
     tenant_id = Column(String, index=True, nullable=False)
     shed_no = Column(String, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)

@@ -73,8 +73,8 @@ def delete_shed(
     user: dict = Depends(get_current_user),
     tenant_id: str = Depends(get_tenant_id)
 ):
-    """Delete a shed."""
-    success, message = crud_shed.delete_shed(db=db, shed_id=shed_id, tenant_id=tenant_id)
+    """Soft delete a shed."""
+    success, message = crud_shed.delete_shed(db=db, shed_id=shed_id, tenant_id=tenant_id, user=user)
     if not success:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=message)
     
