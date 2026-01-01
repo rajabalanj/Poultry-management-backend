@@ -115,23 +115,26 @@ def get_balance_sheet(db: Session, as_of_date: date, tenant_id: int) -> BalanceS
 
     return BalanceSheet(assets=assets, liabilities=liabilities, equity=equity)
 
-def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id: str) -> GeneralLedger:
+def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id: str, transaction_type: str = None) -> GeneralLedger:
     financial_config = crud_app_config.get_financial_config(db, tenant_id)
     initial_opening_balance = financial_config['general_ledger_opening_balance']
 
     # Get all transactions before the start date to calculate the report opening balance
+    prior_sales_payments = []
+    if transaction_type is None or transaction_type == 'sales':
+        prior_sales_payments = db.query(sales_payments.SalesPayment).filter(
+            sales_payments.SalesPayment.tenant_id == tenant_id,
+            sales_payments.SalesPayment.payment_date < start_date,
+            sales_payments.SalesPayment.deleted_at.is_(None)
+        ).all()
 
-    prior_sales_payments = db.query(sales_payments.SalesPayment).filter(
-        sales_payments.SalesPayment.tenant_id == tenant_id,
-        sales_payments.SalesPayment.payment_date < start_date,
-        sales_payments.SalesPayment.deleted_at.is_(None)
-    ).all()
-
-    prior_purchase_payments = db.query(payments.Payment).filter(
-        payments.Payment.tenant_id == tenant_id,
-        payments.Payment.payment_date < start_date,
-        payments.Payment.deleted_at.is_(None)
-    ).all()
+    prior_purchase_payments = []
+    if transaction_type is None or transaction_type == 'purchase':
+        prior_purchase_payments = db.query(payments.Payment).filter(
+            payments.Payment.tenant_id == tenant_id,
+            payments.Payment.payment_date < start_date,
+            payments.Payment.deleted_at.is_(None)
+        ).all()
 
     # Calculate the net effect of prior transactions
     prior_net_effect = 0.0
@@ -145,19 +148,23 @@ def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id:
     report_opening_balance = initial_opening_balance + prior_net_effect
 
     # Get transactions within the date range
-    sales_payments_query = db.query(sales_payments.SalesPayment).join(sales_orders.SalesOrder).join(business_partners.BusinessPartner).filter(
-        sales_payments.SalesPayment.tenant_id == tenant_id,
-        sales_payments.SalesPayment.payment_date >= start_date,
-        sales_payments.SalesPayment.payment_date <= end_date,
-        sales_payments.SalesPayment.deleted_at.is_(None)
-    ).all()
+    sales_payments_query = []
+    if transaction_type is None or transaction_type == 'sales':
+        sales_payments_query = db.query(sales_payments.SalesPayment).join(sales_orders.SalesOrder).join(business_partners.BusinessPartner).filter(
+            sales_payments.SalesPayment.tenant_id == tenant_id,
+            sales_payments.SalesPayment.payment_date >= start_date,
+            sales_payments.SalesPayment.payment_date <= end_date,
+            sales_payments.SalesPayment.deleted_at.is_(None)
+        ).all()
 
-    purchase_payments_query = db.query(payments.Payment).join(purchase_orders.PurchaseOrder).join(business_partners.BusinessPartner).filter(
-        payments.Payment.tenant_id == tenant_id,
-        payments.Payment.payment_date >= start_date,
-        payments.Payment.payment_date <= end_date,
-        payments.Payment.deleted_at.is_(None)
-    ).all()
+    purchase_payments_query = []
+    if transaction_type is None or transaction_type == 'purchase':
+        purchase_payments_query = db.query(payments.Payment).join(purchase_orders.PurchaseOrder).join(business_partners.BusinessPartner).filter(
+            payments.Payment.tenant_id == tenant_id,
+            payments.Payment.payment_date >= start_date,
+            payments.Payment.payment_date <= end_date,
+            payments.Payment.deleted_at.is_(None)
+        ).all()
 
     transactions = []
     for sp in sales_payments_query:
