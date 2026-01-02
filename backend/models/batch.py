@@ -13,7 +13,7 @@ class Batch(Base, TimestampMixin):
     tenant_id = Column(String, index=True)
     batch_no = Column(String)
     date = Column(Date, default=lambda: datetime.now(pytz.timezone('Asia/Kolkata')).date())
-    age = Column(String)  # Format: "week.day" (e.g., "1.1" for 8 days)
+    age = Column(String)  # Format: "w.d" where w is week number starting from 0, and d is day of week from 1-7. E.g., "0.1" is Week 1, Day 1. "1.1" is Week 2, Day 1 (8th day).
     opening_count = Column(Integer)
     daily_batches = relationship("DailyBatch", back_populates="batch")
     closing_date = Column(Date, nullable=True)
@@ -29,18 +29,18 @@ class Batch(Base, TimestampMixin):
     
     @hybrid_property
     def batch_type(self):
-        if float(self.age) < 9:
+        if float(self.age) < 8:
             return 'Chick'
-        elif float(self.age) <= 18:  # include 18 in this range
+        elif float(self.age) <= 17:
             return 'Grower'
-        elif float(self.age) > 18:
+        elif float(self.age) > 17:
             return 'Layer'
 
     @batch_type.expression
     def batch_type(cls):
         from sqlalchemy import cast, Float, case
         return case(
-            (cast(cls.age, Float) < 9, 'Chick'),
-            (cast(cls.age, Float) <= 18, 'Grower'),
+            (cast(cls.age, Float) < 8, 'Chick'),
+            (cast(cls.age, Float) <= 17, 'Grower'),
             else_='Layer'
         )

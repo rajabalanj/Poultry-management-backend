@@ -31,7 +31,7 @@ from crud.composition_usage_history import get_composition_usage_by_date_range
 def _is_layer_age(age_str):
     """Return True if age_str represents >= 18 (weeks). Age may be stored as string like '18.3'."""
     try:
-        return float(age_str) >= 18
+        return float(age_str) > 17
     except (ValueError, TypeError):
         return False
 
@@ -116,7 +116,7 @@ def _calculate_cumulative_report(db: Session, batch_id: int, current_week: int, 
     # Calculate cumulative feed from week 18 to current week
     cum_feed_total = 0
     cum_egg_total = 0
-    for week_num in range(18, current_week + 1):
+    for week_num in range(17, current_week + 1):
         week_batches = db.query(DailyBatch).filter(
             DailyBatch.batch_id == batch_id,
             DailyBatch.age >= f"{week_num}.1",
@@ -248,7 +248,7 @@ def _calculate_summary(batches: list[DailyBatch], query_start_date: date, query_
     for b in batches:
         try:
             # Only include batches that are 18 weeks or older
-            if float(b.age) >= 18:
+            if float(b.age) > 17:
                 layer_batches.append(b)
         except (ValueError, TypeError):
             # Ignore if age is not a valid number
@@ -312,7 +312,7 @@ def get_weekly_layer_report(
     # Get hen housing (closing count at age 17.7)
     hen_housing_record = db.query(DailyBatch).filter(
         DailyBatch.batch_id == batch_id,
-        DailyBatch.age == "17.7",
+        DailyBatch.age == "16.7",
         DailyBatch.tenant_id == tenant_id
     ).first()
     
@@ -639,7 +639,7 @@ def write_daily_report_excel(batches, report_date=None, file_path=None, tenant_i
     ws.append(header2)
     
     # Write batch rows
-    total_open = total_mort = total_culls = total_closing = total_table = total_jumbo = total_cr = total_total = total_hd_percent_dummy = total_std_dummy = 0
+    total_open = total_mort = total_culls = total_closing = total_table = total_jumbo = total_cr = total_total = total_hd_percent = 0
     for batch in batches:
         row = [
             batch.batch_no,
@@ -653,8 +653,8 @@ def write_daily_report_excel(batches, report_date=None, file_path=None, tenant_i
             getattr(batch, "jumbo", 0),
             getattr(batch, "cr", 0),
             getattr(batch, "total", 0),
-            round(batch.closing_count / max(1, batch.opening_count), 4), # Dummy HD% calculation
-            round(float(batch.age) * 2.5, 1) if batch.age else round(float(batch.age) * 2.5, 1) # Dummy STD calculation
+            round(batch.hd, 4) if batch.hd is not None else 0,
+            0
         ]
         ws.append(row)
         total_open += batch.opening_count
@@ -665,17 +665,16 @@ def write_daily_report_excel(batches, report_date=None, file_path=None, tenant_i
         total_jumbo += getattr(batch, "jumbo", 0)
         total_cr += getattr(batch, "cr", 0)
         total_total += getattr(batch, "total", 0)
-        # Accumulate dummy values for totals
-        total_hd_percent_dummy += round(batch.closing_count / max(1, batch.opening_count), 4)
-        total_std_dummy += round(float(batch.age) * 2.5, 1)
+        # Accumulate hd values for totals
+        total_hd_percent += round(batch.hd, 4) if batch.hd is not None else 0
         
 
     # Write totals row
     ws.append([
         "TOTAL", "", 0, total_open, total_mort, total_culls, total_closing,
         total_table, total_jumbo, total_cr, total_total,
-         round(total_hd_percent_dummy / len(batches) if batches else 0, 4), # Dummy average HD%
-         round(total_std_dummy / len(batches) if batches else 0, 1) # Dummy average STD
+         round(total_hd_percent / len(batches) if batches else 0, 4),
+         0
     ])
 
     # Apply formatting

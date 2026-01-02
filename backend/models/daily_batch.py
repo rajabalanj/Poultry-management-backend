@@ -128,18 +128,18 @@ class DailyBatch(Base, TimestampMixin):
 
     @hybrid_property
     def batch_type(self):
-        if float(self.age) < 9:
+        if float(self.age) < 8:
             return 'Chick'
-        elif float(self.age) <= 18:  # include 18 in this range
+        elif float(self.age) <= 17:
             return 'Grower'
-        elif float(self.age) > 18:
+        elif float(self.age) > 17:
             return 'Layer'
         
     @batch_type.expression
     def batch_type(cls):
         return case(
-            (cast(cls.age, Float) < 9, 'Chick'),
-            (cast(cls.age, Float) <= 18, 'Grower'),
+            (cast(cls.age, Float) < 8, 'Chick'),
+            (cast(cls.age, Float) <= 17, 'Grower'),
             else_='Layer'
         )
         
