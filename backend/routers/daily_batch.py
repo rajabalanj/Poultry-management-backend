@@ -238,6 +238,9 @@ def upload_weekly_report_excel(
                     new_age = calculate_age_progression(prev_age, days_diff)
                     row_to_update.age = str(round(new_age, 1))
 
+                    # Update prev_age so progression accumulates across subsequent rows
+                    prev_age = new_age
+
                     prev_closing = row_to_update.closing_count
                     prev_date = row_to_update.batch_date
 
@@ -560,6 +563,10 @@ def update_daily_batch(
             days_diff = (row.batch_date - prev_date).days
             new_age = calculate_age_progression(prev_age, days_diff)
             row.age = str(round(new_age, 1))
+
+            # Update prev_age so subsequent rows use the latest computed age
+            prev_age = new_age
+
             prev_closing = row.closing_count
             prev_date = row.batch_date
 
