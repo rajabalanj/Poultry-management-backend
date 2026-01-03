@@ -188,10 +188,15 @@ def create_sales_order(
                 db=db, report=report_create, tenant_id=tenant_id, user_id=get_user_identifier(user)
             )
 
-        egg_room_report.table_transfer += int(table_egg_qty)
-        egg_room_report.jumbo_transfer += int(jumbo_egg_qty)
-        egg_room_report.grade_c_transfer += int(grade_c_egg_qty)
-        db.add(egg_room_report)
+        # Use an atomic UPDATE to avoid lost updates when multiple SOs modify the same report concurrently
+        db.query(EggRoomReportModel).filter(
+            EggRoomReportModel.report_date == so.order_date,
+            EggRoomReportModel.tenant_id == tenant_id
+        ).update({
+            EggRoomReportModel.table_transfer: EggRoomReportModel.table_transfer + int(table_egg_qty),
+            EggRoomReportModel.jumbo_transfer: EggRoomReportModel.jumbo_transfer + int(jumbo_egg_qty),
+            EggRoomReportModel.grade_c_transfer: EggRoomReportModel.grade_c_transfer + int(grade_c_egg_qty)
+        }, synchronize_session=False)
         db.commit()
 
     db.refresh(db_so)
@@ -531,10 +536,15 @@ def update_sales_order(
                 EggRoomReportModel.tenant_id == tenant_id
             ).first()
             if old_egg_room_report:
-                old_egg_room_report.table_transfer -= int(egg_items_by_type["Table Egg"])
-                old_egg_room_report.jumbo_transfer -= int(egg_items_by_type["Jumbo Egg"])
-                old_egg_room_report.grade_c_transfer -= int(egg_items_by_type["Grade C Egg"])
-                db.add(old_egg_room_report)
+                # Atomically subtract from old date report to avoid race conditions
+                db.query(EggRoomReportModel).filter(
+                    EggRoomReportModel.report_date == old_order_date,
+                    EggRoomReportModel.tenant_id == tenant_id
+                ).update({
+                    EggRoomReportModel.table_transfer: EggRoomReportModel.table_transfer - int(egg_items_by_type["Table Egg"]),
+                    EggRoomReportModel.jumbo_transfer: EggRoomReportModel.jumbo_transfer - int(egg_items_by_type["Jumbo Egg"]),
+                    EggRoomReportModel.grade_c_transfer: EggRoomReportModel.grade_c_transfer - int(egg_items_by_type["Grade C Egg"])
+                }, synchronize_session=False)
 
             # Apply to new date report
             new_egg_room_report = db.query(EggRoomReportModel).filter(
@@ -558,10 +568,15 @@ def update_sales_order(
                     user_id=get_user_identifier(user)
                 )
             
-            new_egg_room_report.table_transfer += int(egg_items_by_type["Table Egg"])
-            new_egg_room_report.jumbo_transfer += int(egg_items_by_type["Jumbo Egg"])
-            new_egg_room_report.grade_c_transfer += int(egg_items_by_type["Grade C Egg"])
-            db.add(new_egg_room_report)
+            # Atomically add to new date report
+            db.query(EggRoomReportModel).filter(
+                EggRoomReportModel.report_date == new_order_date,
+                EggRoomReportModel.tenant_id == tenant_id
+            ).update({
+                EggRoomReportModel.table_transfer: EggRoomReportModel.table_transfer + int(egg_items_by_type["Table Egg"]),
+                EggRoomReportModel.jumbo_transfer: EggRoomReportModel.jumbo_transfer + int(egg_items_by_type["Jumbo Egg"]),
+                EggRoomReportModel.grade_c_transfer: EggRoomReportModel.grade_c_transfer + int(egg_items_by_type["Grade C Egg"])
+            }, synchronize_session=False)
 
     # Note: SHIPPED and CANCELLED statuses are not set anywhere in backend.
     # Keep status changes minimal here; payments update payment-related statuses (PAID/PARTIALLY_PAID/APPROVED/DRAFT).
@@ -672,13 +687,22 @@ def add_item_to_sales_order(
                 db=db, report=report_create, tenant_id=tenant_id, user_id=get_user_identifier(user)
             )
 
+        # Atomic update to avoid lost updates when concurrent requests modify the same report
         if inv.name == "Table Egg":
-            egg_room_report.table_transfer += int(item_request.quantity)
+            db.query(EggRoomReportModel).filter(
+                EggRoomReportModel.report_date == db_so.order_date,
+                EggRoomReportModel.tenant_id == tenant_id
+            ).update({EggRoomReportModel.table_transfer: EggRoomReportModel.table_transfer + int(item_request.quantity)}, synchronize_session=False)
         elif inv.name == "Jumbo Egg":
-            egg_room_report.jumbo_transfer += int(item_request.quantity)
+            db.query(EggRoomReportModel).filter(
+                EggRoomReportModel.report_date == db_so.order_date,
+                EggRoomReportModel.tenant_id == tenant_id
+            ).update({EggRoomReportModel.jumbo_transfer: EggRoomReportModel.jumbo_transfer + int(item_request.quantity)}, synchronize_session=False)
         elif inv.name == "Grade C Egg":
-            egg_room_report.grade_c_transfer += int(item_request.quantity)
-        db.add(egg_room_report)
+            db.query(EggRoomReportModel).filter(
+                EggRoomReportModel.report_date == db_so.order_date,
+                EggRoomReportModel.tenant_id == tenant_id
+            ).update({EggRoomReportModel.grade_c_transfer: EggRoomReportModel.grade_c_transfer + int(item_request.quantity)}, synchronize_session=False)
     else:
         old_stock = inv.current_stock or 0
         inv.current_stock -= item_request.quantity
@@ -756,10 +780,22 @@ def update_sales_order_item(
                 ).first()
                 logger.info(f"[ITEM CHANGE] Old item is an egg. Found egg room report for {db_so.order_date}: {'Yes' if egg_room_report else 'No'}")
                 if egg_room_report:
-                    if old_inv_item.name == "Table Egg": egg_room_report.table_transfer -= int(item_to_update.quantity)
-                    elif old_inv_item.name == "Jumbo Egg": egg_room_report.jumbo_transfer -= int(item_to_update.quantity)
-                    elif old_inv_item.name == "Grade C Egg": egg_room_report.grade_c_transfer -= int(item_to_update.quantity)
-                    db.add(egg_room_report)
+                    # Atomic subtraction
+                    if old_inv_item.name == "Table Egg":
+                        db.query(EggRoomReportModel).filter(
+                            EggRoomReportModel.report_date == db_so.order_date,
+                            EggRoomReportModel.tenant_id == tenant_id
+                        ).update({EggRoomReportModel.table_transfer: EggRoomReportModel.table_transfer - int(item_to_update.quantity)}, synchronize_session=False)
+                    elif old_inv_item.name == "Jumbo Egg":
+                        db.query(EggRoomReportModel).filter(
+                            EggRoomReportModel.report_date == db_so.order_date,
+                            EggRoomReportModel.tenant_id == tenant_id
+                        ).update({EggRoomReportModel.jumbo_transfer: EggRoomReportModel.jumbo_transfer - int(item_to_update.quantity)}, synchronize_session=False)
+                    elif old_inv_item.name == "Grade C Egg":
+                        db.query(EggRoomReportModel).filter(
+                            EggRoomReportModel.report_date == db_so.order_date,
+                            EggRoomReportModel.tenant_id == tenant_id
+                        ).update({EggRoomReportModel.grade_c_transfer: EggRoomReportModel.grade_c_transfer - int(item_to_update.quantity)}, synchronize_session=False)
             else:
                 old_stock = old_inv_item.current_stock or 0
                 logger.info(f"[ITEM CHANGE] Old item is not an egg. Restoring stock for '{old_inv_item.name}'. Old stock: {old_stock}, Quantity to restore: {item_to_update.quantity}")
@@ -809,10 +845,22 @@ def update_sales_order_item(
                 )
             if egg_room_report:
                 logger.info(f"[ITEM CHANGE] Deducting {new_quantity} of '{new_inv_item.name}' from egg room report.")
-                if new_inv_item.name == "Table Egg": egg_room_report.table_transfer += int(new_quantity)
-                elif new_inv_item.name == "Jumbo Egg": egg_room_report.jumbo_transfer += int(new_quantity)
-                elif new_inv_item.name == "Grade C Egg": egg_room_report.grade_c_transfer += int(new_quantity)
-                db.add(egg_room_report)
+                # Atomic addition
+                if new_inv_item.name == "Table Egg":
+                    db.query(EggRoomReportModel).filter(
+                        EggRoomReportModel.report_date == db_so.order_date,
+                        EggRoomReportModel.tenant_id == tenant_id
+                    ).update({EggRoomReportModel.table_transfer: EggRoomReportModel.table_transfer + int(new_quantity)}, synchronize_session=False)
+                elif new_inv_item.name == "Jumbo Egg":
+                    db.query(EggRoomReportModel).filter(
+                        EggRoomReportModel.report_date == db_so.order_date,
+                        EggRoomReportModel.tenant_id == tenant_id
+                    ).update({EggRoomReportModel.jumbo_transfer: EggRoomReportModel.jumbo_transfer + int(new_quantity)}, synchronize_session=False)
+                elif new_inv_item.name == "Grade C Egg":
+                    db.query(EggRoomReportModel).filter(
+                        EggRoomReportModel.report_date == db_so.order_date,
+                        EggRoomReportModel.tenant_id == tenant_id
+                    ).update({EggRoomReportModel.grade_c_transfer: EggRoomReportModel.grade_c_transfer + int(new_quantity)}, synchronize_session=False)
         else:
             if new_inv_item.category != 'Supplies':
                 raise HTTPException(status_code=400, detail=f"Item '{new_inv_item.name}' cannot be sold. Only items in 'Supplies' category can be sold.")
@@ -861,10 +909,22 @@ def update_sales_order_item(
                         db=db, report=report_create, tenant_id=tenant_id, user_id=get_user_identifier(user)
                     )
                 
-                if inv.name == "Table Egg": egg_room_report.table_transfer += int(delta)
-                elif inv.name == "Jumbo Egg": egg_room_report.jumbo_transfer += int(delta)
-                elif inv.name == "Grade C Egg": egg_room_report.grade_c_transfer += int(delta)
-                db.add(egg_room_report)
+                # Atomic adjustment for quantity delta
+                if inv.name == "Table Egg":
+                    db.query(EggRoomReportModel).filter(
+                        EggRoomReportModel.report_date == db_so.order_date,
+                        EggRoomReportModel.tenant_id == tenant_id
+                    ).update({EggRoomReportModel.table_transfer: EggRoomReportModel.table_transfer + int(delta)}, synchronize_session=False)
+                elif inv.name == "Jumbo Egg":
+                    db.query(EggRoomReportModel).filter(
+                        EggRoomReportModel.report_date == db_so.order_date,
+                        EggRoomReportModel.tenant_id == tenant_id
+                    ).update({EggRoomReportModel.jumbo_transfer: EggRoomReportModel.jumbo_transfer + int(delta)}, synchronize_session=False)
+                elif inv.name == "Grade C Egg":
+                    db.query(EggRoomReportModel).filter(
+                        EggRoomReportModel.report_date == db_so.order_date,
+                        EggRoomReportModel.tenant_id == tenant_id
+                    ).update({EggRoomReportModel.grade_c_transfer: EggRoomReportModel.grade_c_transfer + int(delta)}, synchronize_session=False)
             else:
                 inv_with_lock = db.query(InventoryItemModel).filter(InventoryItemModel.id == inv.id, InventoryItemModel.tenant_id == tenant_id).with_for_update().first()
                 if delta > 0 and inv_with_lock.current_stock < delta:
@@ -942,13 +1002,22 @@ def delete_sales_order_item(
             ).first()
 
             if egg_room_report:
+                # Atomic subtraction when deleting an item
                 if inv.name == "Table Egg":
-                    egg_room_report.table_transfer -= int(item_to_delete.quantity)
+                    db.query(EggRoomReportModel).filter(
+                        EggRoomReportModel.report_date == db_so.order_date,
+                        EggRoomReportModel.tenant_id == tenant_id
+                    ).update({EggRoomReportModel.table_transfer: EggRoomReportModel.table_transfer - int(item_to_delete.quantity)}, synchronize_session=False)
                 elif inv.name == "Jumbo Egg":
-                    egg_room_report.jumbo_transfer -= int(item_to_delete.quantity)
+                    db.query(EggRoomReportModel).filter(
+                        EggRoomReportModel.report_date == db_so.order_date,
+                        EggRoomReportModel.tenant_id == tenant_id
+                    ).update({EggRoomReportModel.jumbo_transfer: EggRoomReportModel.jumbo_transfer - int(item_to_delete.quantity)}, synchronize_session=False)
                 elif inv.name == "Grade C Egg":
-                    egg_room_report.grade_c_transfer -= int(item_to_delete.quantity)
-                db.add(egg_room_report)
+                    db.query(EggRoomReportModel).filter(
+                        EggRoomReportModel.report_date == db_so.order_date,
+                        EggRoomReportModel.tenant_id == tenant_id
+                    ).update({EggRoomReportModel.grade_c_transfer: EggRoomReportModel.grade_c_transfer - int(item_to_delete.quantity)}, synchronize_session=False)
         else:
             # For non-egg items, restore current_stock
             old_stock = inv.current_stock or 0

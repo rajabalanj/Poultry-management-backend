@@ -53,69 +53,99 @@ def upload_weekly_report_excel(
 
         all_daily_batches_to_create = []
 
-        # Find the header row for the data
-        header_row_idx = df.index[df[0] == 'DATE'].tolist()
-        if not header_row_idx:
+        # Find all header rows for the data
+        header_row_indices = df.index[df[0] == 'DATE'].tolist()
+        if not header_row_indices:
             raise HTTPException(status_code=400, detail="No 'DATE' rows found in the Excel file.")
         
-        # Assuming the first 'DATE' row is the start of the data block
-        header_row_idx = header_row_idx[0]
-        header_row = [str(x).strip() for x in df.iloc[header_row_idx]]
+        all_data_frames = []
         expected_header = ['DATE', 'OPEN STOCK', 'MORT', 'CULLS', 'CLOSING STOCK', 'TABLE', 'JUMBO', 'CR', 'TOTAL', 'HD%', 'FEED KGS', 'REMARKS']
-        if header_row[:len(expected_header)] != expected_header:
-            raise HTTPException(status_code=400, detail=f"Invalid header at row {header_row_idx + 1}. Expected: {expected_header}")
-        
-        # Note: OPEN STOCK column is ignored - opening_count is calculated from parent batch
 
-        # Read all data rows until an empty row or end of file
-        data_start_row = header_row_idx + 1
-        weekly_data = df.iloc[data_start_row:]
+        for i, header_row_idx in enumerate(header_row_indices):
+            header_row = [str(x).strip() for x in df.iloc[header_row_idx]]
+            if header_row[:len(expected_header)] != expected_header:
+                logger.warning(f"Skipping block at row {header_row_idx + 1} due to invalid header.")
+                continue
+
+            data_start_row = header_row_idx + 1
+            
+            # Determine the end of the current data block
+            if i + 1 < len(header_row_indices):
+                data_end_row = header_row_indices[i + 1]
+            else:
+                data_end_row = len(df)
+            
+            weekly_data_block = df.iloc[data_start_row:data_end_row]
+
+            # Find the last valid row in the block to trim trailing empty/junk rows
+            last_valid_index = weekly_data_block[0].last_valid_index()
+            if last_valid_index is not None:
+                weekly_data_block = weekly_data_block.loc[:last_valid_index]
+                all_data_frames.append(weekly_data_block)
+
+        if not all_data_frames:
+            raise HTTPException(status_code=400, detail="No valid data rows found after headers.")
+
+        weekly_data = pd.concat(all_data_frames)
 
         if weekly_data.empty:
-            raise HTTPException(status_code=400, detail="No data rows found after header.")
+            raise HTTPException(status_code=400, detail="No data rows found after processing all blocks.")
+
+        # Use errors='coerce' to handle non-date strings gracefully
+        weekly_data['parsed_date'] = pd.to_datetime(weekly_data[0], format='%d-%m-%Y', errors='coerce')
+
+        # Drop rows that could not be parsed as dates
+        weekly_data.dropna(subset=['parsed_date'], inplace=True)
+        
+        if weekly_data.empty:
+            raise HTTPException(status_code=400, detail="No rows with valid dates found in the file.")
+        
+        weekly_data = weekly_data.sort_values(by='parsed_date').drop(columns=['parsed_date'])
 
         initial_batch_age = float(batch_obj.age)
         batch_start_date = batch_obj.date
+        previous_closing_count = None
 
         for i, row in weekly_data.iterrows():
-            # Stop if the first column is empty, indicating end of data block
+            # This check is now redundant because of the filtering and trimming above, but kept for safety
             if pd.isna(row[0]):
-                break
+                continue
             try:
                 batch_date_str = str(row[0]).strip()
                 batch_date = pd.to_datetime(batch_date_str, format='%d-%m-%Y').date()
                 
-                # Skip opening_count from Excel - will calculate from parent batch
-                mortality = int(row[2])
-                culls = int(row[3])
-                table_eggs = int(row[5])
-                jumbo_eggs = int(row[6])
-                cr_eggs = int(row[7])
+                mortality = int(row[2]) if pd.notna(row[2]) else 0
+                culls = int(row[3]) if pd.notna(row[3]) else 0
+                table_eggs = int(row[5]) if pd.notna(row[5]) else 0
+                jumbo_eggs = int(row[6]) if pd.notna(row[6]) else 0
+                cr_eggs = int(row[7]) if pd.notna(row[7]) else 0
             except (ValueError, TypeError) as e:
                 raise HTTPException(status_code=400, detail=f"Invalid data in row {i + 1}: {e}. Ensure 'DATE' is in DD-MM-YYYY format.")
 
-            # Calculate age and opening_count from parent batch
             if isinstance(batch_start_date, datetime):
                 batch_start_date = batch_start_date.date()
             days_diff = (batch_date - batch_start_date).days
             if days_diff < 0:
                 raise HTTPException(status_code=400, detail=f"Batch date {batch_date} cannot be before batch start date {batch_start_date} in row {i + 1}.")
             
-            # Calculate age from parent batch
             age = str(round(calculate_age_progression(initial_batch_age, days_diff), 1))
             
-            # Calculate opening_count from previous day's closing or parent batch
-            prev_daily = db.query(DailyBatchModel).filter(
-                DailyBatchModel.batch_id == batch_id,
-                DailyBatchModel.batch_date < batch_date
-            ).order_by(DailyBatchModel.batch_date.desc()).first()
-            
-            if prev_daily:
-                opening_count = prev_daily.closing_count
+            if previous_closing_count is not None:
+                opening_count = previous_closing_count
             else:
-                opening_count = batch_obj.opening_count
+                prev_daily = db.query(DailyBatchModel).filter(
+                    DailyBatchModel.batch_id == batch_id,
+                    DailyBatchModel.batch_date < batch_date
+                ).order_by(DailyBatchModel.batch_date.desc()).first()
+            
+                if prev_daily:
+                    opening_count = prev_daily.closing_count
+                else:
+                    opening_count = batch_obj.opening_count
+            
+            current_closing_count = opening_count - (mortality + culls)
+            previous_closing_count = current_closing_count
 
-            # Find the correct shed_id for this specific date
             assignment = db.query(BatchShedAssignment).filter(
                 BatchShedAssignment.batch_id == batch_id,
                 BatchShedAssignment.start_date <= batch_date,
