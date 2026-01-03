@@ -327,6 +327,7 @@ def update_batch(
                 initial_assignment.start_date = new_date
                 db.add(initial_assignment)
                 logger.info(f"Updated initial BatchShedAssignment start_date for batch {batch_id} from {old_date} to {new_date}")
+                db.flush()
             else:
                 logger.warning(f"No BatchShedAssignment found starting on {old_date} for batch {batch_id} when batch date was changed. This might lead to issues.")
         
