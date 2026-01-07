@@ -471,8 +471,8 @@ def move_shed(
     if not new_shed:
         raise HTTPException(status_code=404, detail="New shed not found.")
 
-    if payload.move_date < batch.date.date():
-        raise HTTPException(status_code=400, detail="Move date cannot be before the batch start date.")
+    if payload.move_date < batch.date:
+        raise HTTPException(status_code=400, detail=f"Move date is before the batch start date {batch.date.strftime('%d-%m-%Y')}.")
 
     # Check for shed conflicts
     conflicting_assignment = db.query(BatchShedAssignment).join(BatchModel).filter(
