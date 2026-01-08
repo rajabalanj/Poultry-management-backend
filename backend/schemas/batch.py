@@ -46,3 +46,4 @@ class ShedInfo(BaseModel):
 
 class BatchResponse(Batch):
     current_shed: Optional[ShedInfo] = None
+    is_active: Optional[bool] = None

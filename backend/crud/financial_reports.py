@@ -1,11 +1,14 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from models import sales_orders, purchase_orders, inventory_items, payments, sales_payments, composition_usage_history, operational_expenses, business_partners, purchase_order_items, sales_order_items
+from models.egg_room_reports import EggRoomReport
 from schemas.financial_reports import ProfitAndLoss, BalanceSheet, Assets, CurrentAssets, Liabilities, CurrentLiabilities
 from schemas.ledgers import GeneralLedger, GeneralLedgerEntry, PurchaseLedger, PurchaseLedgerEntry, SalesLedger, SalesLedgerEntry, InventoryLedger, InventoryLedgerEntry
 from datetime import date
 from decimal import Decimal
 from crud import app_config as crud_app_config
+from crud.egg_room_reports import get_reports_by_date_range
+
 
 def get_profit_and_loss(db: Session, start_date: date, end_date: date, tenant_id: int) -> ProfitAndLoss:
     # 1. Calculate Revenue
@@ -269,9 +272,76 @@ def get_sales_ledger(db: Session, customer_id: int, tenant_id: str) -> SalesLedg
     )
 
 def get_inventory_ledger(db: Session, item_id: int, start_date: date, end_date: date, tenant_id: str) -> InventoryLedger:
-    item = db.query(inventory_items.InventoryItem).filter(inventory_items.InventoryItem.id == item_id, inventory_items.InventoryItem.tenant_id == tenant_id).first()
+    item = db.query(inventory_items.InventoryItem).filter(
+        inventory_items.InventoryItem.id == item_id, 
+        inventory_items.InventoryItem.tenant_id == tenant_id
+    ).first()
 
-    # Calculate opening quantity
+    if not item:
+        return None  # Or raise an exception
+
+    # Special handling for "egg" items
+    if 'egg' in item.name.lower():
+        reports = get_reports_by_date_range(db, start_date.isoformat(), end_date.isoformat(), tenant_id)
+        
+        opening_quantity = 0
+        closing_quantity = 0
+        entries = []
+        
+        if reports:
+            start_report = reports[0]
+            end_report = reports[-1]
+
+            if "table" in item.name.lower():
+                opening_quantity = start_report.table_opening or 0
+                closing_quantity = end_report.table_closing or 0
+            elif "jumbo" in item.name.lower():
+                opening_quantity = start_report.jumbo_opening or 0
+                closing_quantity = end_report.jumbo_closing or 0
+            elif "grade c" in item.name.lower():
+                opening_quantity = start_report.grade_c_opening or 0
+                closing_quantity = end_report.grade_c_closing or 0
+
+            for report in reports:
+                quantity_received = 0
+                quantity_sold = 0
+                quantity_on_hand = 0
+                reference = "Daily Egg Room Report"
+
+                if "table" in item.name.lower():
+                    quantity_received = (report.table_received or 0) + (report.jumbo_out or 0)
+                    quantity_sold = (report.table_transfer or 0) + (report.table_out or 0) + (report.table_damage or 0)
+                    quantity_on_hand = report.table_closing or 0
+                elif "jumbo" in item.name.lower():
+                    quantity_received = (report.jumbo_received or 0) + (report.table_out or 0)
+                    quantity_sold = (report.jumbo_transfer or 0) + (report.jumbo_out or 0) + (report.jumbo_waste or 0)
+                    quantity_on_hand = report.jumbo_closing or 0
+                elif "grade c" in item.name.lower():
+                    quantity_received = (report.grade_c_shed_received or 0) + (report.table_damage or 0)
+                    quantity_sold = (report.grade_c_transfer or 0) + (report.grade_c_labour or 0) + (report.grade_c_waste or 0)
+                    quantity_on_hand = report.grade_c_closing or 0
+                
+                # Only create an entry if there was some activity
+                if quantity_received > 0 or quantity_sold > 0:
+                    entries.append(InventoryLedgerEntry(
+                        date=report.report_date,
+                        reference=reference,
+                        quantity_received=quantity_received,
+                        unit_cost=item.average_cost,
+                        total_cost=quantity_received * item.average_cost,
+                        quantity_sold=quantity_sold,
+                        quantity_on_hand=quantity_on_hand
+                    ))
+
+        return InventoryLedger(
+            title=f"Inventory Ledger for {item.name}",
+            item_id=item_id,
+            opening_quantity=opening_quantity,
+            entries=entries,
+            closing_quantity_on_hand=closing_quantity
+        )
+
+    # Calculate opening quantity for non-egg items
     purchases_before = db.query(func.sum(purchase_order_items.PurchaseOrderItem.quantity)).join(purchase_orders.PurchaseOrder).filter(
         purchase_order_items.PurchaseOrderItem.inventory_item_id == item_id,
         purchase_orders.PurchaseOrder.tenant_id == tenant_id,

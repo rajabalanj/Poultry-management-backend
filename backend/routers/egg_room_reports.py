@@ -330,30 +330,30 @@ def _calculate_egg_room_summary(reports: list[EggRoomReport]):
     last_report = reports[-1]
 
     summary = {
-        "table_opening": first_report.table_opening,
-        "jumbo_opening": first_report.jumbo_opening,
-        "grade_c_opening": first_report.grade_c_opening,
-        "table_closing": last_report.table_closing,
-        "jumbo_closing": last_report.jumbo_closing,
-        "grade_c_closing": last_report.grade_c_closing,
+        "table_opening": first_report.table_opening or 0,
+        "jumbo_opening": first_report.jumbo_opening or 0,
+        "grade_c_opening": first_report.grade_c_opening or 0,
+        "table_closing": last_report.table_closing or 0,
+        "jumbo_closing": last_report.jumbo_closing or 0,
+        "grade_c_closing": last_report.grade_c_closing or 0,
         
-        "total_table_received": sum(r.table_received for r in reports),
-        "total_table_transfer": sum(r.table_transfer for r in reports),
-        "total_table_damage": sum(r.table_damage for r in reports),
-        "total_table_out": sum(r.table_out for r in reports),
-        "total_table_in": sum(r.table_in for r in reports),
+        "total_table_received": sum(r.table_received or 0 for r in reports),
+        "total_table_transfer": sum(r.table_transfer or 0 for r in reports),
+        "total_table_damage": sum(r.table_damage or 0 for r in reports),
+        "total_table_out": sum(r.table_out or 0 for r in reports),
+        "total_table_in": sum(r.table_in or 0 for r in reports),
 
-        "total_jumbo_received": sum(r.jumbo_received for r in reports),
-        "total_jumbo_transfer": sum(r.jumbo_transfer for r in reports),
-        "total_jumbo_waste": sum(r.jumbo_waste for r in reports),
-        "total_jumbo_in": sum(r.jumbo_in for r in reports),
-        "total_jumbo_out": sum(r.jumbo_out for r in reports),
+        "total_jumbo_received": sum(r.jumbo_received or 0 for r in reports),
+        "total_jumbo_transfer": sum(r.jumbo_transfer or 0 for r in reports),
+        "total_jumbo_waste": sum(r.jumbo_waste or 0 for r in reports),
+        "total_jumbo_in": sum(r.jumbo_in or 0 for r in reports),
+        "total_jumbo_out": sum(r.jumbo_out or 0 for r in reports),
 
-        "total_grade_c_shed_received": sum(r.grade_c_shed_received for r in reports),
-        "total_grade_c_room_received": sum(r.grade_c_room_received for r in reports),
-        "total_grade_c_transfer": sum(r.grade_c_transfer for r in reports),
-        "total_grade_c_labour": sum(r.grade_c_labour for r in reports),
-        "total_grade_c_waste": sum(r.grade_c_waste for r in reports),
+        "total_grade_c_shed_received": sum(r.grade_c_shed_received or 0 for r in reports),
+        "total_grade_c_room_received": sum(r.grade_c_room_received or 0 for r in reports),
+        "total_grade_c_transfer": sum(r.grade_c_transfer or 0 for r in reports),
+        "total_grade_c_labour": sum(r.grade_c_labour or 0 for r in reports),
+        "total_grade_c_waste": sum(r.grade_c_waste or 0 for r in reports),
     }
     return summary
 

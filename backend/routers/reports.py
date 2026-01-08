@@ -372,6 +372,7 @@ def get_weekly_layer_report(
             "standard_hen_day_percentage": float(batch.standard_hen_day_percentage) if batch.standard_hen_day_percentage is not None else None,
             "actual_feed_consumed": actual_feed_consumed,
             "standard_feed_consumption": standard_feed_consumption,
+            "is_active": batch.batch.is_active,
         })
     
     # Calculate cumulative report
@@ -405,7 +406,6 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
     query = db.query(DailyBatch).join(Batch).filter(
         DailyBatch.batch_date >= start_date_obj,
         DailyBatch.batch_date <= end_date_obj,
-        Batch.is_active,
         Batch.tenant_id == tenant_id
     )
 
@@ -413,6 +413,10 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
     detailed_result = []
 
     if batch_id is not None:
+        batch_obj = db.query(Batch).filter(Batch.id == batch_id, Batch.tenant_id == tenant_id).first()
+        if not batch_obj:
+            raise HTTPException(status_code=404, detail="Batch not found")
+
         query = query.filter(DailyBatch.batch_id == batch_id)
         daily_batches = query.order_by(DailyBatch.batch_date.asc()).all()
         summary_data = _calculate_summary(daily_batches, start_date_obj, end_date_obj, is_single_batch=True)
@@ -436,6 +440,7 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
                 "batch_type": batch.batch_type,
                 "hd": batch.hd,
                 "standard_hen_day_percentage": float(batch.standard_hen_day_percentage) if batch.standard_hen_day_percentage is not None else None,
+                "is_active": batch_obj.is_active,
             })
 
     else:
@@ -499,7 +504,6 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
             .filter(
                 DailyBatch.batch_date >= start_date_obj,
                 DailyBatch.batch_date <= end_date_obj,
-                Batch.is_active == True,
                 Batch.tenant_id == tenant_id,
             )
             .order_by(DailyBatch.batch_id, DailyBatch.batch_date)
@@ -559,6 +563,7 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
                 "standard_hen_day_percentage": round(avg_std_hd, 4),
                 "highest_age": round(highest_age, 1),
                 "batch_type": last.batch_type,
+                "is_active": first.batch.is_active,
             })
         # import pdb; pdb.set_trace()
 

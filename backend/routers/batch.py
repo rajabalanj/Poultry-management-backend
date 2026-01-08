@@ -158,10 +158,10 @@ def get_all_batches(
     tenant_id: str = Depends(get_tenant_id)
 ):
     """
-    Fetch all active batches with pagination, including current shed info.
+    Fetch all batches with pagination, including current shed info and active status.
     """
-    # Get active batches
-    batches = db.query(BatchModel).filter(BatchModel.is_active, BatchModel.tenant_id == tenant_id).order_by(BatchModel.batch_no).offset(skip).limit(limit).all()
+    # Get all batches
+    batches = db.query(BatchModel).filter(BatchModel.tenant_id == tenant_id).order_by(BatchModel.batch_no).offset(skip).limit(limit).all()
     
     batch_ids = [b.id for b in batches]
     
@@ -195,7 +195,8 @@ def get_all_batches(
             "date": batch.date,
             "tenant_id": batch.tenant_id,
             "batch_type": batch.batch_type,
-            "current_shed": shed_info
+            "current_shed": shed_info,
+            "is_active": batch.is_active
         }
         result.append(batch_data)
         
@@ -246,7 +247,8 @@ def read_batch(batch_id: int, db: Session = Depends(get_db), tenant_id: str = De
         "date": db_batch.date,
         "tenant_id": db_batch.tenant_id,
         "batch_type": db_batch.batch_type,
-        "current_shed": shed_info
+        "current_shed": shed_info,
+        "is_active": db_batch.is_active
     }
     
     return batch_data
@@ -266,6 +268,9 @@ def update_batch(
     db_batch = db.query(BatchModel).filter(BatchModel.id == batch_id, BatchModel.tenant_id == tenant_id).first()
     if db_batch is None:
         raise HTTPException(status_code=404, detail="Batch not found")
+
+    if not db_batch.is_active:
+        raise HTTPException(status_code=400, detail="Closed batches cannot be updated.")
 
     db_batch.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
     db_batch.updated_by = get_user_identifier(user)

@@ -495,6 +495,13 @@ def update_daily_batch(
     tenant_id: str = Depends(get_tenant_id)
 ):
     """Update a daily batch row by batch_id and batch_date. Applies propagation logic for age, counts."""
+    # Check if the batch is closed
+    batch_obj = db.query(BatchModel).filter(BatchModel.id == batch_id, BatchModel.tenant_id == tenant_id).first()
+    if not batch_obj:
+        raise HTTPException(status_code=404, detail=f"Batch with id {batch_id} not found.")
+    if not batch_obj.is_active:
+        raise HTTPException(status_code=400, detail="Cannot update daily entries for a closed batch.")
+
     # Parse date string
     try:
         batch_date_obj = dateutil.parser.parse(batch_date).date()
@@ -627,25 +634,23 @@ def create_or_get_daily_batches(
 
     today = date.today()
 
-    # Get all active batches for the tenant, ordered by batch_no
-    active_batches = db.query(BatchModel).filter(
-        BatchModel.is_active,
+    # Get all batches for the tenant, ordered by batch_no
+    all_batches = db.query(BatchModel).filter(
         BatchModel.tenant_id == tenant_id
     ).order_by(BatchModel.batch_no).all()
 
     # Get existing daily batches for the given date and tenant, and map them by batch_id
     existing_daily_batches = db.query(DailyBatchModel).join(BatchModel).filter(
         DailyBatchModel.batch_date == batch_date,
-        BatchModel.tenant_id == tenant_id,
-        BatchModel.is_active
+        BatchModel.tenant_id == tenant_id
     ).all()
     existing_daily_batches_map = {db.batch_id: db for db in existing_daily_batches}
 
     # Efficiently fetch all relevant shed assignments for the active batches on the given date
-    active_batch_ids = [b.id for b in active_batches]
+    all_batch_ids = [b.id for b in all_batches]
     # Import is now at the top of the file
     assignments = db.query(BatchShedAssignment).filter(
-        BatchShedAssignment.batch_id.in_(active_batch_ids),
+        BatchShedAssignment.batch_id.in_(all_batch_ids),
         BatchShedAssignment.start_date <= batch_date,
         (BatchShedAssignment.end_date == None) | (BatchShedAssignment.end_date >= batch_date)
     ).all()
@@ -653,7 +658,7 @@ def create_or_get_daily_batches(
 
     result_list = []
 
-    for batch in active_batches:
+    for batch in all_batches:
         if batch.id in existing_daily_batches_map:
             # Use existing daily batch
             daily = existing_daily_batches_map[batch.id]
@@ -665,9 +670,14 @@ def create_or_get_daily_batches(
             d['standard_hen_day_percentage'] = daily.standard_hen_day_percentage
             d['feed_in_kg'] = daily.feed_in_kg
             d['standard_feed_in_kg'] = daily.standard_feed_in_kg * daily.opening_count if daily.standard_feed_in_kg and daily.opening_count else 0
+            d['is_active'] = batch.is_active
             result_list.append(d)
         else:
-            # Generate missing daily batch
+            # Generate missing daily batch only for active batches
+            if not batch.is_active:
+                # If batch is not active and has no entry for the day, skip it
+                continue
+
             if batch_date < batch.date:
                 # Look up shed_id for display purposes even if batch hasn't started
                 shed_id_for_message = assignment_map.get(batch.id)
@@ -677,7 +687,8 @@ def create_or_get_daily_batches(
                     "batch_no": batch.batch_no,
                     "message": "Please modify batch start date in configuration screen to create batch for this date.",
                     "batch_start_date": batch.date.isoformat(),
-                    "requested_date": batch_date.isoformat()
+                    "requested_date": batch_date.isoformat(),
+                    "is_active": batch.is_active
                 })
                 continue
 
@@ -761,6 +772,7 @@ def create_or_get_daily_batches(
             d['standard_hen_day_percentage'] = db_daily.standard_hen_day_percentage
             d['feed_in_kg'] = db_daily.feed_in_kg
             d['standard_feed_in_kg'] = db_daily.standard_feed_in_kg * db_daily.opening_count if db_daily.standard_feed_in_kg and db_daily.opening_count else 0
+            d['is_active'] = batch.is_active
             result_list.append(d)
 
     result_list.sort(key=lambda x: x.get('batch_no', float('inf')))
