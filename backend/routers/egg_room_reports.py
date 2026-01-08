@@ -58,8 +58,10 @@ def get_report(report_date: str, db: Session = Depends(get_db), tenant_id: str =
         report = egg_crud.get_report_by_date(db, report_date, tenant_id)
 
         # Get previous day's closing for opening balance calculation
+        # Only consider reports on/after system start date
         prev_report = db.query(EggRoomReport).filter(
             EggRoomReport.report_date < requested_date,
+            EggRoomReport.report_date >= system_start_date,
             EggRoomReport.tenant_id == tenant_id
         ).order_by(EggRoomReport.report_date.desc()).first()
 
@@ -113,22 +115,23 @@ def get_report(report_date: str, db: Session = Depends(get_db), tenant_id: str =
                 report.jumbo_opening = prev_report.jumbo_closing
                 report.grade_c_opening = prev_report.grade_c_closing
                 update_required = True
-        else: # If no previous report, check against app_config
-            table_opening_config = db.query(AppConfig).filter(AppConfig.name == 'table_opening', AppConfig.tenant_id == tenant_id).first()
-            jumbo_opening_config = db.query(AppConfig).filter(AppConfig.name == 'jumbo_opening', AppConfig.tenant_id == tenant_id).first()
-            grade_c_opening_config = db.query(AppConfig).filter(AppConfig.name == 'grade_c_opening', AppConfig.tenant_id == tenant_id).first()
+        else: # No valid previous report (on/after system start date), use app_config for system start date
+            if requested_date == system_start_date:
+                table_opening_config = db.query(AppConfig).filter(AppConfig.name == 'table_opening', AppConfig.tenant_id == tenant_id).first()
+                jumbo_opening_config = db.query(AppConfig).filter(AppConfig.name == 'jumbo_opening', AppConfig.tenant_id == tenant_id).first()
+                grade_c_opening_config = db.query(AppConfig).filter(AppConfig.name == 'grade_c_opening', AppConfig.tenant_id == tenant_id).first()
 
-            table_opening = int(table_opening_config.value) if table_opening_config else 0
-            jumbo_opening = int(jumbo_opening_config.value) if jumbo_opening_config else 0
-            grade_c_opening = int(grade_c_opening_config.value) if grade_c_opening_config else 0
+                table_opening = int(table_opening_config.value) if table_opening_config else 0
+                jumbo_opening = int(jumbo_opening_config.value) if jumbo_opening_config else 0
+                grade_c_opening = int(grade_c_opening_config.value) if grade_c_opening_config else 0
 
-            if (report.table_opening != table_opening or
-                report.jumbo_opening != jumbo_opening or
-                report.grade_c_opening != grade_c_opening):
-                report.table_opening = table_opening
-                report.jumbo_opening = jumbo_opening
-                report.grade_c_opening = grade_c_opening
-                update_required = True
+                if (report.table_opening != table_opening or
+                    report.jumbo_opening != jumbo_opening or
+                    report.grade_c_opening != grade_c_opening):
+                    report.table_opening = table_opening
+                    report.jumbo_opening = jumbo_opening
+                    report.grade_c_opening = grade_c_opening
+                    update_required = True
 
         # 3. If any data was corrected, commit and then get a fresh object
         if update_required:
@@ -208,10 +211,6 @@ def create_report(report: EggRoomReportCreate, db: Session = Depends(get_db), cu
                 detail=f"Report for date {requested_date.isoformat()} already exists. Use PUT to update."
             )
 
-        report.table_transfer = 0
-        report.jumbo_transfer = 0
-        report.grade_c_transfer = 0
-        
         created_report = egg_crud.create_report(db, report, tenant_id, get_user_identifier(current_user))
         if created_report:
             # ... (rest of your serialization logic remains the same) ...
@@ -256,6 +255,10 @@ def create_report(report: EggRoomReportCreate, db: Session = Depends(get_db), cu
 
 @router.put("/{report_date}")
 def update_report(report_date: str, report: EggRoomReportUpdate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user), tenant_id: str = Depends(get_tenant_id)):
+    """
+    Update an egg room report. Only fields provided in the request will be updated.
+    Fields not provided will retain their existing values.
+    """
     try:
         requested_date = datetime.strptime(report_date, "%Y-%m-%d").date()
         system_start_date = get_system_start_date(db, tenant_id)
@@ -312,6 +315,73 @@ def update_report(report_date: str, report: EggRoomReportUpdate, db: Session = D
     except Exception as e:
         logger.error(
             f"Error updating egg room report for {report_date}: {e}\n{traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
+
+
+
+@router.patch("/{report_date}")
+def patch_report(report_date: str, report: EggRoomReportUpdate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user), tenant_id: str = Depends(get_tenant_id)):
+    """Partial update: only fields provided in the request body will be updated.
+    This avoids overwriting unspecified fields with zeros/nulls when frontend sends partial payloads.
+    """
+    try:
+        requested_date = datetime.strptime(report_date, "%Y-%m-%d").date()
+        system_start_date = get_system_start_date(db, tenant_id)
+
+        if requested_date < system_start_date:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Report date {report_date} cannot be before the system start date of {system_start_date.isoformat()}"
+            )
+        if requested_date > date.today():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot patch reports for future dates ({report_date})."
+            )
+
+        # Pass through to the same CRUD updater which already uses exclude_unset on the Pydantic model
+        updated_report = egg_crud.update_report(
+            db, report_date, report, tenant_id, get_user_identifier(current_user))
+        if not updated_report:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
+
+        # Serialize the updated report (include hybrid properties)
+        result = {
+            "report_date": updated_report.report_date.isoformat(),
+            "table_received": updated_report.table_received,
+            "table_transfer": updated_report.table_transfer,
+            "table_damage": updated_report.table_damage,
+            "table_out": updated_report.table_out,
+            "table_in": updated_report.table_in,
+            "grade_c_shed_received": updated_report.grade_c_shed_received,
+            "grade_c_room_received": updated_report.grade_c_room_received,
+            "grade_c_transfer": updated_report.grade_c_transfer,
+            "grade_c_labour": updated_report.grade_c_labour,
+            "grade_c_waste": updated_report.grade_c_waste,
+            "jumbo_received": updated_report.jumbo_received,
+            "jumbo_transfer": updated_report.jumbo_transfer,
+            "jumbo_waste": updated_report.jumbo_waste,
+            "jumbo_in": updated_report.jumbo_in,
+            "jumbo_out": updated_report.jumbo_out,
+            "created_at": updated_report.created_at.isoformat(),
+            "updated_at": updated_report.updated_at.isoformat(),
+            "table_opening": updated_report.table_opening,
+            "table_closing": updated_report.table_closing,
+            "jumbo_opening": updated_report.jumbo_opening,
+            "jumbo_closing": updated_report.jumbo_closing,
+            "grade_c_opening": updated_report.grade_c_opening,
+            "grade_c_closing": updated_report.grade_c_closing,
+        }
+        return JSONResponse(content=result)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Error patching egg room report for {report_date}: {e}\n{traceback.format_exc()}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 

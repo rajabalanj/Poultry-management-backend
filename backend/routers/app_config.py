@@ -6,6 +6,7 @@ import logging
 from database import get_db
 from schemas.app_config import AppConfigCreate, AppConfigUpdate, AppConfigOut, FinancialConfig
 from crud import app_config as crud_app_config
+from crud import egg_room_reports as crud_egg_room_reports
 from models.app_config import AppConfig as AppConfigModel
 from utils.auth_utils import get_current_user, get_user_identifier, require_group
 from utils.tenancy import get_tenant_id
@@ -37,6 +38,10 @@ def update_config(name: str, config: AppConfigUpdate, db: Session = Depends(get_
         if not updated:
             # This case should ideally not be reached if existing_config was found
             raise HTTPException(status_code=404, detail="Configuration not found during update")
+        
+        if name in ['table_opening', 'jumbo_opening', 'grade_c_opening']:
+            crud_egg_room_reports.recalculate_inventory_from_start(db, tenant_id, user_id)
+            
         return updated
     else:
         # If it does not exist, create it
@@ -50,7 +55,12 @@ def update_config(name: str, config: AppConfigUpdate, db: Session = Depends(get_
             raise HTTPException(status_code=422, detail="Field 'value' is required for creating a new configuration.")
             
         new_config = AppConfigCreate(**new_config_data)
-        return crud_app_config.create_config(db, new_config, tenant_id, user_id)
+        created = crud_app_config.create_config(db, new_config, tenant_id, user_id)
+        
+        if name in ['table_opening', 'jumbo_opening', 'grade_c_opening']:
+            crud_egg_room_reports.recalculate_inventory_from_start(db, tenant_id, user_id)
+            
+        return created
 
 @router.get("/configurations/financial", response_model=FinancialConfig)
 def get_financial_config_endpoint(db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):

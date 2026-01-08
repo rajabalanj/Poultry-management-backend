@@ -193,11 +193,13 @@ def create_sales_order(
             EggRoomReportModel.report_date == so.order_date,
             EggRoomReportModel.tenant_id == tenant_id
         ).update({
-            EggRoomReportModel.table_transfer: EggRoomReportModel.table_transfer + int(table_egg_qty),
-            EggRoomReportModel.jumbo_transfer: EggRoomReportModel.jumbo_transfer + int(jumbo_egg_qty),
-            EggRoomReportModel.grade_c_transfer: EggRoomReportModel.grade_c_transfer + int(grade_c_egg_qty)
+            EggRoomReportModel.table_transfer: func.coalesce(EggRoomReportModel.table_transfer, 0) + int(table_egg_qty),
+            EggRoomReportModel.jumbo_transfer: func.coalesce(EggRoomReportModel.jumbo_transfer, 0) + int(jumbo_egg_qty),
+            EggRoomReportModel.grade_c_transfer: func.coalesce(EggRoomReportModel.grade_c_transfer, 0) + int(grade_c_egg_qty)
         }, synchronize_session=False)
         db.commit()
+        # Refresh the egg_room_report object to get the updated values
+        db.refresh(egg_room_report)
 
     db.refresh(db_so)
     
@@ -541,9 +543,9 @@ def update_sales_order(
                     EggRoomReportModel.report_date == old_order_date,
                     EggRoomReportModel.tenant_id == tenant_id
                 ).update({
-                    EggRoomReportModel.table_transfer: EggRoomReportModel.table_transfer - int(egg_items_by_type["Table Egg"]),
-                    EggRoomReportModel.jumbo_transfer: EggRoomReportModel.jumbo_transfer - int(egg_items_by_type["Jumbo Egg"]),
-                    EggRoomReportModel.grade_c_transfer: EggRoomReportModel.grade_c_transfer - int(egg_items_by_type["Grade C Egg"])
+                    EggRoomReportModel.table_transfer: func.coalesce(EggRoomReportModel.table_transfer, 0) - int(egg_items_by_type["Table Egg"]),
+                    EggRoomReportModel.jumbo_transfer: func.coalesce(EggRoomReportModel.jumbo_transfer, 0) - int(egg_items_by_type["Jumbo Egg"]),
+                    EggRoomReportModel.grade_c_transfer: func.coalesce(EggRoomReportModel.grade_c_transfer, 0) - int(egg_items_by_type["Grade C Egg"])
                 }, synchronize_session=False)
 
             # Apply to new date report
@@ -573,9 +575,9 @@ def update_sales_order(
                 EggRoomReportModel.report_date == new_order_date,
                 EggRoomReportModel.tenant_id == tenant_id
             ).update({
-                EggRoomReportModel.table_transfer: EggRoomReportModel.table_transfer + int(egg_items_by_type["Table Egg"]),
-                EggRoomReportModel.jumbo_transfer: EggRoomReportModel.jumbo_transfer + int(egg_items_by_type["Jumbo Egg"]),
-                EggRoomReportModel.grade_c_transfer: EggRoomReportModel.grade_c_transfer + int(egg_items_by_type["Grade C Egg"])
+                EggRoomReportModel.table_transfer: func.coalesce(EggRoomReportModel.table_transfer, 0) + int(egg_items_by_type["Table Egg"]),
+                EggRoomReportModel.jumbo_transfer: func.coalesce(EggRoomReportModel.jumbo_transfer, 0) + int(egg_items_by_type["Jumbo Egg"]),
+                EggRoomReportModel.grade_c_transfer: func.coalesce(EggRoomReportModel.grade_c_transfer, 0) + int(egg_items_by_type["Grade C Egg"])
             }, synchronize_session=False)
 
     # Note: SHIPPED and CANCELLED statuses are not set anywhere in backend.
@@ -692,17 +694,17 @@ def add_item_to_sales_order(
             db.query(EggRoomReportModel).filter(
                 EggRoomReportModel.report_date == db_so.order_date,
                 EggRoomReportModel.tenant_id == tenant_id
-            ).update({EggRoomReportModel.table_transfer: EggRoomReportModel.table_transfer + int(item_request.quantity)}, synchronize_session=False)
+            ).update({EggRoomReportModel.table_transfer: func.coalesce(EggRoomReportModel.table_transfer, 0) + int(item_request.quantity)}, synchronize_session=False)
         elif inv.name == "Jumbo Egg":
             db.query(EggRoomReportModel).filter(
                 EggRoomReportModel.report_date == db_so.order_date,
                 EggRoomReportModel.tenant_id == tenant_id
-            ).update({EggRoomReportModel.jumbo_transfer: EggRoomReportModel.jumbo_transfer + int(item_request.quantity)}, synchronize_session=False)
+            ).update({EggRoomReportModel.jumbo_transfer: func.coalesce(EggRoomReportModel.jumbo_transfer, 0) + int(item_request.quantity)}, synchronize_session=False)
         elif inv.name == "Grade C Egg":
             db.query(EggRoomReportModel).filter(
                 EggRoomReportModel.report_date == db_so.order_date,
                 EggRoomReportModel.tenant_id == tenant_id
-            ).update({EggRoomReportModel.grade_c_transfer: EggRoomReportModel.grade_c_transfer + int(item_request.quantity)}, synchronize_session=False)
+            ).update({EggRoomReportModel.grade_c_transfer: func.coalesce(EggRoomReportModel.grade_c_transfer, 0) + int(item_request.quantity)}, synchronize_session=False)
     else:
         old_stock = inv.current_stock or 0
         inv.current_stock -= item_request.quantity
@@ -785,17 +787,17 @@ def update_sales_order_item(
                         db.query(EggRoomReportModel).filter(
                             EggRoomReportModel.report_date == db_so.order_date,
                             EggRoomReportModel.tenant_id == tenant_id
-                        ).update({EggRoomReportModel.table_transfer: EggRoomReportModel.table_transfer - int(item_to_update.quantity)}, synchronize_session=False)
+                        ).update({EggRoomReportModel.table_transfer: func.coalesce(EggRoomReportModel.table_transfer, 0) - int(item_to_update.quantity)}, synchronize_session=False)
                     elif old_inv_item.name == "Jumbo Egg":
                         db.query(EggRoomReportModel).filter(
                             EggRoomReportModel.report_date == db_so.order_date,
                             EggRoomReportModel.tenant_id == tenant_id
-                        ).update({EggRoomReportModel.jumbo_transfer: EggRoomReportModel.jumbo_transfer - int(item_to_update.quantity)}, synchronize_session=False)
+                        ).update({EggRoomReportModel.jumbo_transfer: func.coalesce(EggRoomReportModel.jumbo_transfer, 0) - int(item_to_update.quantity)}, synchronize_session=False)
                     elif old_inv_item.name == "Grade C Egg":
                         db.query(EggRoomReportModel).filter(
                             EggRoomReportModel.report_date == db_so.order_date,
                             EggRoomReportModel.tenant_id == tenant_id
-                        ).update({EggRoomReportModel.grade_c_transfer: EggRoomReportModel.grade_c_transfer - int(item_to_update.quantity)}, synchronize_session=False)
+                        ).update({EggRoomReportModel.grade_c_transfer: func.coalesce(EggRoomReportModel.grade_c_transfer, 0) - int(item_to_update.quantity)}, synchronize_session=False)
             else:
                 old_stock = old_inv_item.current_stock or 0
                 logger.info(f"[ITEM CHANGE] Old item is not an egg. Restoring stock for '{old_inv_item.name}'. Old stock: {old_stock}, Quantity to restore: {item_to_update.quantity}")
@@ -850,17 +852,17 @@ def update_sales_order_item(
                     db.query(EggRoomReportModel).filter(
                         EggRoomReportModel.report_date == db_so.order_date,
                         EggRoomReportModel.tenant_id == tenant_id
-                    ).update({EggRoomReportModel.table_transfer: EggRoomReportModel.table_transfer + int(new_quantity)}, synchronize_session=False)
+                    ).update({EggRoomReportModel.table_transfer: func.coalesce(EggRoomReportModel.table_transfer, 0) + int(new_quantity)}, synchronize_session=False)
                 elif new_inv_item.name == "Jumbo Egg":
                     db.query(EggRoomReportModel).filter(
                         EggRoomReportModel.report_date == db_so.order_date,
                         EggRoomReportModel.tenant_id == tenant_id
-                    ).update({EggRoomReportModel.jumbo_transfer: EggRoomReportModel.jumbo_transfer + int(new_quantity)}, synchronize_session=False)
+                    ).update({EggRoomReportModel.jumbo_transfer: func.coalesce(EggRoomReportModel.jumbo_transfer, 0) + int(new_quantity)}, synchronize_session=False)
                 elif new_inv_item.name == "Grade C Egg":
                     db.query(EggRoomReportModel).filter(
                         EggRoomReportModel.report_date == db_so.order_date,
                         EggRoomReportModel.tenant_id == tenant_id
-                    ).update({EggRoomReportModel.grade_c_transfer: EggRoomReportModel.grade_c_transfer + int(new_quantity)}, synchronize_session=False)
+                    ).update({EggRoomReportModel.grade_c_transfer: func.coalesce(EggRoomReportModel.grade_c_transfer, 0) + int(new_quantity)}, synchronize_session=False)
         else:
             if new_inv_item.category != 'Supplies':
                 raise HTTPException(status_code=400, detail=f"Item '{new_inv_item.name}' cannot be sold. Only items in 'Supplies' category can be sold.")
@@ -914,17 +916,17 @@ def update_sales_order_item(
                     db.query(EggRoomReportModel).filter(
                         EggRoomReportModel.report_date == db_so.order_date,
                         EggRoomReportModel.tenant_id == tenant_id
-                    ).update({EggRoomReportModel.table_transfer: EggRoomReportModel.table_transfer + int(delta)}, synchronize_session=False)
+                    ).update({EggRoomReportModel.table_transfer: func.coalesce(EggRoomReportModel.table_transfer, 0) + int(delta)}, synchronize_session=False)
                 elif inv.name == "Jumbo Egg":
                     db.query(EggRoomReportModel).filter(
                         EggRoomReportModel.report_date == db_so.order_date,
                         EggRoomReportModel.tenant_id == tenant_id
-                    ).update({EggRoomReportModel.jumbo_transfer: EggRoomReportModel.jumbo_transfer + int(delta)}, synchronize_session=False)
+                    ).update({EggRoomReportModel.jumbo_transfer: func.coalesce(EggRoomReportModel.jumbo_transfer, 0) + int(delta)}, synchronize_session=False)
                 elif inv.name == "Grade C Egg":
                     db.query(EggRoomReportModel).filter(
                         EggRoomReportModel.report_date == db_so.order_date,
                         EggRoomReportModel.tenant_id == tenant_id
-                    ).update({EggRoomReportModel.grade_c_transfer: EggRoomReportModel.grade_c_transfer + int(delta)}, synchronize_session=False)
+                    ).update({EggRoomReportModel.grade_c_transfer: func.coalesce(EggRoomReportModel.grade_c_transfer, 0) + int(delta)}, synchronize_session=False)
             else:
                 inv_with_lock = db.query(InventoryItemModel).filter(InventoryItemModel.id == inv.id, InventoryItemModel.tenant_id == tenant_id).with_for_update().first()
                 if delta > 0 and inv_with_lock.current_stock < delta:
@@ -1007,17 +1009,17 @@ def delete_sales_order_item(
                     db.query(EggRoomReportModel).filter(
                         EggRoomReportModel.report_date == db_so.order_date,
                         EggRoomReportModel.tenant_id == tenant_id
-                    ).update({EggRoomReportModel.table_transfer: EggRoomReportModel.table_transfer - int(item_to_delete.quantity)}, synchronize_session=False)
+                    ).update({EggRoomReportModel.table_transfer: func.coalesce(EggRoomReportModel.table_transfer, 0) - int(item_to_delete.quantity)}, synchronize_session=False)
                 elif inv.name == "Jumbo Egg":
                     db.query(EggRoomReportModel).filter(
                         EggRoomReportModel.report_date == db_so.order_date,
                         EggRoomReportModel.tenant_id == tenant_id
-                    ).update({EggRoomReportModel.jumbo_transfer: EggRoomReportModel.jumbo_transfer - int(item_to_delete.quantity)}, synchronize_session=False)
+                    ).update({EggRoomReportModel.jumbo_transfer: func.coalesce(EggRoomReportModel.jumbo_transfer, 0) - int(item_to_delete.quantity)}, synchronize_session=False)
                 elif inv.name == "Grade C Egg":
                     db.query(EggRoomReportModel).filter(
                         EggRoomReportModel.report_date == db_so.order_date,
                         EggRoomReportModel.tenant_id == tenant_id
-                    ).update({EggRoomReportModel.grade_c_transfer: EggRoomReportModel.grade_c_transfer - int(item_to_delete.quantity)}, synchronize_session=False)
+                    ).update({EggRoomReportModel.grade_c_transfer: func.coalesce(EggRoomReportModel.grade_c_transfer, 0) - int(item_to_delete.quantity)}, synchronize_session=False)
         else:
             # For non-egg items, restore current_stock
             old_stock = inv.current_stock or 0
@@ -1092,10 +1094,15 @@ def delete_sales_order(
         ).first()
 
         if egg_room_report:
-            egg_room_report.table_transfer -= int(table_egg_qty)
-            egg_room_report.jumbo_transfer -= int(jumbo_egg_qty)
-            egg_room_report.grade_c_transfer -= int(grade_c_egg_qty)
-            db.add(egg_room_report)
+            # Use atomic updates with COALESCE to handle NULL values
+            db.query(EggRoomReportModel).filter(
+                EggRoomReportModel.report_date == db_so.order_date,
+                EggRoomReportModel.tenant_id == tenant_id
+            ).update({
+                EggRoomReportModel.table_transfer: func.coalesce(EggRoomReportModel.table_transfer, 0) - int(table_egg_qty),
+                EggRoomReportModel.jumbo_transfer: func.coalesce(EggRoomReportModel.jumbo_transfer, 0) - int(jumbo_egg_qty),
+                EggRoomReportModel.grade_c_transfer: func.coalesce(EggRoomReportModel.grade_c_transfer, 0) - int(grade_c_egg_qty)
+            }, synchronize_session=False)
 
     # Restore inventory for items on the deleted sales order
     for item in db_so.items:
