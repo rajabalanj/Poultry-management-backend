@@ -30,21 +30,39 @@ def get_reports_by_date_range(db: Session, start_date: str, end_date: str, tenan
 
 
 def create_report(db: Session, report: EggRoomReportCreate, tenant_id: str, user_id: str) -> EggRoomReport:
+    from models.app_config import AppConfig
+    from datetime import datetime, date
+    
+    # Get system start date
+    start_date_config = db.query(AppConfig).filter(
+        AppConfig.name == 'system_start_date', 
+        AppConfig.tenant_id == tenant_id
+    ).first()
+    
+    system_start_date = date(2000, 1, 1)  # Default fallback
+    if start_date_config:
+        try:
+            system_start_date = datetime.strptime(start_date_config.value, "%Y-%m-%d").date()
+        except ValueError:
+            pass  # Use default if invalid format
+    
     # Calculate opening balances from previous day's closing
+    # Only consider reports on/after system start date
     prev_report = db.query(EggRoomReport).filter(
         EggRoomReport.report_date < report.report_date,
+        EggRoomReport.report_date >= system_start_date,
         EggRoomReport.tenant_id == tenant_id
     ).order_by(EggRoomReport.report_date.desc()).first()
 
-    # If previous report exists, use its closing values as opening
+    # If previous report exists (on/after system start date), use its closing values as opening
     if prev_report:
         opening_values = {
             'table_opening': prev_report.table_closing,
             'jumbo_opening': prev_report.jumbo_closing,
             'grade_c_opening': prev_report.grade_c_closing
         }
-    # If no previous report exists, get opening values from app_config
-    else:
+    # If no valid previous report AND this is the system start date, use app_config
+    elif report.report_date == system_start_date:
         table_opening_config = crud_app_config.get_config(db, tenant_id, name="table_opening")
         jumbo_opening_config = crud_app_config.get_config(db, tenant_id, name="jumbo_opening")
         grade_c_opening_config = crud_app_config.get_config(db, tenant_id, name="grade_c_opening")
@@ -53,6 +71,15 @@ def create_report(db: Session, report: EggRoomReportCreate, tenant_id: str, user
             'table_opening': int(table_opening_config.value) if table_opening_config else 0,
             'jumbo_opening': int(jumbo_opening_config.value) if jumbo_opening_config else 0,
             'grade_c_opening': int(grade_c_opening_config.value) if grade_c_opening_config else 0
+        }
+    # This is a fallback case. It triggers if a report is created for a date after the
+    # system_start_date, but without a preceding report (i.e., a gap in the daily reports).
+    # In this unexpected scenario, we default the opening balances to 0 to prevent errors.
+    else:
+        opening_values = {
+            'table_opening': 0,
+            'jumbo_opening': 0,
+            'grade_c_opening': 0
         }
 
     # Calculate sums from daily_batch
@@ -104,7 +131,11 @@ def update_report(db: Session, report_date: str, report: EggRoomReportUpdate, te
     jumbo_received = daily_batch_sums.jumbo_received or 0
     grade_c_shed_received = daily_batch_sums.grade_c_shed_received or 0
 
+    # Use exclude_unset=True to only include fields that were explicitly set in the request
     report_data = report.dict(exclude_unset=True)
+
+    # For debugging purposes
+    print(f"Received update data: {report_data}")
 
     # Retrieve EGG_STOCK_TOLERANCE from app_config
     # This allows for a configurable buffer for egg stock, acknowledging in-house production.
@@ -143,29 +174,12 @@ def update_report(db: Session, report_date: str, report: EggRoomReportUpdate, te
     if grade_c_consumption > (grade_c_inflow + egg_stock_tolerance):
         raise ValueError(f"Insufficient stock for Grade C Egg. Available: {grade_c_inflow}, Requested: {grade_c_consumption}. (Tolerance: {egg_stock_tolerance})")
 
-    # Compute resulting closings and ensure none become negative
-    table_closing_calc = table_inflow - table_consumption
-    jumbo_closing_calc = jumbo_inflow - jumbo_consumption
-    grade_c_closing_calc = grade_c_inflow - grade_c_consumption
-
-    negative_closings = []
-    if table_closing_calc < 0:
-        negative_closings.append(("Table Egg", table_inflow, table_consumption, table_closing_calc))
-    if jumbo_closing_calc < 0:
-        negative_closings.append(("Jumbo Egg", jumbo_inflow, jumbo_consumption, jumbo_closing_calc))
-    if grade_c_closing_calc < 0:
-        negative_closings.append(("Grade C Egg", grade_c_inflow, grade_c_consumption, grade_c_closing_calc))
-
-    if negative_closings:
-        # Build a concise error message listing all negative closings
-        parts = []
-        for name, inflow, consumption, closing in negative_closings:
-            parts.append(f"{name} would be negative: inflow={inflow}, consumption={consumption}, closing={closing}")
-        raise ValueError("Invalid update - negative closing(s): " + "; ".join(parts))
-
-    # Apply updates to the db_report
+    # Apply updates to the db_report - only update fields that were provided in the request
     for key, value in report_data.items():
-        setattr(db_report, key, value)
+        # Only update if the field was actually provided in the request
+        if key in report_data:
+            setattr(db_report, key, value)
+            print(f"Updated {key} to {value}")  # Debug line
 
     # Update received and computed closing fields
     db_report.table_received = table_received
@@ -185,6 +199,27 @@ def update_report(db: Session, report_date: str, report: EggRoomReportUpdate, te
         new_values=new_values
     )
     create_audit_log(db=db, log_entry=log_entry)
+
+    # Propagate changes to subsequent days
+    subsequent_reports = db.query(EggRoomReport).filter(
+        EggRoomReport.tenant_id == tenant_id,
+        EggRoomReport.report_date > db_report.report_date
+    ).order_by(EggRoomReport.report_date.asc()).all()
+
+    prev_report = db_report
+    for sub_report in subsequent_reports:
+        if (sub_report.table_opening != prev_report.table_closing or
+            sub_report.jumbo_opening != prev_report.jumbo_closing or
+            sub_report.grade_c_opening != prev_report.grade_c_closing):
+            
+            sub_report.table_opening = prev_report.table_closing
+            sub_report.jumbo_opening = prev_report.jumbo_closing
+            sub_report.grade_c_opening = prev_report.grade_c_closing
+            
+            sub_report.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
+            sub_report.updated_by = user_id
+        
+        prev_report = sub_report
 
     db.commit()
     db.refresh(db_report)
@@ -220,3 +255,87 @@ def delete_report(db: Session, report_date: str, tenant_id: str, user_id: str):
         pass
 
     return {"message": "Report deleted"}
+
+def recalculate_inventory_from_start(db: Session, tenant_id: str, user_id: str):
+    """
+    Recalculates opening balances for all reports starting from system_start_date
+    based on the values in app_config.
+    """
+    # 1. Get system start date
+    start_date_config = crud_app_config.get_config(db, tenant_id, name='system_start_date')
+    if not start_date_config:
+        return 
+    
+    try:
+        system_start_date = datetime.strptime(start_date_config.value, "%Y-%m-%d").date()
+    except ValueError:
+        return
+
+    # 2. Get initial opening balances from config
+    table_conf = crud_app_config.get_config(db, tenant_id, name='table_opening')
+    jumbo_conf = crud_app_config.get_config(db, tenant_id, name='jumbo_opening')
+    grade_c_conf = crud_app_config.get_config(db, tenant_id, name='grade_c_opening')
+
+    initial_table = int(table_conf.value) if table_conf else 0
+    initial_jumbo = int(jumbo_conf.value) if jumbo_conf else 0
+    initial_grade_c = int(grade_c_conf.value) if grade_c_conf else 0
+
+    # Check if report exists for system_start_date, if not create it
+    start_report = db.query(EggRoomReport).filter(
+        EggRoomReport.report_date == system_start_date,
+        EggRoomReport.tenant_id == tenant_id
+    ).first()
+
+    if not start_report:
+        # Calculate sums from daily_batch
+        daily_batch_sums = db.query(
+            func.sum(DailyBatch.table_eggs).label("table_received"),
+            func.sum(DailyBatch.jumbo).label("jumbo_received"),
+            func.sum(DailyBatch.cr).label("grade_c_shed_received")
+        ).filter(
+            DailyBatch.batch_date == system_start_date,
+            DailyBatch.tenant_id == tenant_id
+        ).first()
+
+        new_report = EggRoomReport(
+            report_date=system_start_date,
+            tenant_id=tenant_id,
+            table_opening=initial_table,
+            jumbo_opening=initial_jumbo,
+            grade_c_opening=initial_grade_c,
+            table_received=daily_batch_sums.table_received or 0,
+            jumbo_received=daily_batch_sums.jumbo_received or 0,
+            grade_c_shed_received=daily_batch_sums.grade_c_shed_received or 0,
+            created_by=user_id,
+            updated_by=user_id
+        )
+        db.add(new_report)
+        db.commit()
+
+    # 3. Fetch all reports from system_start_date onwards
+    reports = db.query(EggRoomReport).filter(
+        EggRoomReport.tenant_id == tenant_id,
+        EggRoomReport.report_date >= system_start_date
+    ).order_by(EggRoomReport.report_date.asc()).all()
+
+    # 4. Iterate and update
+    prev_report = None
+    
+    for report in reports:
+        if report.report_date == system_start_date:
+            # This is the first report, set opening from config
+            report.table_opening = initial_table
+            report.jumbo_opening = initial_jumbo
+            report.grade_c_opening = initial_grade_c
+        elif prev_report:
+            # Subsequent reports, set opening from prev closing
+            # Note: accessing prev_report.table_closing computes it based on the *current* state of prev_report in the session
+            report.table_opening = prev_report.table_closing
+            report.jumbo_opening = prev_report.jumbo_closing
+            report.grade_c_opening = prev_report.grade_c_closing
+        
+        report.updated_by = user_id
+        report.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
+        prev_report = report
+
+    db.commit()
