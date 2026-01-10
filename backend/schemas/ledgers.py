@@ -25,6 +25,7 @@ class GeneralLedger(BaseModel):
 class PurchaseLedgerEntry(BaseModel):
     date: date
     vendor_name: str
+    po_id: Optional[int] = None
     invoice_number: str
     description: Optional[str] = None
     amount: float
@@ -41,6 +42,7 @@ class PurchaseLedger(BaseModel):
 class SalesLedgerEntry(BaseModel):
     date: date
     customer_name: str
+    so_id: Optional[int] = None
     invoice_number: str
     description: Optional[str] = None
     amount: float

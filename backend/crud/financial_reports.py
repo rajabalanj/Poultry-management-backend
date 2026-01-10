@@ -227,6 +227,7 @@ def get_purchase_ledger(db: Session, vendor_id: int, tenant_id: str) -> Purchase
         entries.append(PurchaseLedgerEntry(
             date=po.order_date,
             vendor_name=vendor.name,
+            po_id=po.id,
             invoice_number=f"PO-{po.po_number}",
             description=po.notes,
             amount=float(po.total_amount),
@@ -257,6 +258,7 @@ def get_sales_ledger(db: Session, customer_id: int, tenant_id: str) -> SalesLedg
         entries.append(SalesLedgerEntry(
             date=so.order_date,
             customer_name=customer.name,
+            so_id=so.id,
             invoice_number=f"SO-{so.so_number}",
             description=so.notes,
             amount=float(so.total_amount),
