@@ -1,7 +1,8 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, computed_field
 from typing import Optional
 from decimal import Decimal
 from datetime import datetime
+from utils.formatting import format_indian_currency, amount_to_words
 
 class InventoryItemBase(BaseModel):
     name: str
@@ -32,6 +33,14 @@ class InventoryItem(InventoryItemBase):
     average_cost: Decimal # Included in response
     created_at: datetime
     updated_at: Optional[datetime] = None
+
+    @computed_field
+    def average_cost_str(self) -> str:
+        return format_indian_currency(self.average_cost)
+
+    @computed_field
+    def average_cost_words(self) -> str:
+        return amount_to_words(self.average_cost)
 
     class Config:
         from_attributes = True

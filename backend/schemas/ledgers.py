@@ -1,6 +1,7 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, computed_field
 from datetime import date
 from typing import List, Optional
+from utils.formatting import format_indian_currency, amount_to_words
 
 # General Ledger
 class GeneralLedgerEntry(BaseModel):
@@ -15,11 +16,51 @@ class GeneralLedgerEntry(BaseModel):
     credit: float = 0.0
     balance: float
 
+    @computed_field
+    def debit_str(self) -> str:
+        return format_indian_currency(self.debit)
+
+    @computed_field
+    def debit_words(self) -> str:
+        return amount_to_words(self.debit)
+
+    @computed_field
+    def credit_str(self) -> str:
+        return format_indian_currency(self.credit)
+
+    @computed_field
+    def credit_words(self) -> str:
+        return amount_to_words(self.credit)
+
+    @computed_field
+    def balance_str(self) -> str:
+        return format_indian_currency(self.balance)
+
+    @computed_field
+    def balance_words(self) -> str:
+        return amount_to_words(self.balance)
+
 class GeneralLedger(BaseModel):
     title: str
     opening_balance: float
     entries: List[GeneralLedgerEntry]
     closing_balance: float
+
+    @computed_field
+    def opening_balance_str(self) -> str:
+        return format_indian_currency(self.opening_balance)
+
+    @computed_field
+    def opening_balance_words(self) -> str:
+        return amount_to_words(self.opening_balance)
+
+    @computed_field
+    def closing_balance_str(self) -> str:
+        return format_indian_currency(self.closing_balance)
+
+    @computed_field
+    def closing_balance_words(self) -> str:
+        return amount_to_words(self.closing_balance)
 
 # Subsidiary Ledger - Purchases
 class PurchaseLedgerEntry(BaseModel):
@@ -32,6 +73,30 @@ class PurchaseLedgerEntry(BaseModel):
     amount_paid: float
     balance_amount: float
     payment_status: str
+
+    @computed_field
+    def amount_str(self) -> str:
+        return format_indian_currency(self.amount)
+
+    @computed_field
+    def amount_words(self) -> str:
+        return amount_to_words(self.amount)
+
+    @computed_field
+    def amount_paid_str(self) -> str:
+        return format_indian_currency(self.amount_paid)
+
+    @computed_field
+    def amount_paid_words(self) -> str:
+        return amount_to_words(self.amount_paid)
+
+    @computed_field
+    def balance_amount_str(self) -> str:
+        return format_indian_currency(self.balance_amount)
+
+    @computed_field
+    def balance_amount_words(self) -> str:
+        return amount_to_words(self.balance_amount)
 
 class PurchaseLedger(BaseModel):
     title: str
@@ -50,6 +115,30 @@ class SalesLedgerEntry(BaseModel):
     balance_amount: float
     payment_status: str
 
+    @computed_field
+    def amount_str(self) -> str:
+        return format_indian_currency(self.amount)
+
+    @computed_field
+    def amount_words(self) -> str:
+        return amount_to_words(self.amount)
+
+    @computed_field
+    def amount_paid_str(self) -> str:
+        return format_indian_currency(self.amount_paid)
+
+    @computed_field
+    def amount_paid_words(self) -> str:
+        return amount_to_words(self.amount_paid)
+
+    @computed_field
+    def balance_amount_str(self) -> str:
+        return format_indian_currency(self.balance_amount)
+
+    @computed_field
+    def balance_amount_words(self) -> str:
+        return amount_to_words(self.balance_amount)
+
 class SalesLedger(BaseModel):
     title: str
     customer_id: int
@@ -64,6 +153,22 @@ class InventoryLedgerEntry(BaseModel):
     total_cost: Optional[float] = None
     quantity_sold: Optional[float] = None
     quantity_on_hand: float
+
+    @computed_field
+    def unit_cost_str(self) -> str:
+        return format_indian_currency(self.unit_cost)
+
+    @computed_field
+    def unit_cost_words(self) -> str:
+        return amount_to_words(self.unit_cost)
+
+    @computed_field
+    def total_cost_str(self) -> str:
+        return format_indian_currency(self.total_cost)
+
+    @computed_field
+    def total_cost_words(self) -> str:
+        return amount_to_words(self.total_cost)
 
 class InventoryLedger(BaseModel):
     title: str
