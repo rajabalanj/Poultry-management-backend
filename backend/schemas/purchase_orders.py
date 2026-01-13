@@ -1,9 +1,10 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, computed_field
 from typing import Optional, List
 from datetime import date, datetime
 from decimal import Decimal
 from models.purchase_orders import PurchaseOrderStatus # Import the enum
 from schemas.purchase_order_items import PurchaseOrderItemCreateRequest
+from utils.formatting import format_indian_currency, amount_to_words
 
 # Forward declaration for recursive models
 class PurchaseOrderItem(BaseModel): # Defined below properly, but needed for List type hint
@@ -13,6 +14,22 @@ class PurchaseOrderItem(BaseModel): # Defined below properly, but needed for Lis
     price_per_unit: Decimal
     line_total: Decimal
     tenant_id: Optional[str] = None
+
+    @computed_field
+    def price_per_unit_str(self) -> str:
+        return format_indian_currency(self.price_per_unit)
+
+    @computed_field
+    def price_per_unit_words(self) -> str:
+        return amount_to_words(self.price_per_unit)
+
+    @computed_field
+    def line_total_str(self) -> str:
+        return format_indian_currency(self.line_total)
+
+    @computed_field
+    def line_total_words(self) -> str:
+        return amount_to_words(self.line_total)
 
     class Config:
         from_attributes = True
@@ -26,6 +43,14 @@ class Payment(BaseModel): # Defined below properly, but needed for List type hin
     notes: Optional[str] = None
     payment_receipt: Optional[str] = None
     tenant_id: Optional[str] = None
+
+    @computed_field
+    def amount_paid_str(self) -> str:
+        return format_indian_currency(self.amount_paid)
+
+    @computed_field
+    def amount_paid_words(self) -> str:
+        return amount_to_words(self.amount_paid)
 
     class Config:
         from_attributes = True
@@ -67,7 +92,21 @@ class PurchaseOrder(PurchaseOrderBase):
     items: List['PurchaseOrderItem'] = []
     payments: List['Payment'] = []
 
+    @computed_field
+    def total_amount_str(self) -> str:
+        return format_indian_currency(self.total_amount)
 
+    @computed_field
+    def total_amount_words(self) -> str:
+        return amount_to_words(self.total_amount)
+
+    @computed_field
+    def total_amount_paid_str(self) -> str:
+        return format_indian_currency(self.total_amount_paid)
+
+    @computed_field
+    def total_amount_paid_words(self) -> str:
+        return amount_to_words(self.total_amount_paid)
 
     class Config:
         from_attributes = True

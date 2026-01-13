@@ -1,7 +1,8 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, computed_field
 from typing import Optional
 from datetime import date, datetime
 from decimal import Decimal
+from utils.formatting import format_indian_currency, amount_to_words
 
 class SalesPaymentBase(BaseModel):
     sales_order_id: int
@@ -30,6 +31,14 @@ class SalesPayment(SalesPaymentBase):
     tenant_id: Optional[str] = None
     created_by: Optional[str] = None
     updated_by: Optional[str] = None
+
+    @computed_field
+    def amount_paid_str(self) -> str:
+        return format_indian_currency(self.amount_paid)
+
+    @computed_field
+    def amount_paid_words(self) -> str:
+        return amount_to_words(self.amount_paid)
 
     class Config:
         from_attributes = True

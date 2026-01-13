@@ -1,10 +1,11 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, computed_field
 from typing import Optional, List
 from datetime import date, datetime
 from decimal import Decimal
 from models.sales_orders import SalesOrderStatus
 from schemas.sales_order_items import SalesOrderItemCreateRequest
 from schemas.sales_payments import SalesPayment as SalesPaymentSchema
+from utils.formatting import format_indian_currency, amount_to_words
 
 
 class SalesOrderItem(BaseModel):
@@ -16,6 +17,22 @@ class SalesOrderItem(BaseModel):
     tenant_id: Optional[str] = None
     variant_id: Optional[int] = None
     variant_name: Optional[str] = None
+
+    @computed_field
+    def price_per_unit_str(self) -> str:
+        return format_indian_currency(self.price_per_unit)
+
+    @computed_field
+    def price_per_unit_words(self) -> str:
+        return amount_to_words(self.price_per_unit)
+
+    @computed_field
+    def line_total_str(self) -> str:
+        return format_indian_currency(self.line_total)
+
+    @computed_field
+    def line_total_words(self) -> str:
+        return amount_to_words(self.line_total)
 
     class Config:
         from_attributes = True
@@ -52,6 +69,22 @@ class SalesOrder(SalesOrderBase):
     items: List['SalesOrderItem'] = []
     payments: List[SalesPaymentSchema] = []
     bill_no: Optional[str] = None
+
+    @computed_field
+    def total_amount_str(self) -> str:
+        return format_indian_currency(self.total_amount)
+
+    @computed_field
+    def total_amount_words(self) -> str:
+        return amount_to_words(self.total_amount)
+
+    @computed_field
+    def total_amount_paid_str(self) -> str:
+        return format_indian_currency(self.total_amount_paid)
+
+    @computed_field
+    def total_amount_paid_words(self) -> str:
+        return amount_to_words(self.total_amount_paid)
 
     class Config:
         from_attributes = True
