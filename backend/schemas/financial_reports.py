@@ -108,4 +108,50 @@ class CurrentLiabilities(BaseModel):
     def accounts_payable_words(self) -> str:
         return amount_to_words(self.accounts_payable)
 
+class FinancialSummary(BaseModel):
+    eggs_produced: int
+    eggs_sold: int
+    cost_per_egg: Decimal
+    selling_price_per_egg: Decimal
+    net_margin_per_egg: Decimal
+    cash_balance: Decimal
+    receivables: Decimal
+    payables: Decimal
+
+    @computed_field
+    def cost_per_egg_str(self) -> str:
+        return format_indian_currency(self.cost_per_egg)
+
+    @computed_field
+    def selling_price_per_egg_str(self) -> str:
+        return format_indian_currency(self.selling_price_per_egg)
+
+    @computed_field
+    def net_margin_per_egg_str(self) -> str:
+        return format_indian_currency(self.net_margin_per_egg)
+
+    @computed_field
+    def cash_balance_str(self) -> str:
+        return format_indian_currency(self.cash_balance)
+    
+    @computed_field
+    def cash_balance_words(self) -> str:
+        return amount_to_words(self.cash_balance)
+
+    @computed_field
+    def receivables_str(self) -> str:
+        return format_indian_currency(self.receivables)
+
+    @computed_field
+    def receivables_words(self) -> str:
+        return amount_to_words(self.receivables)
+
+    @computed_field
+    def payables_str(self) -> str:
+        return format_indian_currency(self.payables)
+
+    @computed_field
+    def payables_words(self) -> str:
+        return amount_to_words(self.payables)
+
 BalanceSheet.model_rebuild()
