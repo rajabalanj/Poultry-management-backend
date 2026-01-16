@@ -37,7 +37,6 @@ __pycache__/
 *.py[cod]
 *.py[cod]e
 
-tasks/
 backend/uploads/payment_receipts/
 backend/uploads/sales_payment_receipts
 backend/uploads/sales_receipts/
