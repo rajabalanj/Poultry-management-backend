@@ -116,6 +116,7 @@ def upload_weekly_report_excel(
                 
                 mortality = int(row[2]) if pd.notna(row[2]) else 0
                 culls = int(row[3]) if pd.notna(row[3]) else 0
+                birds_added = 0  # Default value as birds_added is not supported in Excel upload
                 table_eggs = int(row[5]) if pd.notna(row[5]) else 0
                 jumbo_eggs = int(row[6]) if pd.notna(row[6]) else 0
                 cr_eggs = int(row[7]) if pd.notna(row[7]) else 0
@@ -143,7 +144,7 @@ def upload_weekly_report_excel(
                 else:
                     opening_count = batch_obj.opening_count
             
-            current_closing_count = opening_count - (mortality + culls)
+            current_closing_count = opening_count + birds_added - (mortality + culls)
             previous_closing_count = current_closing_count
 
             assignment = db.query(BatchShedAssignment).filter(
@@ -167,6 +168,7 @@ def upload_weekly_report_excel(
                 opening_count=opening_count,
                 mortality=mortality,
                 culls=culls,
+                birds_added=birds_added,
                 table_eggs=table_eggs,
                 jumbo=jumbo_eggs,
                 cr=cr_eggs,
@@ -536,6 +538,8 @@ def update_daily_batch(
         daily_batch.mortality = payload["mortality"]
     if "culls" in payload:
         daily_batch.culls = payload["culls"]
+    if "birds_added" in payload:
+        daily_batch.birds_added = payload["birds_added"]
     if "opening_count" in payload:
         daily_batch.opening_count = payload["opening_count"]
 
@@ -545,13 +549,13 @@ def update_daily_batch(
             setattr(daily_batch, key, payload[key])
 
     # Update other allowed fields dynamically
-    excluded_fields = {"shed_id", "age", "mortality", "culls", "opening_count", "table_eggs", "cr", "jumbo", "closing_count", "total_eggs", "hd", "standard_hen_day_percentage"}
+    excluded_fields = {"shed_id", "age", "mortality", "culls", "birds_added", "opening_count", "table_eggs", "cr", "jumbo", "closing_count", "total_eggs", "hd", "standard_hen_day_percentage"}
     for key, value in payload.items():
         if key not in excluded_fields and hasattr(daily_batch, key):
             setattr(daily_batch, key, value)
 
     # Propagation logic for subsequent daily_batch rows
-    if any(key in payload for key in ["age", "mortality", "culls", "opening_count"]):
+    if any(key in payload for key in ["age", "mortality", "culls", "birds_added", "opening_count"]):
         subsequent_rows = db.query(DailyBatchModel).filter(
             DailyBatchModel.batch_id == batch_id,
             DailyBatchModel.batch_date > daily_batch.batch_date,
@@ -663,13 +667,25 @@ def create_or_get_daily_batches(
             # Use existing daily batch
             daily = existing_daily_batches_map[batch.id]
             d = {c.name: getattr(daily, c.name) for c in daily.__table__.columns}
-            d['closing_count'] = daily.closing_count
-            d['hd'] = daily.hd
-            d['total_eggs'] = daily.total_eggs
-            d['batch_type'] = daily.batch_type
-            d['standard_hen_day_percentage'] = daily.standard_hen_day_percentage
-            d['feed_in_kg'] = daily.feed_in_kg
-            d['standard_feed_in_kg'] = daily.standard_feed_in_kg * daily.opening_count if daily.standard_feed_in_kg and daily.opening_count else 0
+            # Calculate hybrid properties using instance values
+            d['closing_count'] = (daily.opening_count or 0) + (daily.birds_added or 0) - ((daily.mortality or 0) + (daily.culls or 0))
+            d['total_eggs'] = (daily.table_eggs or 0) + (daily.jumbo or 0) + (daily.cr or 0)
+            d['hd'] = d['total_eggs'] / d['closing_count'] if d['closing_count'] > 0 else 0
+            # Calculate batch_type
+            try:
+                age_float = float(daily.age)
+                if age_float < 8:
+                    d['batch_type'] = 'Chick'
+                elif age_float <= 17:
+                    d['batch_type'] = 'Grower'
+                else:
+                    d['batch_type'] = 'Layer'
+            except (ValueError, TypeError):
+                d['batch_type'] = None
+            # For other hybrid properties that need database queries, we'll handle them separately
+            d['standard_hen_day_percentage'] = None
+            d['feed_in_kg'] = None
+            d['standard_feed_in_kg'] = 0
             d['is_active'] = batch.is_active
             result_list.append(d)
         else:
@@ -731,6 +747,7 @@ def create_or_get_daily_batches(
                     opening_count=opening_count,
                     mortality=0,
                     culls=0,
+                    birds_added=0,
                     table_eggs=0,
                     jumbo=0,
                     cr=0,
@@ -765,13 +782,25 @@ def create_or_get_daily_batches(
 
 
             d = {c.name: getattr(db_daily, c.name) for c in db_daily.__table__.columns}
-            d['closing_count'] = db_daily.closing_count
-            d['hd'] = db_daily.hd
-            d['total_eggs'] = db_daily.total_eggs
-            d['batch_type'] = db_daily.batch_type
-            d['standard_hen_day_percentage'] = db_daily.standard_hen_day_percentage
-            d['feed_in_kg'] = db_daily.feed_in_kg
-            d['standard_feed_in_kg'] = db_daily.standard_feed_in_kg * db_daily.opening_count if db_daily.standard_feed_in_kg and db_daily.opening_count else 0
+            # Calculate hybrid properties using instance values
+            d['closing_count'] = (db_daily.opening_count or 0) + (db_daily.birds_added or 0) - ((db_daily.mortality or 0) + (db_daily.culls or 0))
+            d['total_eggs'] = (db_daily.table_eggs or 0) + (db_daily.jumbo or 0) + (db_daily.cr or 0)
+            d['hd'] = d['total_eggs'] / d['closing_count'] if d['closing_count'] > 0 else 0
+            # Calculate batch_type
+            try:
+                age_float = float(db_daily.age)
+                if age_float < 8:
+                    d['batch_type'] = 'Chick'
+                elif age_float <= 17:
+                    d['batch_type'] = 'Grower'
+                else:
+                    d['batch_type'] = 'Layer'
+            except (ValueError, TypeError):
+                d['batch_type'] = None
+            # For other hybrid properties that need database queries, we'll handle them separately
+            d['standard_hen_day_percentage'] = None
+            d['feed_in_kg'] = None
+            d['standard_feed_in_kg'] = 0
             d['is_active'] = batch.is_active
             result_list.append(d)
 

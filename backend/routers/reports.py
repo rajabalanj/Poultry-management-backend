@@ -202,6 +202,7 @@ def _calculate_summary(batches: list[DailyBatch], query_start_date: date, query_
 
     summary_opening_count = 0
     summary_closing_count = 0
+    summary_birds_added = 0
 
     # Import is now at the top of the file
 
@@ -213,17 +214,15 @@ def _calculate_summary(batches: list[DailyBatch], query_start_date: date, query_
         # The 'batches' list is already sorted by date.
         summary_opening_count = batches[0].opening_count
         summary_closing_count = batches[-1].closing_count
+        summary_birds_added = sum(b.birds_added for b in batches if b.birds_added is not None)
     else:
         # For multiple batches (consolidation), sum the opening count of the first day and closing count of the last day for each batch.
-
-        summary_opening_count = 0
-        summary_closing_count = 0
-
         for _, group in grouped_batches:
             batch_records = list(group)
             if batch_records:
                 summary_opening_count += batch_records[0].opening_count
                 summary_closing_count += batch_records[-1].closing_count
+                summary_birds_added += sum(b.birds_added for b in batch_records if b.birds_added is not None)
 
     # Calculate highest age across all batches and all dates in the provided list
     highest_age = 0.0
@@ -278,6 +277,7 @@ def _calculate_summary(batches: list[DailyBatch], query_start_date: date, query_
         "hd": round(avg_hd, 4),
         "standard_hen_day_percentage": round(avg_standard_hd, 4),
         "highest_age": round(highest_age, 1),
+        "birds_added": summary_birds_added
     }
 
 
@@ -373,6 +373,7 @@ def get_weekly_layer_report(
             "actual_feed_consumed": actual_feed_consumed,
             "standard_feed_consumption": standard_feed_consumption,
             "is_active": batch.batch.is_active,
+            "birds_added": batch.birds_added,
         })
     
     # Calculate cumulative report
@@ -441,6 +442,7 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
                 "hd": batch.hd,
                 "standard_hen_day_percentage": float(batch.standard_hen_day_percentage) if batch.standard_hen_day_percentage is not None else None,
                 "is_active": batch_obj.is_active,
+                "birds_added": batch.birds_added,
             })
 
     else:
@@ -547,6 +549,8 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
                 except (ValueError, TypeError):
                     continue
 
+            total_birds_added = sum(r.birds_added or 0 for r in rows)
+            
             detailed_result.append({
                 "batch_id": batch_id,
                 "batch_no": first.batch_no,
@@ -564,6 +568,7 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
                 "highest_age": round(highest_age, 1),
                 "batch_type": last.batch_type,
                 "is_active": first.batch.is_active,
+                "birds_added": total_birds_added,
             })
         # import pdb; pdb.set_trace()
 
@@ -584,6 +589,7 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
                 "hd": round(avg_hd, 4),
                 "standard_hen_day_percentage": round(avg_std_hd, 4),
                 "highest_age": max(r['highest_age'] for r in detailed_result),
+                "birds_added": sum(r['birds_added'] for r in detailed_result),
             }
 
     response_content = {

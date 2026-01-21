@@ -30,10 +30,11 @@ class DailyBatch(Base, TimestampMixin):
     jumbo = Column(Integer, default=0)
     cr = Column(Integer, default=0)
     notes = Column(String, nullable=True)
+    birds_added = Column(Integer, default=0)
 
     @hybrid_property
     def total_eggs(self):
-        return self.table_eggs + self.jumbo + self.cr
+        return (self.table_eggs or 0) + (self.jumbo or 0) + (self.cr or 0)
 
     @total_eggs.expression
     def total_eggs(cls):
@@ -41,22 +42,25 @@ class DailyBatch(Base, TimestampMixin):
 
     @hybrid_property
     def closing_count(self):
-        return self.opening_count - (self.mortality + self.culls)
+        return (self.opening_count or 0) + (self.birds_added or 0) - ((self.mortality or 0) + (self.culls or 0))
 
     @closing_count.expression
     def closing_count(cls):
-        return func.coalesce(cls.opening_count, 0) - (func.coalesce(cls.mortality, 0) + func.coalesce(cls.culls, 0))
+        return func.coalesce(cls.opening_count, 0) + func.coalesce(cls.birds_added, 0) - (func.coalesce(cls.mortality, 0) + func.coalesce(cls.culls, 0))
 
     @hybrid_property
     def hd(self):
-        if self.closing_count and self.closing_count > 0:
-            return self.total_eggs / self.closing_count
+        # For instance context, calculate directly using the instance values
+        closing_count = self.opening_count + (self.birds_added or 0) - ((self.mortality or 0) + (self.culls or 0))
+        if closing_count is not None and closing_count > 0:
+            total_eggs = (self.table_eggs or 0) + (self.jumbo or 0) + (self.cr or 0)
+            return total_eggs / closing_count
         return 0
 
     @hd.expression
     def hd(cls):
         return case(
-            (cls.closing_count > 0, cls.total_eggs / cls.closing_count),
+            (cls.closing_count.isnot(None) & (cls.closing_count > 0), cls.total_eggs / cls.closing_count),
             else_=0
         )
     
@@ -118,13 +122,16 @@ class DailyBatch(Base, TimestampMixin):
 
     @hybrid_property
     def standard_feed_in_kg(self):
-        if self.standard_feed_in_grams:
+        if self.standard_feed_in_grams is not None:
             return self.standard_feed_in_grams / 1000
         return None
 
     @standard_feed_in_kg.expression
     def standard_feed_in_kg(cls):
-        return cls.standard_feed_in_grams / 1000
+        return case(
+            (cls.standard_feed_in_grams.isnot(None), cls.standard_feed_in_grams / 1000),
+            else_=None
+        )
 
     @hybrid_property
     def batch_type(self):
@@ -170,4 +177,7 @@ class DailyBatch(Base, TimestampMixin):
     
     @feed_in_kg.expression
     def feed_in_kg(cls):
-        return cls.feed_in_grams / 1000
+        return case(
+            (cls.feed_in_grams.isnot(None), cls.feed_in_grams / 1000),
+            else_=0
+        )

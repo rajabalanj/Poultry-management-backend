@@ -8,6 +8,7 @@ class DailyBatchBase(BaseModel):
     opening_count: int
     mortality: int = 0
     culls: int = 0
+    birds_added: int = 0
     table_eggs: int = 0
     jumbo: int = 0
     cr: int = 0
@@ -31,7 +32,7 @@ class DailyBatchBase(BaseModel):
             raise ValueError('Opening count must be greater than or equal to 0')
         return v
 
-    @validator('mortality', 'culls', 'table_eggs', 'jumbo', 'cr')
+    @validator('mortality', 'culls', 'birds_added', 'table_eggs', 'jumbo', 'cr')
     def validate_non_negative(cls, v):
         if v < 0:
             raise ValueError('Value must be greater than or equal to 0')
@@ -39,7 +40,7 @@ class DailyBatchBase(BaseModel):
 
     @computed_field
     def closing_count(self) -> int:
-        return self.opening_count - (self.mortality + self.culls)
+        return self.opening_count + self.birds_added - (self.mortality + self.culls)
 
     @computed_field
     def total_eggs(self) -> int:
@@ -56,6 +57,7 @@ class DailyBatchCreate(DailyBatchBase):
     tenant_id: Optional[str] = None
     notes: Optional[str] = None
     standard_hen_day_percentage: Optional[float] = 0.0
+    birds_added: Optional[int] = 0
 
 class DailyBatchUpdate(DailyBatchBase):
     batch_id: int
@@ -63,6 +65,7 @@ class DailyBatchUpdate(DailyBatchBase):
     standard_hen_day_percentage: Optional[float] = 0.0
     feed_in_kg: Optional[float] = None
     standard_feed_in_kg: Optional[float] = None
+    birds_added: Optional[int] = None
     
 
     class Config:

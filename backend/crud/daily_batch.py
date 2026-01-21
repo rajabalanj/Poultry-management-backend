@@ -41,6 +41,7 @@ def create_daily_batch(db: Session, daily_batch_data: DailyBatchCreate, tenant_i
         jumbo=daily_batch_data.jumbo,
         cr=daily_batch_data.cr,
         notes=daily_batch_data.notes,
+        birds_added=daily_batch_data.birds_added,
     )
     db.add(db_daily_batch)
     db.commit()
