@@ -148,4 +148,60 @@ def get_monthly_egg_production_cost(db: Session, start_date: date, end_date: dat
     return monthly_costs
 
 
+def get_feed_consumption_per_egg(db: Session, start_date: date, end_date: date, tenant_id: str):
+    """
+    Calculates the feed consumption (in grams) required to produce one egg
+    for each month within a given date range.
+    """
+    # Get monthly egg production
+    monthly_eggs_query = db.query(
+        func.to_char(DailyBatch.batch_date, 'YYYY-MM').label('month'),
+        func.sum(DailyBatch.total_eggs).label('total_eggs')
+    ).filter(
+        DailyBatch.batch_date >= start_date,
+        DailyBatch.batch_date <= end_date,
+        DailyBatch.tenant_id == tenant_id
+    ).group_by(
+        func.to_char(DailyBatch.batch_date, 'YYYY-MM')
+    ).subquery()
+    
+    # Get monthly feed consumption
+    monthly_feed_query = db.query(
+        func.to_char(DailyBatch.batch_date, 'YYYY-MM').label('month'),
+        func.sum(DailyBatch.feed_in_grams).label('total_feed_grams')
+    ).filter(
+        DailyBatch.batch_date >= start_date,
+        DailyBatch.batch_date <= end_date,
+        DailyBatch.tenant_id == tenant_id
+    ).group_by(
+        func.to_char(DailyBatch.batch_date, 'YYYY-MM')
+    ).subquery()
+    
+    # Join the data
+    results = db.query(
+        monthly_eggs_query.c.month,
+        monthly_eggs_query.c.total_eggs,
+        func.coalesce(monthly_feed_query.c.total_feed_grams, 0).label('total_feed_grams')
+    ).outerjoin(
+        monthly_feed_query, monthly_eggs_query.c.month == monthly_feed_query.c.month
+    ).all()
+    
+    # Calculate feed consumption per egg for each month
+    monthly_feed_consumption = []
+    for month, total_eggs, total_feed_grams in results:
+        feed_per_egg = float(total_feed_grams) / total_eggs if total_eggs > 0 else 0
+        feed_per_egg_kg = feed_per_egg / 1000  # Convert to kg
+        
+        monthly_feed_consumption.append({
+            "month": month,
+            "total_eggs": total_eggs or 0,
+            "total_feed_grams": float(total_feed_grams or 0),
+            "total_feed_kg": float(total_feed_grams or 0) / 1000,
+            "feed_per_egg_grams": feed_per_egg,
+            "feed_per_egg_kg": feed_per_egg_kg
+        })
+    
+    return monthly_feed_consumption
+
+
 # You do NOT have create_multiple_daily_batches, so it's removed from this file.
