@@ -67,8 +67,14 @@ class DailyBatch(Base, TimestampMixin):
     @hybrid_property
     def standard_hen_day_percentage(self):
         session = object_session(self)
+        if not session:
+            return None
         # self.age is "weeks.days" (e.g., "18.3"). int(18.3) gives 18 completed weeks.
-        age_in_weeks = int(float(self.age))
+        try:
+            age_in_weeks = int(float(self.age))
+        except (ValueError, TypeError):
+            return None
+
         if age_in_weeks >= 100:
             lookup_age = 100
         else:
@@ -83,8 +89,8 @@ class DailyBatch(Base, TimestampMixin):
     @standard_hen_day_percentage.expression
     def standard_hen_day_percentage(cls):
         # Create a subquery to get the lay_percent based on age
-        from sqlalchemy import select, Integer, case, cast
-        age_in_weeks_expr = cast(cls.age, Integer)
+        from sqlalchemy import select, Integer, case, cast, Float
+        age_in_weeks_expr = cast(cast(cls.age, Float), Integer)
         lookup_age_expr = case((age_in_weeks_expr >= 100, 100), else_=age_in_weeks_expr + 1)
         subquery = select(BovansWhiteLayerPerformance.lay_percent).where(
             BovansWhiteLayerPerformance.age_weeks == lookup_age_expr
@@ -94,8 +100,14 @@ class DailyBatch(Base, TimestampMixin):
     @hybrid_property
     def standard_feed_in_grams(self):
         session = object_session(self)
+        if not session:
+            return None
         # self.age is "weeks.days" (e.g., "18.3"). int(18.3) gives 18 completed weeks.
-        age_in_weeks = int(float(self.age))
+        try:
+            age_in_weeks = int(float(self.age))
+        except (ValueError, TypeError):
+            return None
+
         if age_in_weeks >= 100:
             lookup_age = 100
         else:
@@ -112,8 +124,8 @@ class DailyBatch(Base, TimestampMixin):
     @standard_feed_in_grams.expression
     def standard_feed_in_grams(cls):
         # Create a subquery to get the feed_intake_per_day_g based on age
-        from sqlalchemy import select, case, cast, Integer
-        age_in_weeks_expr = cast(cls.age, Integer)
+        from sqlalchemy import select, case, cast, Integer, Float
+        age_in_weeks_expr = cast(cast(cls.age, Float), Integer)
         lookup_age_expr = case((age_in_weeks_expr >= 100, 100), else_=age_in_weeks_expr + 1)
         subquery = select(BovansWhiteLayerPerformance.feed_intake_per_day_g).where(
             BovansWhiteLayerPerformance.age_weeks == lookup_age_expr
@@ -169,6 +181,43 @@ class DailyBatch(Base, TimestampMixin):
                     total_feed_kg += Decimal(str(item_in_comp.weight)) * Decimal(usage.times)
 
         return float(total_feed_kg * 1000)
+
+    @feed_in_grams.expression
+    def feed_in_grams(cls):
+        # Import the CompositionUsageItem model
+        from models.composition_usage_item import CompositionUsageItem
+
+        # Create a subquery to calculate the feed in grams
+        from sqlalchemy import select, and_
+
+        # Subquery to get the total feed in kg for each batch/date combination
+        subquery = select(
+            CompositionUsageHistory.batch_id,
+            func.date(CompositionUsageHistory.used_at).label('batch_date'),
+            func.sum(
+                case(
+                    (CompositionUsageItem.item_category == 'Feed', CompositionUsageItem.weight * CompositionUsageHistory.times),
+                    else_=0
+                )
+            ).label('total_feed_kg')
+        ).join(
+            CompositionUsageHistory.items
+        ).group_by(
+            CompositionUsageHistory.batch_id,
+            func.date(CompositionUsageHistory.used_at)
+        ).subquery()
+
+        # Join with DailyBatch and convert to grams
+        return case(
+            (
+                and_(
+                    cls.batch_id == subquery.c.batch_id,
+                    cls.batch_date == subquery.c.batch_date
+                ),
+                subquery.c.total_feed_kg * 1000
+            ),
+            else_=0
+        )
 
 
     @hybrid_property

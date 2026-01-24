@@ -683,9 +683,9 @@ def create_or_get_daily_batches(
             except (ValueError, TypeError):
                 d['batch_type'] = None
             # For other hybrid properties that need database queries, we'll handle them separately
-            d['standard_hen_day_percentage'] = None
-            d['feed_in_kg'] = None
-            d['standard_feed_in_kg'] = 0
+            d['standard_hen_day_percentage'] = daily.standard_hen_day_percentage
+            d['feed_in_kg'] = daily.feed_in_kg
+            d['standard_feed_in_kg'] = daily.standard_feed_in_kg
             d['is_active'] = batch.is_active
             result_list.append(d)
         else:
@@ -798,9 +798,9 @@ def create_or_get_daily_batches(
             except (ValueError, TypeError):
                 d['batch_type'] = None
             # For other hybrid properties that need database queries, we'll handle them separately
-            d['standard_hen_day_percentage'] = None
-            d['feed_in_kg'] = None
-            d['standard_feed_in_kg'] = 0
+            d['standard_hen_day_percentage'] = db_daily.standard_hen_day_percentage
+            d['feed_in_kg'] = db_daily.feed_in_kg
+            d['standard_feed_in_kg'] = db_daily.standard_feed_in_kg
             d['is_active'] = batch.is_active
             result_list.append(d)
 

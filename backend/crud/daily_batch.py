@@ -189,16 +189,19 @@ def get_feed_consumption_per_egg(db: Session, start_date: date, end_date: date, 
     # Calculate feed consumption per egg for each month
     monthly_feed_consumption = []
     for month, total_eggs, total_feed_grams in results:
-        feed_per_egg = float(total_feed_grams) / total_eggs if total_eggs > 0 else 0
-        feed_per_egg_kg = feed_per_egg / 1000  # Convert to kg
+        # Extract and sanitize values once
+        t_eggs = total_eggs or 0
+        t_feed_grams = float(total_feed_grams or 0)
+        
+        feed_per_egg_grams = t_feed_grams / t_eggs if t_eggs > 0 else 0.0
         
         monthly_feed_consumption.append({
             "month": month,
-            "total_eggs": total_eggs or 0,
-            "total_feed_grams": float(total_feed_grams or 0),
-            "total_feed_kg": float(total_feed_grams or 0) / 1000,
-            "feed_per_egg_grams": feed_per_egg,
-            "feed_per_egg_kg": feed_per_egg_kg
+            "total_eggs": t_eggs,
+            "total_feed_grams": round(t_feed_grams, 3),
+            "total_feed_kg": round(t_feed_grams / 1000, 3),
+            "feed_per_egg_grams": round(feed_per_egg_grams, 3),
+            "feed_per_egg_kg": round(feed_per_egg_grams / 1000, 3)
         })
     
     return monthly_feed_consumption
