@@ -61,29 +61,32 @@ def get_profit_and_loss(db: Session, start_date: date, end_date: date, tenant_id
 def get_balance_sheet(db: Session, as_of_date: date, tenant_id: int) -> BalanceSheet:
     # 1. Calculate Assets
     # Cash
-    total_sales_payments = db.query(func.sum(sales_payments.SalesPayment.amount_paid)).filter(
-        sales_payments.SalesPayment.tenant_id == tenant_id,
+    total_sales_paid = db.query(func.sum(sales_payments.SalesPayment.amount_paid)).join(sales_orders.SalesOrder).filter(
+        sales_orders.SalesOrder.tenant_id == tenant_id,
         sales_payments.SalesPayment.payment_date <= as_of_date,
+        sales_orders.SalesOrder.deleted_at.is_(None),
         sales_payments.SalesPayment.deleted_at.is_(None)
     ).scalar() or Decimal(0)
-    total_purchase_payments = db.query(func.sum(payments.Payment.amount_paid)).filter(
-        payments.Payment.tenant_id == tenant_id,
+    total_purchases_paid = db.query(func.sum(payments.Payment.amount_paid)).join(purchase_orders.PurchaseOrder).filter(
+        purchase_orders.PurchaseOrder.tenant_id == tenant_id, 
         payments.Payment.payment_date <= as_of_date,
+        purchase_orders.PurchaseOrder.deleted_at.is_(None),
         payments.Payment.deleted_at.is_(None)
     ).scalar() or Decimal(0)
-    cash = total_sales_payments - total_purchase_payments
+    total_operational_expenses = db.query(func.sum(operational_expenses.OperationalExpense.amount)).filter(
+    operational_expenses.OperationalExpense.tenant_id == tenant_id,
+    operational_expenses.OperationalExpense.date <= as_of_date,
+    operational_expenses.OperationalExpense.deleted_at.is_(None)
+    ).scalar() or Decimal(0)
+    financial_config = crud_app_config.get_financial_config(db, tenant_id)
+    opening_balance = Decimal(str(financial_config.get('general_ledger_opening_balance', 0.0)))
+    cash = opening_balance + total_sales_paid - total_purchases_paid - total_operational_expenses
 
     # Accounts Receivable
     total_sales = db.query(func.sum(sales_orders.SalesOrder.total_amount)).filter(
         sales_orders.SalesOrder.tenant_id == tenant_id,
         sales_orders.SalesOrder.order_date <= as_of_date,
         sales_orders.SalesOrder.deleted_at.is_(None)
-    ).scalar() or Decimal(0)
-    total_sales_paid = db.query(func.sum(sales_payments.SalesPayment.amount_paid)).join(sales_orders.SalesOrder).filter(
-        sales_orders.SalesOrder.tenant_id == tenant_id,
-        sales_orders.SalesOrder.order_date <= as_of_date,
-        sales_orders.SalesOrder.deleted_at.is_(None),
-        sales_payments.SalesPayment.deleted_at.is_(None)
     ).scalar() or Decimal(0)
     accounts_receivable = total_sales - total_sales_paid
 
@@ -99,12 +102,6 @@ def get_balance_sheet(db: Session, as_of_date: date, tenant_id: int) -> BalanceS
         purchase_orders.PurchaseOrder.tenant_id == tenant_id, 
         purchase_orders.PurchaseOrder.order_date <= as_of_date,
         purchase_orders.PurchaseOrder.deleted_at.is_(None)
-        ).scalar() or Decimal(0)
-    total_purchases_paid = db.query(func.sum(payments.Payment.amount_paid)).join(purchase_orders.PurchaseOrder).filter(
-        purchase_orders.PurchaseOrder.tenant_id == tenant_id, 
-        purchase_orders.PurchaseOrder.order_date <= as_of_date,
-        purchase_orders.PurchaseOrder.deleted_at.is_(None),
-        payments.Payment.deleted_at.is_(None)
         ).scalar() or Decimal(0)
     accounts_payable = total_purchases - total_purchases_paid
 
