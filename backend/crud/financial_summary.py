@@ -13,6 +13,8 @@ from models import (
     PurchaseOrder,
     Payment,
 )
+import crud.app_config as crud_app_config
+from models import operational_expenses
 from schemas.financial_reports import FinancialSummary
 
 
@@ -63,12 +65,14 @@ def get_financial_summary(db: Session, start_date: date, end_date: date, tenant_
             usage_cost += Decimal(item.weight) * item.inventory_item.average_cost
         cogs += usage_cost * usage.times
 
-    operating_expenses = db.query(func.sum(OperationalExpense.amount)).filter(
+    # Get operating expenses for the period (for cost calculation)
+    period_operating_expenses = db.query(func.sum(OperationalExpense.amount)).filter(
         OperationalExpense.date.between(start_date, end_date),
-        OperationalExpense.tenant_id == tenant_id
+        OperationalExpense.tenant_id == tenant_id,
+        OperationalExpense.deleted_at.is_(None)
     ).scalar() or Decimal(0)
 
-    total_cost = cogs + operating_expenses
+    total_cost = cogs + period_operating_expenses
     cost_per_egg = total_cost / eggs_produced if eggs_produced > 0 else Decimal(0)
 
     # Selling Price per Egg
@@ -85,26 +89,46 @@ def get_financial_summary(db: Session, start_date: date, end_date: date, tenant_
     # Cash Balance, Receivables, and Payables (as of end_date)
     total_sales_payments = db.query(func.sum(SalesPayment.amount_paid)).filter(
         SalesPayment.payment_date <= end_date,
-        SalesPayment.tenant_id == tenant_id
+        SalesPayment.tenant_id == tenant_id,
+        SalesPayment.deleted_at.is_(None)
     ).scalar() or Decimal(0)
     
     total_purchase_payments = db.query(func.sum(Payment.amount_paid)).filter(
         Payment.payment_date <= end_date,
-        Payment.tenant_id == tenant_id
+        Payment.tenant_id == tenant_id,
+        Payment.deleted_at.is_(None)
     ).scalar() or Decimal(0)
     
-    cash_balance = total_sales_payments - total_purchase_payments
+    # Get cumulative operating expenses (for cash balance calculation)
+    cumulative_operating_expenses = db.query(func.sum(operational_expenses.OperationalExpense.amount)).filter(
+        operational_expenses.OperationalExpense.tenant_id == tenant_id,
+        operational_expenses.OperationalExpense.date <= end_date,
+        operational_expenses.OperationalExpense.deleted_at.is_(None)
+    ).scalar() or Decimal(0)
 
+    # Get opening balance
+    financial_config = crud_app_config.get_financial_config(db, tenant_id)
+    opening_balance = Decimal(str(financial_config.get('general_ledger_opening_balance', 0.0)))
+
+    # Calculate cash balance properly
+    cash_balance = opening_balance + total_sales_payments - total_purchase_payments - cumulative_operating_expenses
+
+    # Calculate receivables (amount owed by customers)
+    # Only include sales up to the end date
     total_sales = db.query(func.sum(SalesOrder.total_amount)).filter(
         SalesOrder.order_date <= end_date,
-        SalesOrder.tenant_id == tenant_id
+        SalesOrder.tenant_id == tenant_id,
+        SalesOrder.deleted_at.is_(None)
     ).scalar() or Decimal(0)
     
     receivables = total_sales - total_sales_payments
 
+    # Calculate payables (amount owed to suppliers)
+    # Only include purchases up to the end date
     total_purchases = db.query(func.sum(PurchaseOrder.total_amount)).filter(
         PurchaseOrder.order_date <= end_date,
-        PurchaseOrder.tenant_id == tenant_id
+        PurchaseOrder.tenant_id == tenant_id,
+        PurchaseOrder.deleted_at.is_(None)
     ).scalar() or Decimal(0)
     
     payables = total_purchases - total_purchase_payments
@@ -119,3 +143,4 @@ def get_financial_summary(db: Session, start_date: date, end_date: date, tenant_
         receivables=receivables,
         payables=payables,
     )
+

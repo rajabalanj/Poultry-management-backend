@@ -1,6 +1,6 @@
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, or_
-from models import sales_orders, purchase_orders, inventory_items, payments, sales_payments, composition_usage_history, operational_expenses, business_partners, purchase_order_items, sales_order_items
+from models import sales_orders, purchase_orders, inventory_items, payments, sales_payments, composition_usage_history, operational_expenses, business_partners, purchase_order_items, sales_order_items, composition_usage_item
 from models.egg_room_reports import EggRoomReport
 from schemas.financial_reports import ProfitAndLoss, BalanceSheet, Assets, CurrentAssets, Liabilities, CurrentLiabilities
 from schemas.ledgers import GeneralLedger, GeneralLedgerEntry, PurchaseLedger, PurchaseLedgerEntry, SalesLedger, SalesLedgerEntry, InventoryLedger, InventoryLedgerEntry
@@ -20,20 +20,21 @@ def get_profit_and_loss(db: Session, start_date: date, end_date: date, tenant_id
     ).scalar() or Decimal(0)
 
     # 2. Calculate COGS (Cost of Goods Sold)
-    cogs = Decimal(0)
-    composition_usages = db.query(composition_usage_history.CompositionUsageHistory).filter(
+    composition_usages = db.query(composition_usage_history.CompositionUsageHistory).options(
+        joinedload(composition_usage_history.CompositionUsageHistory.items)
+        .joinedload(composition_usage_item.CompositionUsageItem.inventory_item)
+    ).filter(
         composition_usage_history.CompositionUsageHistory.tenant_id == tenant_id,
         composition_usage_history.CompositionUsageHistory.used_at >= start_date,
         composition_usage_history.CompositionUsageHistory.used_at <= end_date
     ).all()
 
-    # This loop performs N+1 queries. Consider optimizing if performance becomes an issue.
+    cogs = Decimal(0)
     for usage in composition_usages:
         usage_cost = Decimal(0)
         for item in usage.items:
-            inventory_item = db.query(inventory_items.InventoryItem).get(item.inventory_item_id)
-            if inventory_item:
-                usage_cost += Decimal(item.weight) * inventory_item.average_cost
+            if item.inventory_item:
+                usage_cost += Decimal(item.weight) * item.inventory_item.average_cost
         cogs += usage_cost * usage.times
 
     # 3. Calculate Gross Profit
@@ -117,7 +118,7 @@ def get_balance_sheet(db: Session, as_of_date: date, tenant_id: int) -> BalanceS
 
 def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id: str, transaction_type: str = None) -> GeneralLedger:
     financial_config = crud_app_config.get_financial_config(db, tenant_id)
-    initial_opening_balance = financial_config['general_ledger_opening_balance']
+    initial_opening_balance = Decimal(financial_config.get('general_ledger_opening_balance', '0.0'))
 
     # Get all transactions before the start date to calculate the report opening balance
     prior_sales_payments = []
@@ -137,12 +138,12 @@ def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id:
         ).all()
 
     # Calculate the net effect of prior transactions
-    prior_net_effect = 0.0
+    prior_net_effect = Decimal('0.0')
     for sp in prior_sales_payments:
-        prior_net_effect += float(sp.amount_paid)  # Credits are positive
+        prior_net_effect += sp.amount_paid  # Credits are positive
 
     for pp in prior_purchase_payments:
-        prior_net_effect -= float(pp.amount_paid)  # Debits are negative
+        prior_net_effect -= pp.amount_paid  # Debits are negative
 
     # Calculate the report opening balance
     report_opening_balance = initial_opening_balance + prior_net_effect
@@ -150,7 +151,7 @@ def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id:
     # Get transactions within the date range
     sales_payments_query = []
     if transaction_type is None or transaction_type == 'sales':
-        sales_payments_query = db.query(sales_payments.SalesPayment).join(sales_orders.SalesOrder).join(business_partners.BusinessPartner).filter(
+        sales_payments_query = db.query(sales_payments.SalesPayment).options(joinedload(sales_payments.SalesPayment.sales_order).joinedload(sales_orders.SalesOrder.customer)).filter(
             sales_payments.SalesPayment.tenant_id == tenant_id,
             sales_payments.SalesPayment.payment_date >= start_date,
             sales_payments.SalesPayment.payment_date <= end_date,
@@ -159,7 +160,7 @@ def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id:
 
     purchase_payments_query = []
     if transaction_type is None or transaction_type == 'purchase':
-        purchase_payments_query = db.query(payments.Payment).join(purchase_orders.PurchaseOrder).join(business_partners.BusinessPartner).filter(
+        purchase_payments_query = db.query(payments.Payment).options(joinedload(payments.Payment.purchase_order).joinedload(purchase_orders.PurchaseOrder.vendor)).filter(
             payments.Payment.tenant_id == tenant_id,
             payments.Payment.payment_date >= start_date,
             payments.Payment.payment_date <= end_date,
@@ -176,8 +177,8 @@ def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id:
             "transaction_id": sp.id,
             "reference_id": sp.sales_order.id,
             "details": f"Payment for SO-{sp.sales_order.so_number}" + (f" ({sp.notes})" if sp.notes else ""),
-            "debit": 0.0,
-            "credit": float(sp.amount_paid)
+            "debit": Decimal('0.0'),
+            "credit": sp.amount_paid
         })
 
     for pp in purchase_payments_query:
@@ -189,8 +190,8 @@ def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id:
             "transaction_id": pp.id,
             "reference_id": pp.purchase_order.id,
             "details": f"Payment for PO-{pp.purchase_order.po_number}" + (f" ({pp.notes})" if pp.notes else ""),
-            "debit": float(pp.amount_paid),
-            "credit": 0.0
+            "debit": pp.amount_paid,
+            "credit": Decimal('0.0')
         })
 
     transactions.sort(key=lambda x: x['date'])
@@ -211,7 +212,7 @@ def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id:
 def get_purchase_ledger(db: Session, vendor_id: int, tenant_id: str) -> PurchaseLedger:
     vendor = db.query(business_partners.BusinessPartner).filter(business_partners.BusinessPartner.id == vendor_id, business_partners.BusinessPartner.tenant_id == tenant_id).first()
     
-    purchase_orders_query = db.query(purchase_orders.PurchaseOrder).filter(
+    purchase_orders_query = db.query(purchase_orders.PurchaseOrder).options(joinedload(purchase_orders.PurchaseOrder.payments)).filter(
         purchase_orders.PurchaseOrder.vendor_id == vendor_id,
         purchase_orders.PurchaseOrder.tenant_id == tenant_id,
         purchase_orders.PurchaseOrder.deleted_at.is_(None)
@@ -227,9 +228,9 @@ def get_purchase_ledger(db: Session, vendor_id: int, tenant_id: str) -> Purchase
             po_id=po.id,
             invoice_number=f"PO-{po.po_number}",
             description=po.notes,
-            amount=float(po.total_amount),
-            amount_paid=float(amount_paid),
-            balance_amount=float(balance_amount),
+            amount=po.total_amount,
+            amount_paid=amount_paid,
+            balance_amount=balance_amount,
             payment_status=po.status.value
         ))
 
@@ -242,7 +243,7 @@ def get_purchase_ledger(db: Session, vendor_id: int, tenant_id: str) -> Purchase
 def get_sales_ledger(db: Session, customer_id: int, tenant_id: str) -> SalesLedger:
     customer = db.query(business_partners.BusinessPartner).filter(business_partners.BusinessPartner.id == customer_id, business_partners.BusinessPartner.tenant_id == tenant_id).first()
 
-    sales_orders_query = db.query(sales_orders.SalesOrder).filter(
+    sales_orders_query = db.query(sales_orders.SalesOrder).options(joinedload(sales_orders.SalesOrder.payments)).filter(
         sales_orders.SalesOrder.customer_id == customer_id,
         sales_orders.SalesOrder.tenant_id == tenant_id,
         sales_orders.SalesOrder.deleted_at.is_(None)
@@ -258,9 +259,9 @@ def get_sales_ledger(db: Session, customer_id: int, tenant_id: str) -> SalesLedg
             so_id=so.id,
             invoice_number=f"SO-{so.so_number}",
             description=so.notes,
-            amount=float(so.total_amount),
-            amount_paid=float(amount_paid),
-            balance_amount=float(balance_amount),
+            amount=so.total_amount,
+            amount_paid=amount_paid,
+            balance_amount=balance_amount,
             payment_status=so.status.value
         ))
 
@@ -283,8 +284,8 @@ def get_inventory_ledger(db: Session, item_id: int, start_date: date, end_date: 
     if 'egg' in item.name.lower():
         reports = get_reports_by_date_range(db, start_date.isoformat(), end_date.isoformat(), tenant_id)
         
-        opening_quantity = 0
-        closing_quantity = 0
+        opening_quantity = Decimal('0.0')
+        closing_quantity = Decimal('0.0')
         entries = []
         
         if reports:
@@ -292,19 +293,19 @@ def get_inventory_ledger(db: Session, item_id: int, start_date: date, end_date: 
             end_report = reports[-1]
 
             if "table" in item.name.lower():
-                opening_quantity = start_report.table_opening or 0
-                closing_quantity = end_report.table_closing or 0
+                opening_quantity = start_report.table_opening or Decimal('0.0')
+                closing_quantity = end_report.table_closing or Decimal('0.0')
             elif "jumbo" in item.name.lower():
-                opening_quantity = start_report.jumbo_opening or 0
-                closing_quantity = end_report.jumbo_closing or 0
+                opening_quantity = start_report.jumbo_opening or Decimal('0.0')
+                closing_quantity = end_report.jumbo_closing or Decimal('0.0')
             elif "grade c" in item.name.lower():
-                opening_quantity = start_report.grade_c_opening or 0
-                closing_quantity = end_report.grade_c_closing or 0
+                opening_quantity = start_report.grade_c_opening or Decimal('0.0')
+                closing_quantity = end_report.grade_c_closing or Decimal('0.0')
 
             for report in reports:
-                quantity_received = 0
-                quantity_sold = 0
-                quantity_on_hand = 0
+                quantity_received = Decimal('0.0')
+                quantity_sold = Decimal('0.0')
+                quantity_on_hand = Decimal('0.0')
                 reference = "Daily Egg Room Report"
 
                 if "table" in item.name.lower():
@@ -346,16 +347,16 @@ def get_inventory_ledger(db: Session, item_id: int, start_date: date, end_date: 
         purchase_orders.PurchaseOrder.tenant_id == tenant_id,
         purchase_orders.PurchaseOrder.order_date < start_date,
         purchase_orders.PurchaseOrder.deleted_at.is_(None)
-    ).scalar() or 0.0
+    ).scalar() or Decimal('0.0')
 
     sales_before = db.query(func.sum(sales_order_items.SalesOrderItem.quantity)).join(sales_orders.SalesOrder).filter(
         sales_order_items.SalesOrderItem.inventory_item_id == item_id,
         sales_orders.SalesOrder.tenant_id == tenant_id,
         sales_orders.SalesOrder.order_date < start_date,
         sales_orders.SalesOrder.deleted_at.is_(None)
-    ).scalar() or 0.0
+    ).scalar() or Decimal('0.0')
 
-    opening_quantity = float(purchases_before) - float(sales_before)
+    opening_quantity = purchases_before - sales_before
 
     # Get transactions within the date range
     purchase_items = db.query(purchase_order_items.PurchaseOrderItem).join(purchase_orders.PurchaseOrder).filter(
@@ -380,10 +381,10 @@ def get_inventory_ledger(db: Session, item_id: int, start_date: date, end_date: 
             "date": pi.purchase_order.order_date,
             "type": "purchase",
             "reference": f"PO-{pi.purchase_order.po_number}",
-            "quantity_received": float(pi.quantity),
-            "unit_cost": float(pi.price_per_unit),
-            "total_cost": float(pi.quantity * pi.price_per_unit),
-            "quantity_sold": 0.0
+            "quantity_received": pi.quantity,
+            "unit_cost": pi.price_per_unit,
+            "total_cost": pi.quantity * pi.price_per_unit,
+            "quantity_sold": Decimal('0.0')
         })
 
     for si in sales_items:
@@ -391,10 +392,10 @@ def get_inventory_ledger(db: Session, item_id: int, start_date: date, end_date: 
             "date": si.sales_order.order_date,
             "type": "sale",
             "reference": f"SO-{si.sales_order.so_number}",
-            "quantity_received": 0.0,
-            "unit_cost": 0.0,
-            "total_cost": 0.0,
-            "quantity_sold": float(si.quantity)
+            "quantity_received": Decimal('0.0'),
+            "unit_cost": Decimal('0.0'),
+            "total_cost": Decimal('0.0'),
+            "quantity_sold": si.quantity
         })
 
     transactions.sort(key=lambda x: x['date'])
@@ -424,3 +425,4 @@ def get_inventory_ledger(db: Session, item_id: int, start_date: date, end_date: 
         entries=entries,
         closing_quantity_on_hand=quantity_on_hand
     )
+
