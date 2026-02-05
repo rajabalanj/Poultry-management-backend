@@ -31,7 +31,7 @@ from crud.composition_usage_history import get_composition_usage_by_date_range
 def _is_layer_age(age_str):
     """Return True if age_str represents >= 18 (weeks). Age may be stored as string like '18.3'."""
     try:
-        return float(age_str) > 17
+        return age_str > 17
     except (ValueError, TypeError):
         return False
 
@@ -119,12 +119,12 @@ def _calculate_cumulative_report(db: Session, batch_id: int, current_week: int, 
     for week_num in range(17, current_week + 1):
         week_batches = db.query(DailyBatch).filter(
             DailyBatch.batch_id == batch_id,
-            DailyBatch.age >= f"{week_num}.1",
-            DailyBatch.age <= f"{week_num}.7",
+            DailyBatch.age >= week_num + 0.1,
+            DailyBatch.age <= week_num + 0.7,
             DailyBatch.tenant_id == tenant_id
         ).all()
         
-        week_feed = sum(float(batch.feed_in_kg) for batch in week_batches if batch.feed_in_kg is not None)
+        week_feed = sum(batch.feed_in_kg for batch in week_batches if batch.feed_in_kg is not None)
         cum_feed_total += week_feed
         
         week_eggs = sum(batch.total_eggs for batch in week_batches if batch.total_eggs is not None)
@@ -141,25 +141,25 @@ def _calculate_cumulative_report(db: Session, batch_id: int, current_week: int, 
     # Section 1: Feed data
     section1 = {
         "cum_feed": {
-            "cum": float(cum_feed_total),
+            "cum": cum_feed_total,
             "actual": round(cum_feed_total / hen_housing, 4) if hen_housing > 0 else 0,
-            "standard": float(bovans_data.feed_intake_cum_kg) if bovans_data and bovans_data.feed_intake_cum_kg else 0,
+            "standard": bovans_data.feed_intake_cum_kg if bovans_data and bovans_data.feed_intake_cum_kg else 0,
             "diff": 0  # Will calculate after
         },
         "weekly_feed": {
-            "cum": float(current_summary["actual_feed_consumed"]),
+            "cum": current_summary["actual_feed_consumed"],
             "actual": round(current_summary["actual_feed_consumed"] / hen_housing, 4) if hen_housing > 0 else 0,
-            "standard": round((float(bovans_data.feed_intake_per_day_g) * 7 / 1000), 4) if bovans_data and bovans_data.feed_intake_per_day_g else 0,
+            "standard": round((bovans_data.feed_intake_per_day_g * 7 / 1000), 4) if bovans_data and bovans_data.feed_intake_per_day_g else 0,
             "diff": 0  # Will calculate after
         },
         "cum_egg": {
-            "cum": float(cum_egg_total),
+            "cum": cum_egg_total,
             "actual": round(cum_egg_total / hen_housing, 4) if hen_housing > 0 else 0,
-            "standard": float(bovans_data.eggs_per_bird_cum) if bovans_data and bovans_data.eggs_per_bird_cum else 0,
+            "standard": bovans_data.eggs_per_bird_cum if bovans_data and bovans_data.eggs_per_bird_cum else 0,
             "diff": 0  # Will calculate after
         },
         "weekly_egg": {
-            "cum": float(current_summary["total_eggs"]),
+            "cum": current_summary["total_eggs"],
             "actual": round(current_summary["total_eggs"] / current_summary["opening_count"], 4) if current_summary["opening_count"] > 0 else 0,
             "standard": 5,
             "diff": 0  # Will calculate after
@@ -176,12 +176,12 @@ def _calculate_cumulative_report(db: Session, batch_id: int, current_week: int, 
     section2 = {
         "livability": {
             "actual": round((current_summary["closing_count"] / hen_housing) * 100, 2) if hen_housing > 0 else 0,
-            "standard": float(bovans_data.livability_percent) if bovans_data and bovans_data.livability_percent else 0,
+            "standard": bovans_data.livability_percent if bovans_data and bovans_data.livability_percent else 0,
             "diff": 0  # Will calculate after
         },
         "feed_grams": {
             "actual": round((current_summary["actual_feed_consumed"] * 1000) / hen_housing, 2) if hen_housing > 0 else 0,
-            "standard": float(bovans_data.feed_intake_per_day_g) if bovans_data and bovans_data.feed_intake_per_day_g else 0,
+            "standard": bovans_data.feed_intake_per_day_g if bovans_data and bovans_data.feed_intake_per_day_g else 0,
             "diff": 0  # Will calculate after
         }
     }
@@ -228,7 +228,7 @@ def _calculate_summary(batches: list[DailyBatch], query_start_date: date, query_
     highest_age = 0.0
     for b in batches:
         try:
-            age_val = float(b.age)
+            age_val = b.age
             if age_val > highest_age:
                 highest_age = age_val
         except (ValueError, TypeError):
@@ -247,7 +247,7 @@ def _calculate_summary(batches: list[DailyBatch], query_start_date: date, query_
     for b in batches:
         try:
             # Only include batches that are 18 weeks or older
-            if float(b.age) > 17:
+            if b.age > 17:
                 layer_batches.append(b)
         except (ValueError, TypeError):
             # Ignore if age is not a valid number
@@ -259,7 +259,7 @@ def _calculate_summary(batches: list[DailyBatch], query_start_date: date, query_
         hd_values = [b.hd for b in layer_batches if b.hd is not None]
         avg_hd = sum(hd_values) / len(hd_values) if hd_values else 0
 
-        standard_hd_values = [float(b.standard_hen_day_percentage) for b in layer_batches if b.standard_hen_day_percentage is not None]
+        standard_hd_values = [b.standard_hen_day_percentage for b in layer_batches if b.standard_hen_day_percentage is not None]
         avg_standard_hd = sum(standard_hd_values) / len(standard_hd_values) if standard_hd_values else 0
     else:
         avg_hd = 0
@@ -295,8 +295,8 @@ def get_weekly_layer_report(
     # The 'week' parameter refers to the week of life (e.g., week 1 is age 0.1-0.7).
     # So, for the Nth week, the age starts at (N-1).
     start_age_week = week - 1
-    start_age = f"{start_age_week}.1"
-    end_age = f"{start_age_week}.7"
+    start_age = start_age_week + 0.1
+    end_age = start_age_week + 0.7
     
     # Get daily batches for the specified age range
     daily_batches = db.query(DailyBatch).filter(
@@ -312,7 +312,7 @@ def get_weekly_layer_report(
     # Get hen housing (closing count at age 17.7)
     hen_housing_record = db.query(DailyBatch).filter(
         DailyBatch.batch_id == batch_id,
-        DailyBatch.age == "16.7",
+        DailyBatch.age == 16.7,
         DailyBatch.tenant_id == tenant_id
     ).first()
     
@@ -369,7 +369,7 @@ def get_weekly_layer_report(
             "total_eggs": batch.total_eggs,
             "batch_type": batch.batch_type,
             "hd": batch.hd,
-            "standard_hen_day_percentage": float(batch.standard_hen_day_percentage) if batch.standard_hen_day_percentage is not None else None,
+            "standard_hen_day_percentage": batch.standard_hen_day_percentage if batch.standard_hen_day_percentage is not None else None,
             "actual_feed_consumed": actual_feed_consumed,
             "standard_feed_consumption": standard_feed_consumption,
             "is_active": batch.batch.is_active,
@@ -440,7 +440,7 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
                 "total_eggs": batch.total_eggs,
                 "batch_type": batch.batch_type,
                 "hd": batch.hd,
-                "standard_hen_day_percentage": float(batch.standard_hen_day_percentage) if batch.standard_hen_day_percentage is not None else None,
+                "standard_hen_day_percentage": batch.standard_hen_day_percentage if batch.standard_hen_day_percentage is not None else None,
                 "is_active": batch_obj.is_active,
                 "birds_added": batch.birds_added,
             })
@@ -534,7 +534,7 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
             if layer_rows:
                 hd_values = [r.hd for r in layer_rows if r.hd is not None]
                 avg_hd = sum(hd_values) / len(hd_values) if hd_values else 0
-                std_hd_values = [float(r.standard_hen_day_percentage) for r in layer_rows if r.standard_hen_day_percentage is not None]
+                std_hd_values = [r.standard_hen_day_percentage for r in layer_rows if r.standard_hen_day_percentage is not None]
                 avg_std_hd = sum(std_hd_values) / len(std_hd_values) if std_hd_values else 0
             else:
                 avg_hd = 0
@@ -543,7 +543,7 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
             highest_age = 0.0
             for r in rows:
                 try:
-                    a = float(r.age)
+                    a = r.age
                     if a > highest_age:
                         highest_age = a
                 except (ValueError, TypeError):
@@ -727,3 +727,4 @@ def write_daily_report_excel(batches, report_date=None, file_path=None, tenant_i
 
     wb.save(file_path)
     return file_path
+

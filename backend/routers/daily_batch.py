@@ -102,7 +102,7 @@ def upload_weekly_report_excel(
         
         weekly_data = weekly_data.sort_values(by='parsed_date').drop(columns=['parsed_date'])
 
-        initial_batch_age = float(batch_obj.age)
+        initial_batch_age = batch_obj.age
         batch_start_date = batch_obj.date
         previous_closing_count = None
 
@@ -129,7 +129,7 @@ def upload_weekly_report_excel(
             if days_diff < 0:
                 raise HTTPException(status_code=400, detail=f"Batch date {batch_date} cannot be before batch start date {batch_start_date} in row {i + 1}.")
             
-            age = str(round(calculate_age_progression(initial_batch_age, days_diff), 1))
+            age = calculate_age_progression(initial_batch_age, days_diff)
             
             if previous_closing_count is not None:
                 opening_count = previous_closing_count
@@ -225,7 +225,7 @@ def upload_weekly_report_excel(
                 prev_closing = current_record.closing_count
                 prev_date = current_record.batch_date
                 try:
-                    prev_age = float(current_record.age)
+                    prev_age = current_record.age
                 except (ValueError, TypeError):
                     prev_age = 0.0
 
@@ -238,7 +238,7 @@ def upload_weekly_report_excel(
                     prev_date_obj = prev_date if isinstance(prev_date, date) else prev_date.date()
                     days_diff = (row_date - prev_date_obj).days
                     new_age = calculate_age_progression(prev_age, days_diff)
-                    row_to_update.age = str(round(new_age, 1))
+                    row_to_update.age = new_age
 
                     # Update prev_age so progression accumulates across subsequent rows
                     prev_age = new_age
@@ -349,7 +349,7 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
             if prev_daily:
                 opening_count = prev_daily.closing_count
                 try:
-                    prev_age = float(prev_daily.age)
+                    prev_age = prev_daily.age
                 except (ValueError, TypeError):
                     prev_age = 0.0
                 prev_date_obj = prev_daily.batch_date if isinstance(prev_daily.batch_date, date) else prev_daily.batch_date.date()
@@ -358,7 +358,7 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
             else:
                 opening_count = batch_obj.opening_count
                 try:
-                    base_age = float(batch_obj.age)
+                    base_age = batch_obj.age
                 except (ValueError, TypeError):
                     base_age = 0.0
                 days_diff = (report_date - batch_obj.date).days
@@ -380,7 +380,7 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
                     old_values = None
 
                 existing_daily_batch.opening_count = opening_count
-                existing_daily_batch.age = str(round(age, 1))
+                existing_daily_batch.age = age
                 existing_daily_batch.mortality = mortality_excel
                 existing_daily_batch.culls = culls_excel
                 existing_daily_batch.table_eggs = table_eggs_excel
@@ -423,7 +423,7 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
                     batch_no=batch_no_excel,
                     upload_date=date.today(),
                     batch_date=report_date,
-                    age=str(round(age, 1)),
+                    age=age,
                     opening_count=opening_count,
                     mortality=mortality_excel,
                     culls=culls_excel,
@@ -460,7 +460,7 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
             prev_closing = current_record.closing_count
             prev_date = current_record.batch_date
             try:
-                prev_age = float(current_record.age)
+                prev_age = current_record.age
             except (ValueError, TypeError):
                 prev_age = 0.0
 
@@ -471,7 +471,7 @@ def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends
                 prev_date_obj = prev_date if isinstance(prev_date, date) else prev_date.date()
                 days_diff = (row_date - prev_date_obj).days
                 prev_age = calculate_age_progression(prev_age, days_diff)
-                row_to_update.age = str(round(prev_age, 1))
+                row_to_update.age = prev_age
                 
                 prev_closing = row_to_update.closing_count
                 prev_date = row_to_update.batch_date
@@ -527,10 +527,10 @@ def update_daily_batch(
     # Update fields on the current daily_batch from payload
     if "age" in payload:
         try:
-            new_age = float(payload["age"])
+            new_age = payload["age"]
             if new_age < 0:
                 raise HTTPException(status_code=400, detail="Age must be a non-negative number")
-            daily_batch.age = str(round(new_age, 1))
+            daily_batch.age = new_age
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid age value")
     
@@ -565,7 +565,7 @@ def update_daily_batch(
         prev_closing = daily_batch.closing_count
         prev_date = daily_batch.batch_date
         try:
-            prev_age = float(daily_batch.age)
+            prev_age = daily_batch.age
         except (ValueError, TypeError):
             prev_age = 0.0
         
@@ -573,7 +573,7 @@ def update_daily_batch(
             row.opening_count = prev_closing
             days_diff = (row.batch_date - prev_date).days
             new_age = calculate_age_progression(prev_age, days_diff)
-            row.age = str(round(new_age, 1))
+            row.age = new_age
 
             # Update prev_age so subsequent rows use the latest computed age
             prev_age = new_age
@@ -673,7 +673,7 @@ def create_or_get_daily_batches(
             d['hd'] = d['total_eggs'] / d['closing_count'] if d['closing_count'] > 0 else 0
             # Calculate batch_type
             try:
-                age_float = float(daily.age)
+                age_float = daily.age
                 if age_float < 8:
                     d['batch_type'] = 'Chick'
                 elif age_float <= 17:
@@ -717,7 +717,7 @@ def create_or_get_daily_batches(
             if prev_daily:
                 opening_count = prev_daily.closing_count
                 try:
-                    prev_age = float(prev_daily.age)
+                    prev_age = prev_daily.age
                 except (ValueError, TypeError):
                     prev_age = 0.0
                 days_diff = (batch_date - prev_daily.batch_date).days
@@ -725,7 +725,7 @@ def create_or_get_daily_batches(
             else:
                 opening_count = batch.opening_count
                 try:
-                    base_age = float(batch.age)
+                    base_age = batch.age
                 except (ValueError, TypeError):
                     base_age = 0.0
                 days_diff = (batch_date - batch.date).days
@@ -743,7 +743,7 @@ def create_or_get_daily_batches(
                     batch_no=batch.batch_no,
                     upload_date=today,
                     batch_date=batch_date,
-                    age=str(round(age, 1)),
+                    age=age,
                     opening_count=opening_count,
                     mortality=0,
                     culls=0,
@@ -788,7 +788,7 @@ def create_or_get_daily_batches(
             d['hd'] = d['total_eggs'] / d['closing_count'] if d['closing_count'] > 0 else 0
             # Calculate batch_type
             try:
-                age_float = float(db_daily.age)
+                age_float = db_daily.age
                 if age_float < 8:
                     d['batch_type'] = 'Chick'
                 elif age_float <= 17:
@@ -807,3 +807,4 @@ def create_or_get_daily_batches(
     result_list.sort(key=lambda x: x.get('batch_no', float('inf')))
 
     return result_list
+

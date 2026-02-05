@@ -1,10 +1,12 @@
 from pydantic import BaseModel, validator, computed_field
 from datetime import date
 from typing import Optional
+from decimal import Decimal
+
 class DailyBatchBase(BaseModel):
     shed_id: Optional[int] = None
     batch_no: Optional[str] = None
-    age: str
+    age: Decimal
     opening_count: int
     mortality: int = 0
     culls: int = 0
@@ -18,12 +20,8 @@ class DailyBatchBase(BaseModel):
 
     @validator('age')
     def validate_age(cls, v):
-        try:
-            age_float = float(v)
-            if age_float < 0.1:
-                raise ValueError('Age must be 0.1 or greater')
-        except ValueError:
-            raise ValueError('Age must be a valid number')
+        if v < Decimal('0.1'):
+            raise ValueError('Age must be 0.1 or greater')
         return v
 
     @validator('opening_count')

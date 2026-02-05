@@ -1,9 +1,10 @@
 from typing import Optional
 from pydantic import BaseModel, validator
 from datetime import date
+from decimal import Decimal
 
 class BatchBase(BaseModel):
-    age: str
+    age: Decimal
     opening_count: int
     batch_no: str
     shed_id: int
@@ -17,12 +18,8 @@ class BatchBase(BaseModel):
 
     @validator('age')
     def validate_age(cls, v):
-        try:
-            age_float = float(v)
-            if age_float < 0.1:
-                raise ValueError('Age must be 0.1 or greater')
-        except ValueError:
-            raise ValueError('Age must be a valid number')
+        if v < Decimal('0.1'):
+            raise ValueError('Age must be 0.1 or greater')
         return v
 
 class BatchCreate(BatchBase):
@@ -30,7 +27,7 @@ class BatchCreate(BatchBase):
 
 class Batch(BaseModel):
     id: int
-    age: str
+    age: Decimal
     opening_count: int
     batch_no: str
     date: date

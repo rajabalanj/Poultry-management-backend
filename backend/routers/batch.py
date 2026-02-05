@@ -73,7 +73,7 @@ def create_batch(
         shed_no = shed.shed_no if shed else f"ID {batch.shed_id}"
         raise HTTPException(status_code=400, detail=f"Shed '{shed_no}' is already occupied by active batch '{conflicting_batch.batch_no}' on the selected start date.")
 
-    if float(batch.age) < 0:
+    if batch.age < 0:
         raise HTTPException(status_code=400, detail="Age must be a non-negative number.")
 
     # 2. Execution
@@ -387,9 +387,9 @@ def update_batch(
                 current_row.opening_count = prev_row.closing_count
 
                 days_diff = (current_row.batch_date - prev_row.batch_date).days
-                prev_age = float(prev_row.age)
+                prev_age = prev_row.age
                 new_age = calculate_age_progression(prev_age, days_diff)
-                current_row.age = str(round(new_age, 1))
+                current_row.age = new_age
             
             prev_row = current_row
 
@@ -664,3 +664,4 @@ def close_batch(
     db.commit()
     
     return {"message": f"Batch '{batch.batch_no}' closed successfully on {closing_date}."}
+

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, func, case, cast, Float, Date
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, func, case, cast, Date, Numeric
 from sqlalchemy.orm import relationship
 from database import Base
 from datetime import datetime
@@ -22,7 +22,7 @@ class DailyBatch(Base, TimestampMixin):
     batch_no = Column(String, nullable=True)
     upload_date = Column(Date, default=lambda: datetime.now(pytz.timezone('Asia/Kolkata')).date())
     batch_date = Column(Date, default=lambda: datetime.now(pytz.timezone('Asia/Kolkata')).date(), primary_key=True)
-    age = Column(String)
+    age = Column(Numeric(4, 1))
     opening_count = Column(Integer)
     mortality = Column(Integer, default=0)
     culls = Column(Integer, default=0)
@@ -71,7 +71,7 @@ class DailyBatch(Base, TimestampMixin):
             return None
         # self.age is "weeks.days" (e.g., "18.3"). int(18.3) gives 18 completed weeks.
         try:
-            age_in_weeks = int(float(self.age))
+            age_in_weeks = int(self.age)
         except (ValueError, TypeError):
             return None
 
@@ -89,8 +89,8 @@ class DailyBatch(Base, TimestampMixin):
     @standard_hen_day_percentage.expression
     def standard_hen_day_percentage(cls):
         # Create a subquery to get the lay_percent based on age
-        from sqlalchemy import select, Integer, case, cast, Float
-        age_in_weeks_expr = cast(cast(cls.age, Float), Integer)
+        from sqlalchemy import select, Integer, case, cast
+        age_in_weeks_expr = cast(cls.age, Integer)
         lookup_age_expr = case((age_in_weeks_expr >= 100, 100), else_=age_in_weeks_expr + 1)
         subquery = select(BovansWhiteLayerPerformance.lay_percent).where(
             BovansWhiteLayerPerformance.age_weeks == lookup_age_expr
@@ -104,7 +104,7 @@ class DailyBatch(Base, TimestampMixin):
             return None
         # self.age is "weeks.days" (e.g., "18.3"). int(18.3) gives 18 completed weeks.
         try:
-            age_in_weeks = int(float(self.age))
+            age_in_weeks = int(self.age)
         except (ValueError, TypeError):
             return None
 
@@ -124,8 +124,8 @@ class DailyBatch(Base, TimestampMixin):
     @standard_feed_in_grams.expression
     def standard_feed_in_grams(cls):
         # Create a subquery to get the feed_intake_per_day_g based on age
-        from sqlalchemy import select, case, cast, Integer, Float
-        age_in_weeks_expr = cast(cast(cls.age, Float), Integer)
+        from sqlalchemy import select, case, cast, Integer
+        age_in_weeks_expr = cast(cls.age, Integer)
         lookup_age_expr = case((age_in_weeks_expr >= 100, 100), else_=age_in_weeks_expr + 1)
         subquery = select(BovansWhiteLayerPerformance.feed_intake_per_day_g).where(
             BovansWhiteLayerPerformance.age_weeks == lookup_age_expr
@@ -147,18 +147,18 @@ class DailyBatch(Base, TimestampMixin):
 
     @hybrid_property
     def batch_type(self):
-        if float(self.age) < 8:
+        if self.age < 8:
             return 'Chick'
-        elif float(self.age) <= 17:
+        elif self.age <= 17:
             return 'Grower'
-        elif float(self.age) > 17:
+        elif self.age > 17:
             return 'Layer'
         
     @batch_type.expression
     def batch_type(cls):
         return case(
-            (cast(cls.age, Float) < 8, 'Chick'),
-            (cast(cls.age, Float) <= 17, 'Grower'),
+            (cls.age < 8, 'Chick'),
+            (cls.age <= 17, 'Grower'),
             else_='Layer'
         )
         
