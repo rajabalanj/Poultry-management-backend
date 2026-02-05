@@ -4,8 +4,8 @@ from decimal import Decimal
 
 class InventoryItemInCompositionBase(BaseModel):
     inventory_item_id: int
-    weight: float
-    wastage_percentage: Optional[Union[float, Decimal]] = None
+    weight: Decimal
+    wastage_percentage: Optional[Decimal] = None
     tenant_id: Optional[str] = None
 
 

@@ -24,9 +24,9 @@ def _convert_quantity(quantity: Decimal, from_unit: str, to_unit: str) -> Decima
     # Convert source unit to a common base (grams) first for intermediate calculation
     quantity_in_grams = quantity
     if from_unit == 'kg':
-        quantity_in_grams *= 1000
+        quantity_in_grams *= Decimal('1000')
     elif from_unit == 'ton':
-        quantity_in_grams *= 1000000  # 1 ton = 1000 kg = 1,000,000 grams
+        quantity_in_grams *= Decimal('1000000')  # 1 ton = 1000 kg = 1,000,000 grams
     elif from_unit == 'gram':
         pass  # Already in grams
     else:
@@ -34,9 +34,9 @@ def _convert_quantity(quantity: Decimal, from_unit: str, to_unit: str) -> Decima
 
     # Convert from grams to target unit
     if to_unit == 'kg':
-        return quantity_in_grams / 1000
+        return quantity_in_grams / Decimal('1000')
     elif to_unit == 'ton':
-        return quantity_in_grams / 1000000
+        return quantity_in_grams / Decimal('1000000')
     elif to_unit == 'gram':
         return quantity_in_grams
     else:
@@ -88,7 +88,7 @@ def use_composition(db: Session, composition_id: int, batch_id: int, times: int,
 
             total_iic_quantity_kg = Decimal(str(iic.weight)) * Decimal(str(times))
             
-            total_quantity_to_reduce_kg = total_iic_quantity_kg * (1 + wastage_percentage / 100)
+            total_quantity_to_reduce_kg = total_iic_quantity_kg * (Decimal('1') + wastage_percentage / Decimal('100'))
             
             try:
                 quantity_to_reduce_in_items_unit = _convert_quantity(
@@ -210,7 +210,7 @@ def revert_composition_usage(db: Session, usage_id: int, tenant_id: str, changed
             total_iic_quantity_kg = Decimal(str(usage_item.weight)) * Decimal(str(times))
             
             wastage_percentage = usage_item.wastage_percentage if usage_item.wastage_percentage is not None else Decimal('0')
-            total_quantity_to_add_kg = total_iic_quantity_kg * (1 + wastage_percentage / 100)
+            total_quantity_to_add_kg = total_iic_quantity_kg * (Decimal('1') + wastage_percentage / Decimal('100'))
 
             try:
                 quantity_to_add_in_items_unit = _convert_quantity(
@@ -260,14 +260,14 @@ def get_composition_usage_by_date(db: Session, usage_date: date, tenant_id: str,
 
     usage_history = query.all()
 
-    total_feed = 0
+    total_feed = Decimal('0')
     feed_breakdown = {}
 
     for usage in usage_history:
-        feed_quantity = 0
+        feed_quantity = Decimal('0')
         for usage_item in usage.items:
             if usage_item.item_category == 'Feed':
-                feed_quantity += Decimal(usage_item.weight) * usage.times
+                feed_quantity += Decimal(str(usage_item.weight)) * Decimal(str(usage.times))
         
         total_feed += feed_quantity
         composition_name = usage.composition_name

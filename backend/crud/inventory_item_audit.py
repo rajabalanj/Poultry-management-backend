@@ -4,6 +4,7 @@ from typing import Optional
 from datetime import date
 from datetime import datetime
 import pytz
+from decimal import Decimal
 
 def get_inventory_item_audits(
     db: Session, 
@@ -29,9 +30,9 @@ def create_inventory_item_audit(
     db: Session,
     inventory_item_id: int,
     change_type: str,
-    change_amount: float,
-    old_quantity: float,
-    new_quantity: float,
+    change_amount: Decimal,
+    old_quantity: Decimal,
+    new_quantity: Decimal,
     tenant_id: str,
     changed_by: Optional[str] = None,
     note: Optional[str] = None

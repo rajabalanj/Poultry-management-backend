@@ -2,6 +2,7 @@
 from datetime import date, datetime
 import logging
 from typing import List, Optional
+from decimal import Decimal
 
 # Third-party imports
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -125,7 +126,7 @@ def get_inventory_value_report(db: Session = Depends(get_db), tenant_id: str = D
         InventoryItemModel.tenant_id == tenant_id
     ).scalar()
     
-    return {"total_inventory_value": total_value or 0.0}
+    return {"total_inventory_value": Decimal(str(total_value or 0))}
 
 @router.get("/{item_id}", response_model=InventoryItem)
 def read_inventory_item(item_id: int, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
@@ -215,7 +216,7 @@ def get_inventory_item_audit_history(
 
 
 class AdjustStockRequest(BaseModel):
-    change_amount: float
+    change_amount: Decimal
     change_type: Optional[str] = "manual"
     note: Optional[str] = None
 
@@ -237,8 +238,8 @@ def adjust_inventory_item_stock(
         raise HTTPException(status_code=404, detail="Inventory item not found")
 
     try:
-        old_qty = float(db_item.current_stock or 0.0)
-        change_amt = float(request.change_amount)
+        old_qty = Decimal(str(db_item.current_stock or 0))
+        change_amt = Decimal(str(request.change_amount))
         new_qty = old_qty + change_amt
 
         # Update the inventory item

@@ -1,6 +1,7 @@
 from pydantic import BaseModel, computed_field
 from datetime import date
 from typing import List, Optional
+from decimal import Decimal
 from utils.formatting import format_indian_currency, amount_to_words
 
 # General Ledger
@@ -12,9 +13,9 @@ class GeneralLedgerEntry(BaseModel):
     transaction_id: Optional[int] = None  # ID of the payment (SP or PP)
     reference_id: Optional[int] = None      # ID of the SO or PO
     details: str
-    debit: float = 0.0
-    credit: float = 0.0
-    balance: float
+    debit: Decimal = Decimal('0.0')
+    credit: Decimal = Decimal('0.0')
+    balance: Decimal
 
     @computed_field
     def debit_str(self) -> str:
@@ -42,9 +43,9 @@ class GeneralLedgerEntry(BaseModel):
 
 class GeneralLedger(BaseModel):
     title: str
-    opening_balance: float
+    opening_balance: Decimal
     entries: List[GeneralLedgerEntry]
-    closing_balance: float
+    closing_balance: Decimal
 
     @computed_field
     def opening_balance_str(self) -> str:
@@ -69,9 +70,9 @@ class PurchaseLedgerEntry(BaseModel):
     po_id: Optional[int] = None
     invoice_number: str
     description: Optional[str] = None
-    amount: float
-    amount_paid: float
-    balance_amount: float
+    amount: Decimal
+    amount_paid: Decimal
+    balance_amount: Decimal
     payment_status: str
 
     @computed_field
@@ -110,9 +111,9 @@ class SalesLedgerEntry(BaseModel):
     so_id: Optional[int] = None
     invoice_number: str
     description: Optional[str] = None
-    amount: float
-    amount_paid: float
-    balance_amount: float
+    amount: Decimal
+    amount_paid: Decimal
+    balance_amount: Decimal
     payment_status: str
 
     @computed_field
@@ -148,11 +149,11 @@ class SalesLedger(BaseModel):
 class InventoryLedgerEntry(BaseModel):
     date: date
     reference: str # Purchase ID or Sales ID
-    quantity_received: Optional[float] = None
-    unit_cost: Optional[float] = None
-    total_cost: Optional[float] = None
-    quantity_sold: Optional[float] = None
-    quantity_on_hand: float
+    quantity_received: Optional[Decimal] = None
+    unit_cost: Optional[Decimal] = None
+    total_cost: Optional[Decimal] = None
+    quantity_sold: Optional[Decimal] = None
+    quantity_on_hand: Decimal
 
     @computed_field
     def unit_cost_str(self) -> str:
@@ -173,6 +174,6 @@ class InventoryLedgerEntry(BaseModel):
 class InventoryLedger(BaseModel):
     title: str
     item_id: int
-    opening_quantity: float
+    opening_quantity: Decimal
     entries: List[InventoryLedgerEntry]
-    closing_quantity_on_hand: float
+    closing_quantity_on_hand: Decimal

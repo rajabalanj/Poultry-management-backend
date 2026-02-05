@@ -28,7 +28,6 @@ def format_indian_currency(amount: Decimal) -> str:
 def amount_to_words(n: Decimal) -> str:
     if n is None:
         return ""
-    n = float(n)
     if n < 0:
         return "Minus " + amount_to_words(-n)
     if n == 0:
@@ -52,7 +51,7 @@ def amount_to_words(n: Decimal) -> str:
             return convert(num // 10000000) + " Crore" + (" " + convert(num % 10000000) if num % 10000000 != 0 else "")
 
     integer_part = int(n)
-    decimal_part = int(round((n - integer_part) * 100))
+    decimal_part = int(((n - integer_part) * 100).to_integral_value(rounding='ROUND_HALF_UP'))
     
     result = convert(integer_part)
     

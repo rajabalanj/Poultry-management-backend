@@ -34,8 +34,8 @@ def get_profit_and_loss(db: Session, start_date: date, end_date: date, tenant_id
         usage_cost = Decimal(0)
         for item in usage.items:
             if item.inventory_item:
-                usage_cost += Decimal(item.weight) * item.inventory_item.average_cost
-        cogs += usage_cost * usage.times
+                usage_cost += Decimal(str(item.weight)) * Decimal(str(item.inventory_item.average_cost))
+        cogs += usage_cost * Decimal(str(usage.times))
 
     # 3. Calculate Gross Profit
     gross_profit = total_revenue - cogs
@@ -80,7 +80,7 @@ def get_balance_sheet(db: Session, as_of_date: date, tenant_id: int) -> BalanceS
     operational_expenses.OperationalExpense.deleted_at.is_(None)
     ).scalar() or Decimal(0)
     financial_config = crud_app_config.get_financial_config(db, tenant_id)
-    opening_balance = Decimal(str(financial_config.get('general_ledger_opening_balance', 0.0)))
+    opening_balance = Decimal(str(financial_config.get('general_ledger_opening_balance', '0.0')))
     cash = opening_balance + total_sales_paid - total_purchases_paid - total_operational_expenses
 
     # Accounts Receivable
@@ -92,7 +92,7 @@ def get_balance_sheet(db: Session, as_of_date: date, tenant_id: int) -> BalanceS
     accounts_receivable = total_sales - total_sales_paid
 
     # Inventory
-    inventory_value = db.query(func.sum(inventory_items.InventoryItem.current_stock * inventory_items.InventoryItem.average_cost)).filter(inventory_items.InventoryItem.tenant_id == tenant_id).scalar() or Decimal(0)
+    inventory_value = Decimal(str(db.query(func.sum(inventory_items.InventoryItem.current_stock * inventory_items.InventoryItem.average_cost)).filter(inventory_items.InventoryItem.tenant_id == tenant_id).scalar() or 0))
 
     current_assets = CurrentAssets(cash=cash, accounts_receivable=accounts_receivable, inventory=inventory_value)
     assets = Assets(current_assets=current_assets)
@@ -118,7 +118,7 @@ def get_balance_sheet(db: Session, as_of_date: date, tenant_id: int) -> BalanceS
 
 def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id: str, transaction_type: str = None) -> GeneralLedger:
     financial_config = crud_app_config.get_financial_config(db, tenant_id)
-    initial_opening_balance = Decimal(financial_config.get('general_ledger_opening_balance', '0.0'))
+    initial_opening_balance = Decimal(str(financial_config.get('general_ledger_opening_balance', '0.0')))
 
     # Get all transactions before the start date to calculate the report opening balance
     prior_sales_payments = []
@@ -140,10 +140,10 @@ def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id:
     # Calculate the net effect of prior transactions
     prior_net_effect = Decimal('0.0')
     for sp in prior_sales_payments:
-        prior_net_effect += sp.amount_paid  # Credits are positive
+        prior_net_effect += Decimal(str(sp.amount_paid))  # Credits are positive
 
     for pp in prior_purchase_payments:
-        prior_net_effect -= pp.amount_paid  # Debits are negative
+        prior_net_effect -= Decimal(str(pp.amount_paid))  # Debits are negative
 
     # Calculate the report opening balance
     report_opening_balance = initial_opening_balance + prior_net_effect
@@ -178,7 +178,7 @@ def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id:
             "reference_id": sp.sales_order.id,
             "details": f"Payment for SO-{sp.sales_order.so_number}" + (f" ({sp.notes})" if sp.notes else ""),
             "debit": Decimal('0.0'),
-            "credit": sp.amount_paid
+            "credit": Decimal(str(sp.amount_paid))
         })
 
     for pp in purchase_payments_query:
@@ -190,7 +190,7 @@ def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id:
             "transaction_id": pp.id,
             "reference_id": pp.purchase_order.id,
             "details": f"Payment for PO-{pp.purchase_order.po_number}" + (f" ({pp.notes})" if pp.notes else ""),
-            "debit": pp.amount_paid,
+            "debit": Decimal(str(pp.amount_paid)),
             "credit": Decimal('0.0')
         })
 
@@ -220,15 +220,15 @@ def get_purchase_ledger(db: Session, vendor_id: int, tenant_id: str) -> Purchase
 
     entries = []
     for po in purchase_orders_query:
-        amount_paid = sum(p.amount_paid for p in po.payments if p.deleted_at is None)
-        balance_amount = po.total_amount - amount_paid
+        amount_paid = sum(Decimal(str(p.amount_paid)) for p in po.payments if p.deleted_at is None)
+        balance_amount = Decimal(str(po.total_amount)) - amount_paid
         entries.append(PurchaseLedgerEntry(
             date=po.order_date,
             vendor_name=vendor.name,
             po_id=po.id,
             invoice_number=f"PO-{po.po_number}",
             description=po.notes,
-            amount=po.total_amount,
+            amount=Decimal(str(po.total_amount)),
             amount_paid=amount_paid,
             balance_amount=balance_amount,
             payment_status=po.status.value
@@ -251,15 +251,15 @@ def get_sales_ledger(db: Session, customer_id: int, tenant_id: str) -> SalesLedg
 
     entries = []
     for so in sales_orders_query:
-        amount_paid = sum(p.amount_paid for p in so.payments if p.deleted_at is None)
-        balance_amount = so.total_amount - amount_paid
+        amount_paid = sum(Decimal(str(p.amount_paid)) for p in so.payments if p.deleted_at is None)
+        balance_amount = Decimal(str(so.total_amount)) - amount_paid
         entries.append(SalesLedgerEntry(
             date=so.order_date,
             customer_name=customer.name,
             so_id=so.id,
             invoice_number=f"SO-{so.so_number}",
             description=so.notes,
-            amount=so.total_amount,
+            amount=Decimal(str(so.total_amount)),
             amount_paid=amount_paid,
             balance_amount=balance_amount,
             payment_status=so.status.value
@@ -309,17 +309,17 @@ def get_inventory_ledger(db: Session, item_id: int, start_date: date, end_date: 
                 reference = "Daily Egg Room Report"
 
                 if "table" in item.name.lower():
-                    quantity_received = (report.table_received or 0) + (report.jumbo_out or 0)
-                    quantity_sold = (report.table_transfer or 0) + (report.table_out or 0) + (report.table_damage or 0)
-                    quantity_on_hand = report.table_closing or 0
+                    quantity_received = Decimal(str(report.table_received or 0)) + Decimal(str(report.jumbo_out or 0))
+                    quantity_sold = Decimal(str(report.table_transfer or 0)) + Decimal(str(report.table_out or 0)) + Decimal(str(report.table_damage or 0))
+                    quantity_on_hand = Decimal(str(report.table_closing or 0))
                 elif "jumbo" in item.name.lower():
-                    quantity_received = (report.jumbo_received or 0) + (report.table_out or 0)
-                    quantity_sold = (report.jumbo_transfer or 0) + (report.jumbo_out or 0) + (report.jumbo_waste or 0)
-                    quantity_on_hand = report.jumbo_closing or 0
+                    quantity_received = Decimal(str(report.jumbo_received or 0)) + Decimal(str(report.table_out or 0))
+                    quantity_sold = Decimal(str(report.jumbo_transfer or 0)) + Decimal(str(report.jumbo_out or 0)) + Decimal(str(report.jumbo_waste or 0))
+                    quantity_on_hand = Decimal(str(report.jumbo_closing or 0))
                 elif "grade c" in item.name.lower():
-                    quantity_received = (report.grade_c_shed_received or 0) + (report.table_damage or 0)
-                    quantity_sold = (report.grade_c_transfer or 0) + (report.grade_c_labour or 0) + (report.grade_c_waste or 0)
-                    quantity_on_hand = report.grade_c_closing or 0
+                    quantity_received = Decimal(str(report.grade_c_shed_received or 0)) + Decimal(str(report.table_damage or 0))
+                    quantity_sold = Decimal(str(report.grade_c_transfer or 0)) + Decimal(str(report.grade_c_labour or 0)) + Decimal(str(report.grade_c_waste or 0))
+                    quantity_on_hand = Decimal(str(report.grade_c_closing or 0))
                 
                 # Only create an entry if there was some activity
                 if quantity_received > 0 or quantity_sold > 0:
@@ -327,8 +327,8 @@ def get_inventory_ledger(db: Session, item_id: int, start_date: date, end_date: 
                         date=report.report_date,
                         reference=reference,
                         quantity_received=quantity_received,
-                        unit_cost=item.average_cost,
-                        total_cost=quantity_received * item.average_cost,
+                        unit_cost=Decimal(str(item.average_cost)),
+                        total_cost=quantity_received * Decimal(str(item.average_cost)),
                         quantity_sold=quantity_sold,
                         quantity_on_hand=quantity_on_hand
                     ))
@@ -381,9 +381,9 @@ def get_inventory_ledger(db: Session, item_id: int, start_date: date, end_date: 
             "date": pi.purchase_order.order_date,
             "type": "purchase",
             "reference": f"PO-{pi.purchase_order.po_number}",
-            "quantity_received": pi.quantity,
-            "unit_cost": pi.price_per_unit,
-            "total_cost": pi.quantity * pi.price_per_unit,
+            "quantity_received": Decimal(str(pi.quantity)),
+            "unit_cost": Decimal(str(pi.price_per_unit)),
+            "total_cost": Decimal(str(pi.quantity)) * Decimal(str(pi.price_per_unit)),
             "quantity_sold": Decimal('0.0')
         })
 
@@ -395,7 +395,7 @@ def get_inventory_ledger(db: Session, item_id: int, start_date: date, end_date: 
             "quantity_received": Decimal('0.0'),
             "unit_cost": Decimal('0.0'),
             "total_cost": Decimal('0.0'),
-            "quantity_sold": si.quantity
+            "quantity_sold": Decimal(str(si.quantity))
         })
 
     transactions.sort(key=lambda x: x['date'])

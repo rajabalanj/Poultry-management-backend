@@ -8,7 +8,7 @@ class CompositionUsageItem(Base):
     id = Column(Integer, primary_key=True, index=True)
     usage_history_id = Column(Integer, ForeignKey("composition_usage_history.id"), nullable=False)
     inventory_item_id = Column(Integer, ForeignKey("inventory_items.id"), nullable=False)
-    weight = Column(Float, nullable=False)
+    weight = Column(Numeric(10, 3), nullable=False)
     item_name = Column(String) # Snapshot for historical accuracy
     item_category = Column(String) # Snapshot for historical accuracy
     wastage_percentage = Column(Numeric(5, 2), nullable=True) # e.g., 2.50%

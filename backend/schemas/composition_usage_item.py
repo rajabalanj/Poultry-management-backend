@@ -1,8 +1,9 @@
 from pydantic import BaseModel
+from decimal import Decimal
 
 class CompositionUsageItemBase(BaseModel):
     inventory_item_id: int
-    weight: float
+    weight: Decimal
     item_name: str
     item_category: str
 
