@@ -6,6 +6,7 @@ from schemas.egg_room_reports import EggRoomReportCreate, EggRoomReportUpdate, E
 from crud import egg_room_reports as egg_crud
 import logging
 import traceback
+import json
 from fastapi.responses import JSONResponse
 from models.egg_room_reports import EggRoomReport
 from models.daily_batch import DailyBatch
@@ -13,6 +14,13 @@ from models.app_config import AppConfig  # Import AppConfig
 from datetime import datetime, date  # Import date for comparison
 from utils.auth_utils import get_current_user, get_user_identifier
 from utils.tenancy import get_tenant_id
+from decimal import Decimal
+
+class DecimalEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return float(obj)
+        return super(DecimalEncoder, self).default(obj)
 
 def datetime_to_iso(dt):
     """Safely convert datetime to ISO format, returning None if datetime is None"""
@@ -172,7 +180,7 @@ def get_report(report_date: str, db: Session = Depends(get_db), tenant_id: str =
                 if key not in ['report_date', 'created_at', 'updated_at']:
                     if value is None or value == '':
                         result[key] = 0
-            return JSONResponse(content=result)
+            return JSONResponse(content=json.loads(json.dumps(result, cls=DecimalEncoder)))
         else:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Report not found after creation/update attempt")
@@ -240,7 +248,7 @@ def create_report(report: EggRoomReportCreate, db: Session = Depends(get_db), cu
                 "grade_c_opening": created_report.grade_c_opening,
                 "grade_c_closing": created_report.grade_c_closing,
             }
-            return JSONResponse(content=result)
+            return JSONResponse(content=json.loads(json.dumps(result, cls=DecimalEncoder)))
         else:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create report")
@@ -307,7 +315,7 @@ def update_report(report_date: str, report: EggRoomReportUpdate, db: Session = D
             "grade_c_opening": updated_report.grade_c_opening,
             "grade_c_closing": updated_report.grade_c_closing,
         }
-        return JSONResponse(content=result)
+        return JSONResponse(content=json.loads(json.dumps(result, cls=DecimalEncoder)))
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except HTTPException:
@@ -374,7 +382,7 @@ def patch_report(report_date: str, report: EggRoomReportUpdate, db: Session = De
             "grade_c_opening": updated_report.grade_c_opening,
             "grade_c_closing": updated_report.grade_c_closing,
         }
-        return JSONResponse(content=result)
+        return JSONResponse(content=json.loads(json.dumps(result, cls=DecimalEncoder)))
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except HTTPException:
@@ -487,7 +495,7 @@ def get_reports(start_date: str, end_date: str, db: Session = Depends(get_db), t
             "summary": summary_data
         }
         
-        return JSONResponse(content=response_content)
+        return JSONResponse(content=json.loads(json.dumps(response_content, cls=DecimalEncoder)))
     except HTTPException:
         raise
     except Exception as e:

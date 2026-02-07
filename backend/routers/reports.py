@@ -387,14 +387,16 @@ def get_weekly_layer_report(
     # Calculate cumulative report
     cumulative_report = _calculate_cumulative_report(db, batch_id, week, hen_housing, summary_data, tenant_id)
     
-    return JSONResponse(content={
+    # Use custom JSON encoder to handle Decimal objects
+    response_content = {
         "details": detailed_result,
         "summary": summary_data,
         "week": week,
         "age_range": f"{start_age} - {end_age}",
         "hen_housing": hen_housing,
         "cumulative_report": cumulative_report
-    })
+    }
+    return JSONResponse(content=json.loads(json.dumps(response_content, cls=DecimalEncoder)))
 
 @router.get("/snapshot")
 def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
