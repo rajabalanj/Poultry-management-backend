@@ -1,5 +1,6 @@
 # Standard library imports
 import os
+import json
 from collections import defaultdict
 from datetime import datetime, date
 from itertools import groupby
@@ -11,7 +12,7 @@ from fastapi.responses import JSONResponse
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
-from sqlalchemy import Float, and_, cast, func
+from sqlalchemy import and_, cast, func
 from sqlalchemy.orm import Session
 
 # Local application imports
@@ -26,6 +27,13 @@ from schemas.reports import TopSellingItem, CompositionUsageReport
 from utils.tenancy import get_tenant_id
 from crud.daily_batch import get_monthly_egg_production as get_monthly_egg_production_crud
 from crud.composition_usage_history import get_composition_usage_by_date_range
+from decimal import Decimal
+
+class DecimalEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return float(obj)
+        return super(DecimalEncoder, self).default(obj)
 
 
 def _is_layer_age(age_str):
@@ -597,7 +605,8 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
         "summary": summary_data
     }
 
-    return JSONResponse(content=response_content)
+    # Use custom JSON encoder to handle Decimal objects
+    return JSONResponse(content=json.loads(json.dumps(response_content, cls=DecimalEncoder)))
 
 def write_daily_report_excel(batches, report_date=None, file_path=None, tenant_id: str = None):
     if report_date is None:
