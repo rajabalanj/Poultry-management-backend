@@ -67,7 +67,7 @@ def get_financial_summary(db: Session, start_date: date, end_date: date, tenant_
 
     # Get operating expenses for the period (for cost calculation)
     period_operating_expenses = db.query(func.sum(OperationalExpense.amount)).filter(
-        OperationalExpense.date.between(start_date, end_date),
+        func.date(OperationalExpense.expense_date).between(start_date, end_date),
         OperationalExpense.tenant_id == tenant_id,
         OperationalExpense.deleted_at.is_(None)
     ).scalar() or Decimal(0)
@@ -102,7 +102,7 @@ def get_financial_summary(db: Session, start_date: date, end_date: date, tenant_
     # Get cumulative operating expenses (for cash balance calculation)
     cumulative_operating_expenses = db.query(func.sum(operational_expenses.OperationalExpense.amount)).filter(
         operational_expenses.OperationalExpense.tenant_id == tenant_id,
-        operational_expenses.OperationalExpense.date <= end_date,
+        func.date(operational_expenses.OperationalExpense.expense_date) <= end_date,
         operational_expenses.OperationalExpense.deleted_at.is_(None)
     ).scalar() or Decimal(0)
 

@@ -1,12 +1,27 @@
 from pydantic import BaseModel, computed_field
 from decimal import Decimal
 from utils.formatting import format_indian_currency, amount_to_words
+from typing import Optional
+
+class ExpenseByAccount(BaseModel):
+    account_code: Optional[str]
+    account_name: Optional[str]
+    amount: Decimal
+
+    @computed_field
+    def amount_str(self) -> str:
+        return format_indian_currency(self.amount)
+
+    @computed_field
+    def amount_words(self) -> str:
+        return amount_to_words(self.amount)
 
 class ProfitAndLoss(BaseModel):
     revenue: Decimal
     cogs: Decimal
     gross_profit: Decimal
     operating_expenses: Decimal
+    operating_expenses_by_account: list[ExpenseByAccount] = []
     net_income: Decimal
 
     @computed_field

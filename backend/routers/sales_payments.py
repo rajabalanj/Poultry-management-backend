@@ -13,6 +13,13 @@ from schemas.audit_log import AuditLogCreate
 from utils import sqlalchemy_to_dict
 from pydantic import BaseModel
 from utils.receipt_utils import generate_sales_receipt
+from decimal import Decimal
+
+# Imports for Journal Entry
+from crud import journal_entry as journal_entry_crud
+from schemas.journal_entry import JournalEntryCreate
+from schemas.journal_item import JournalItemCreate
+from crud.financial_settings import get_financial_settings
 
 try:
     from utils.s3_utils import generate_presigned_download_url, upload_generated_receipt_to_s3
@@ -91,6 +98,45 @@ def create_sales_payment(
     db_so.updated_by = get_user_identifier(user)
     db.commit()
     db.refresh(db_payment)
+
+    # --- Create Journal Entry for the Sales Payment ---
+    try:
+        settings = get_financial_settings(db, tenant_id)
+
+        if not settings.default_cash_account_id or not settings.default_accounts_receivable_account_id:
+            logger.error(f"Default Cash or Accounts Receivable account not configured in Financial Settings for tenant {tenant_id}. Journal entry not created.")
+        else:
+            # Debit Account (Cash/Bank) - use default from financial settings
+            debit_account_id = settings.default_cash_account_id
+            
+            # Round amount_paid to 2 decimal places to match journal entry requirements
+            rounded_amount = db_payment.amount_paid.quantize(Decimal('0.01'))
+            
+            journal_items = [
+                JournalItemCreate(
+                    account_id=debit_account_id,
+                    debit=rounded_amount,
+                    credit=Decimal('0.0')
+                ),
+                JournalItemCreate(
+                    account_id=settings.default_accounts_receivable_account_id,
+                    debit=Decimal('0.0'),
+                    credit=rounded_amount
+                )
+            ]
+
+            journal_entry_schema = JournalEntryCreate(
+                date=db_payment.payment_date,
+                description=f"Payment for Sales Order SO-{db_so.so_number}",
+                reference_document=f"SO-{db_so.so_number}",
+                items=journal_items
+            )
+            journal_entry_crud.create_journal_entry(db=db, entry=journal_entry_schema, tenant_id=tenant_id)
+            logger.info(f"Journal entry created for sales payment {db_payment.id}")
+
+    except Exception as e:
+        logger.error(f"Failed to create journal entry for sales payment {db_payment.id}: {e}")
+    # --- End Journal Entry ---
 
     logger.info(f"Payment of {payment.amount_paid} recorded for Sales Order ID {payment.sales_order_id} by user {get_user_identifier(user)} for tenant {tenant_id}")
     return db_payment

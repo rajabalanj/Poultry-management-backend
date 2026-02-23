@@ -1,210 +1,230 @@
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, or_
-from models import sales_orders, purchase_orders, inventory_items, payments, sales_payments, composition_usage_history, operational_expenses, business_partners, purchase_order_items, sales_order_items, composition_usage_item
-from models.egg_room_reports import EggRoomReport
+from sqlalchemy import func, or_, case
+from models.journal_entry import JournalEntry
+from models.journal_item import JournalItem
+from models.chart_of_accounts import ChartOfAccounts
+from models.financial_settings import FinancialSettings
+from models import business_partners, purchase_orders, sales_orders
 from schemas.financial_reports import ProfitAndLoss, BalanceSheet, Assets, CurrentAssets, Liabilities, CurrentLiabilities
 from schemas.ledgers import GeneralLedger, GeneralLedgerEntry, PurchaseLedger, PurchaseLedgerEntry, SalesLedger, SalesLedgerEntry, InventoryLedger, InventoryLedgerEntry
 from datetime import date
+from datetime import datetime
 from decimal import Decimal
 from crud import app_config as crud_app_config
 from crud.egg_room_reports import get_reports_by_date_range
+from models import purchase_order_items, sales_order_items, inventory_items
 
 
-def get_profit_and_loss(db: Session, start_date: date, end_date: date, tenant_id: int) -> ProfitAndLoss:
-    # 1. Calculate Revenue
-    total_revenue = db.query(func.sum(sales_orders.SalesOrder.total_amount)).filter(
-        sales_orders.SalesOrder.tenant_id == tenant_id,
-        sales_orders.SalesOrder.order_date >= start_date,
-        sales_orders.SalesOrder.order_date <= end_date,
-        sales_orders.SalesOrder.deleted_at.is_(None)
-    ).scalar() or Decimal(0)
+def get_profit_and_loss(db: Session, start_date: date, end_date: date, tenant_id: str) -> ProfitAndLoss:
+    # Helper to calculate net balance (Credit - Debit) for a specific account type
+    # Positive result means Credit > Debit (good for Revenue)
+    # Negative result means Debit > Credit (good for Expense)
+    def get_net_credit_balance(account_type):
+        return db.query(func.sum(JournalItem.credit - JournalItem.debit)).join(ChartOfAccounts).join(JournalEntry).filter(
+            JournalEntry.tenant_id == tenant_id,
+            JournalEntry.date >= start_date,
+            JournalEntry.date <= end_date,
+            ChartOfAccounts.account_type == account_type
+        ).scalar() or Decimal(0)
 
-    # 2. Calculate COGS (Cost of Goods Sold)
-    composition_usages = db.query(composition_usage_history.CompositionUsageHistory).options(
-        joinedload(composition_usage_history.CompositionUsageHistory.items)
-        .joinedload(composition_usage_item.CompositionUsageItem.inventory_item)
-    ).filter(
-        composition_usage_history.CompositionUsageHistory.tenant_id == tenant_id,
-        composition_usage_history.CompositionUsageHistory.used_at >= start_date,
-        composition_usage_history.CompositionUsageHistory.used_at <= end_date
-    ).all()
+    # 1. Revenue (Credit Normal)
+    total_revenue = get_net_credit_balance('Revenue')
 
+    # 2. Expenses (Debit Normal, so get_net_credit_balance returns negative)
+    # We negate it to get a positive expense number
+    total_expenses_net = -get_net_credit_balance('Expense')
+
+    # 3. Identify COGS specifically
+    settings = db.query(FinancialSettings).filter(FinancialSettings.tenant_id == tenant_id).first()
     cogs = Decimal(0)
-    for usage in composition_usages:
-        usage_cost = Decimal(0)
-        for item in usage.items:
-            if item.inventory_item:
-                usage_cost += Decimal(str(item.weight)) * Decimal(str(item.inventory_item.average_cost))
-        cogs += usage_cost * Decimal(str(usage.times))
+    
+    if settings and settings.default_cogs_account_id:
+        # Calculate COGS specifically (Debit - Credit)
+        cogs = db.query(func.sum(JournalItem.debit - JournalItem.credit)).join(JournalEntry).filter(
+            JournalEntry.tenant_id == tenant_id,
+            JournalEntry.date >= start_date,
+            JournalEntry.date <= end_date,
+            JournalItem.account_id == settings.default_cogs_account_id
+        ).scalar() or Decimal(0)
 
-    # 3. Calculate Gross Profit
+    # 4. Operating Expenses = Total Expenses - COGS
+    operating_expenses = total_expenses_net - cogs
+
+    # 5. Gross Profit & Net Income
     gross_profit = total_revenue - cogs
+    net_income = total_revenue - total_expenses_net
 
-    # 4. Calculate Operating Expenses
-    operating_expenses = db.query(func.sum(operational_expenses.OperationalExpense.amount)).filter(
-        operational_expenses.OperationalExpense.tenant_id == tenant_id,
-        operational_expenses.OperationalExpense.date >= start_date,
-        operational_expenses.OperationalExpense.date <= end_date,
-        operational_expenses.OperationalExpense.deleted_at.is_(None)
-    ).scalar() or Decimal(0)
-
-    # 5. Calculate Net Income
-    net_income = gross_profit - operating_expenses
+    # 6. Detailed Expense Breakdown
+    # Query all expense accounts excluding COGS
+    expense_breakdown_query = db.query(
+        ChartOfAccounts.account_code,
+        ChartOfAccounts.account_name,
+        func.sum(JournalItem.debit - JournalItem.credit).label('amount')
+    ).join(JournalItem).join(JournalEntry).filter(
+        JournalEntry.tenant_id == tenant_id,
+        JournalEntry.date >= start_date,
+        JournalEntry.date <= end_date,
+        ChartOfAccounts.account_type == 'Expense'
+    )
+    
+    if settings and settings.default_cogs_account_id:
+        expense_breakdown_query = expense_breakdown_query.filter(ChartOfAccounts.id != settings.default_cogs_account_id)
+        
+    expense_breakdown = expense_breakdown_query.group_by(ChartOfAccounts.id, ChartOfAccounts.account_code, ChartOfAccounts.account_name).all()
+    
+    expenses_by_account = []
+    for code, name, amount in expense_breakdown:
+        expenses_by_account.append({
+            "account_code": code,
+            "account_name": name,
+            "amount": Decimal(str(amount))
+        })
 
     return ProfitAndLoss(
         revenue=total_revenue,
         cogs=cogs,
         gross_profit=gross_profit,
         operating_expenses=operating_expenses,
+        operating_expenses_by_account=expenses_by_account,
         net_income=net_income
     )
 
-def get_balance_sheet(db: Session, as_of_date: date, tenant_id: int) -> BalanceSheet:
-    # 1. Calculate Assets
-    # Cash
-    total_sales_paid = db.query(func.sum(sales_payments.SalesPayment.amount_paid)).join(sales_orders.SalesOrder).filter(
-        sales_orders.SalesOrder.tenant_id == tenant_id,
-        sales_payments.SalesPayment.payment_date <= as_of_date,
-        sales_orders.SalesOrder.deleted_at.is_(None),
-        sales_payments.SalesPayment.deleted_at.is_(None)
-    ).scalar() or Decimal(0)
-    total_purchases_paid = db.query(func.sum(payments.Payment.amount_paid)).join(purchase_orders.PurchaseOrder).filter(
-        purchase_orders.PurchaseOrder.tenant_id == tenant_id, 
-        payments.Payment.payment_date <= as_of_date,
-        purchase_orders.PurchaseOrder.deleted_at.is_(None),
-        payments.Payment.deleted_at.is_(None)
-    ).scalar() or Decimal(0)
-    total_operational_expenses = db.query(func.sum(operational_expenses.OperationalExpense.amount)).filter(
-    operational_expenses.OperationalExpense.tenant_id == tenant_id,
-    operational_expenses.OperationalExpense.date <= as_of_date,
-    operational_expenses.OperationalExpense.deleted_at.is_(None)
-    ).scalar() or Decimal(0)
-    financial_config = crud_app_config.get_financial_config(db, tenant_id)
-    opening_balance = Decimal(str(financial_config.get('general_ledger_opening_balance', '0.0')))
-    cash = opening_balance + total_sales_paid - total_purchases_paid - total_operational_expenses
+def get_balance_sheet(db: Session, as_of_date: date, tenant_id: str) -> BalanceSheet:
+    # Helper for cumulative balance (Debit - Credit for Assets, Credit - Debit for others)
+    def get_cumulative_balance(account_type, normal_balance='debit'):
+        balance = db.query(func.sum(JournalItem.debit - JournalItem.credit)).join(ChartOfAccounts).join(JournalEntry).filter(
+            JournalEntry.tenant_id == tenant_id,
+            JournalEntry.date <= as_of_date,
+            ChartOfAccounts.account_type == account_type
+        ).scalar() or Decimal(0)
+        return balance if normal_balance == 'debit' else -balance
 
-    # Accounts Receivable
-    total_sales = db.query(func.sum(sales_orders.SalesOrder.total_amount)).filter(
-        sales_orders.SalesOrder.tenant_id == tenant_id,
-        sales_orders.SalesOrder.order_date <= as_of_date,
-        sales_orders.SalesOrder.deleted_at.is_(None)
-    ).scalar() or Decimal(0)
-    accounts_receivable = total_sales - total_sales_paid
+    # 1. Assets
+    total_assets = get_cumulative_balance('Asset', 'debit')
+    
+    # Breakdown Assets
+    settings = db.query(FinancialSettings).filter(FinancialSettings.tenant_id == tenant_id).first()
+    cash = Decimal(0)
+    inventory = Decimal(0)
+    
+    if settings:
+        if settings.default_cash_account_id:
+            cash = db.query(func.sum(JournalItem.debit - JournalItem.credit)).join(JournalEntry).filter(
+                JournalEntry.tenant_id == tenant_id,
+                JournalEntry.date <= as_of_date,
+                JournalItem.account_id == settings.default_cash_account_id
+            ).scalar() or Decimal(0)
+        
+        if settings.default_inventory_account_id:
+            inventory = db.query(func.sum(JournalItem.debit - JournalItem.credit)).join(JournalEntry).filter(
+                JournalEntry.tenant_id == tenant_id,
+                JournalEntry.date <= as_of_date,
+                JournalItem.account_id == settings.default_inventory_account_id
+            ).scalar() or Decimal(0)
 
-    # Inventory
-    inventory_value = Decimal(str(db.query(func.sum(inventory_items.InventoryItem.current_stock * inventory_items.InventoryItem.average_cost)).filter(inventory_items.InventoryItem.tenant_id == tenant_id).scalar() or 0))
+    accounts_receivable = Decimal(0)
+    if settings and settings.default_accounts_receivable_account_id:
+        accounts_receivable = db.query(func.sum(JournalItem.debit - JournalItem.credit)).join(JournalEntry).filter(
+            JournalEntry.tenant_id == tenant_id,
+            JournalEntry.date <= as_of_date,
+            JournalItem.account_id == settings.default_accounts_receivable_account_id
+        ).scalar() or Decimal(0)
 
-    current_assets = CurrentAssets(cash=cash, accounts_receivable=accounts_receivable, inventory=inventory_value)
+    current_assets = CurrentAssets(cash=cash, accounts_receivable=accounts_receivable, inventory=inventory)
     assets = Assets(current_assets=current_assets)
 
-    # 2. Calculate Liabilities
-    # Accounts Payable
-    total_purchases = db.query(func.sum(purchase_orders.PurchaseOrder.total_amount)).filter(
-        purchase_orders.PurchaseOrder.tenant_id == tenant_id, 
-        purchase_orders.PurchaseOrder.order_date <= as_of_date,
-        purchase_orders.PurchaseOrder.deleted_at.is_(None)
+    # 2. Liabilities
+    total_liabilities = get_cumulative_balance('Liability', 'credit')
+    accounts_payable = Decimal(0)
+
+    if settings and settings.default_accounts_payable_account_id:
+        # For liabilities, the normal balance is credit. So we do Credit - Debit.
+        accounts_payable = db.query(func.sum(JournalItem.credit - JournalItem.debit)).join(JournalEntry).filter(
+            JournalEntry.tenant_id == tenant_id,
+            JournalEntry.date <= as_of_date,
+            JournalItem.account_id == settings.default_accounts_payable_account_id
         ).scalar() or Decimal(0)
-    accounts_payable = total_purchases - total_purchases_paid
 
     current_liabilities = CurrentLiabilities(accounts_payable=accounts_payable)
     liabilities = Liabilities(current_liabilities=current_liabilities)
 
-    # 3. Calculate Equity
-    total_assets = cash + accounts_receivable + inventory_value
-    total_liabilities = accounts_payable
-    equity = total_assets - total_liabilities
+    # 3. Equity
+    # Equity = Equity Accounts + Retained Earnings (Net Income up to date)
+    equity_accounts_total = get_cumulative_balance('Equity', 'credit')
+    
+    # Calculate Net Income (Revenue - Expenses) for Retained Earnings
+    revenue_cum = get_cumulative_balance('Revenue', 'credit')
+    expense_cum = get_cumulative_balance('Expense', 'debit') # Expense is debit normal
+    net_income_cum = revenue_cum - expense_cum
+    
+    total_equity = equity_accounts_total + net_income_cum
 
-    return BalanceSheet(assets=assets, liabilities=liabilities, equity=equity)
+    return BalanceSheet(assets=assets, liabilities=liabilities, equity=total_equity)
 
-def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id: str, transaction_type: str = None) -> GeneralLedger:
-    financial_config = crud_app_config.get_financial_config(db, tenant_id)
-    initial_opening_balance = Decimal(str(financial_config.get('general_ledger_opening_balance', '0.0')))
+def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id: str, transaction_type: str = None, account_code: str = None) -> GeneralLedger:
+    # 1. Calculate Opening Balance (Sum of all transactions before start_date)
+    opening_balance_query = db.query(func.sum(JournalItem.debit - JournalItem.credit)).join(JournalEntry).join(ChartOfAccounts).filter(
+        JournalEntry.tenant_id == tenant_id,
+        JournalEntry.date < start_date
+    )
+    
+    if account_code:
+        opening_balance_query = opening_balance_query.filter(ChartOfAccounts.account_code == account_code)
+    
+    # Note: This opening balance logic assumes a Debit-normal view. 
+    # For Credit-normal accounts (Liability/Equity/Revenue), a positive balance here means it's in debit (negative balance).
+    opening_balance = opening_balance_query.scalar() or Decimal(0)
 
-    # Get all transactions before the start date to calculate the report opening balance
-    prior_sales_payments = []
-    if transaction_type is None or transaction_type == 'sales':
-        prior_sales_payments = db.query(sales_payments.SalesPayment).filter(
-            sales_payments.SalesPayment.tenant_id == tenant_id,
-            sales_payments.SalesPayment.payment_date < start_date,
-            sales_payments.SalesPayment.deleted_at.is_(None)
-        ).all()
+    # 2. Fetch Transactions
+    query = db.query(JournalEntry).options(
+        joinedload(JournalEntry.items).joinedload(JournalItem.account)
+    ).filter(
+        JournalEntry.tenant_id == tenant_id,
+        JournalEntry.date >= start_date,
+        JournalEntry.date <= end_date
+    )
 
-    prior_purchase_payments = []
-    if transaction_type is None or transaction_type == 'purchase':
-        prior_purchase_payments = db.query(payments.Payment).filter(
-            payments.Payment.tenant_id == tenant_id,
-            payments.Payment.payment_date < start_date,
-            payments.Payment.deleted_at.is_(None)
-        ).all()
+    # If filtering by account code, we only want JournalEntries that contain that account
+    if account_code:
+        query = query.join(JournalEntry.items).join(JournalItem.account).filter(ChartOfAccounts.account_code == account_code)
 
-    # Calculate the net effect of prior transactions
-    prior_net_effect = Decimal('0.0')
-    for sp in prior_sales_payments:
-        prior_net_effect += Decimal(str(sp.amount_paid))  # Credits are positive
+    journal_entries = query.order_by(JournalEntry.date, JournalEntry.id).all()
 
-    for pp in prior_purchase_payments:
-        prior_net_effect -= Decimal(str(pp.amount_paid))  # Debits are negative
-
-    # Calculate the report opening balance
-    report_opening_balance = initial_opening_balance + prior_net_effect
-
-    # Get transactions within the date range
-    sales_payments_query = []
-    if transaction_type is None or transaction_type == 'sales':
-        sales_payments_query = db.query(sales_payments.SalesPayment).options(joinedload(sales_payments.SalesPayment.sales_order).joinedload(sales_orders.SalesOrder.customer)).filter(
-            sales_payments.SalesPayment.tenant_id == tenant_id,
-            sales_payments.SalesPayment.payment_date >= start_date,
-            sales_payments.SalesPayment.payment_date <= end_date,
-            sales_payments.SalesPayment.deleted_at.is_(None)
-        ).all()
-
-    purchase_payments_query = []
-    if transaction_type is None or transaction_type == 'purchase':
-        purchase_payments_query = db.query(payments.Payment).options(joinedload(payments.Payment.purchase_order).joinedload(purchase_orders.PurchaseOrder.vendor)).filter(
-            payments.Payment.tenant_id == tenant_id,
-            payments.Payment.payment_date >= start_date,
-            payments.Payment.payment_date <= end_date,
-            payments.Payment.deleted_at.is_(None)
-        ).all()
-
-    transactions = []
-    for sp in sales_payments_query:
-        transactions.append({
-            "date": sp.payment_date,
-            "transaction_type": "Sales Payment",
-            "party": sp.sales_order.customer.name,
-            "reference_document": f"SO-{sp.sales_order.so_number}",
-            "transaction_id": sp.id,
-            "reference_id": sp.sales_order.id,
-            "details": f"Payment for SO-{sp.sales_order.so_number}" + (f" ({sp.notes})" if sp.notes else ""),
-            "debit": Decimal('0.0'),
-            "credit": Decimal(str(sp.amount_paid))
-        })
-
-    for pp in purchase_payments_query:
-        transactions.append({
-            "date": pp.payment_date,
-            "transaction_type": "Purchase Payment",
-            "party": pp.purchase_order.vendor.name,
-            "reference_document": f"PO-{pp.purchase_order.po_number}",
-            "transaction_id": pp.id,
-            "reference_id": pp.purchase_order.id,
-            "details": f"Payment for PO-{pp.purchase_order.po_number}" + (f" ({pp.notes})" if pp.notes else ""),
-            "debit": Decimal(str(pp.amount_paid)),
-            "credit": Decimal('0.0')
-        })
-
-    transactions.sort(key=lambda x: x['date'])
-
-    balance = report_opening_balance
+    balance = opening_balance
     entries = []
-    for t in transactions:
-        balance += t['credit'] - t['debit']
-        entries.append(GeneralLedgerEntry(**t, balance=balance))
+    
+    for je in journal_entries:
+        for item in je.items:
+            # If filtering by account, skip items that don't match
+            if account_code and item.account.account_code != account_code:
+                continue
+                
+            debit = item.debit
+            credit = item.credit
+            balance += (debit - credit)
+            
+            entries.append(GeneralLedgerEntry(
+                date=je.date,
+                transaction_type="Journal Entry",
+                party="", # Journal entries are generic, could fetch from reference doc if needed
+                reference_document=je.reference_document,
+                transaction_id=je.id,
+                reference_id=None,
+                details=je.description,
+                debit=debit,
+                credit=credit,
+                account_code=item.account.account_code,
+                account_name=item.account.account_name,
+                balance=balance
+            ))
+
+    report_title = "General Ledger"
+    if account_code:
+        report_title = f"General Ledger ({account_code})"
 
     return GeneralLedger(
-        title="General Ledger (Cash Account)",
-        opening_balance=report_opening_balance,
+        title=report_title,
+        opening_balance=opening_balance,
         entries=entries,
         closing_balance=balance
     )
@@ -220,8 +240,16 @@ def get_purchase_ledger(db: Session, vendor_id: int, tenant_id: str) -> Purchase
 
     entries = []
     for po in purchase_orders_query:
-        amount_paid = sum(Decimal(str(p.amount_paid)) for p in po.payments if p.deleted_at is None)
+        non_deleted_payments = [p for p in po.payments if p.deleted_at is None]
+        amount_paid = sum(Decimal(str(p.amount_paid)) for p in non_deleted_payments)
         balance_amount = Decimal(str(po.total_amount)) - amount_paid
+        # Get the account code from the most recent payment if available
+        account_code = None
+        if non_deleted_payments:
+            latest_payment = sorted(non_deleted_payments, key=lambda p: p.payment_date, reverse=True)[0]
+            if latest_payment.account:
+                account_code = latest_payment.account.account_code
+
         entries.append(PurchaseLedgerEntry(
             date=po.order_date,
             vendor_name=vendor.name,
@@ -231,7 +259,8 @@ def get_purchase_ledger(db: Session, vendor_id: int, tenant_id: str) -> Purchase
             amount=Decimal(str(po.total_amount)),
             amount_paid=amount_paid,
             balance_amount=balance_amount,
-            payment_status=po.status.value
+            payment_status=po.status.value,
+            account_code=account_code
         ))
 
     return PurchaseLedger(
@@ -251,8 +280,16 @@ def get_sales_ledger(db: Session, customer_id: int, tenant_id: str) -> SalesLedg
 
     entries = []
     for so in sales_orders_query:
-        amount_paid = sum(Decimal(str(p.amount_paid)) for p in so.payments if p.deleted_at is None)
+        non_deleted_payments = [p for p in so.payments if p.deleted_at is None]
+        amount_paid = sum(Decimal(str(p.amount_paid)) for p in non_deleted_payments)
         balance_amount = Decimal(str(so.total_amount)) - amount_paid
+        # Get the account code from the most recent payment if available
+        account_code = None
+        if non_deleted_payments:
+            latest_payment = sorted(non_deleted_payments, key=lambda p: p.payment_date, reverse=True)[0]
+            if latest_payment.account:
+                account_code = latest_payment.account.account_code
+
         entries.append(SalesLedgerEntry(
             date=so.order_date,
             customer_name=customer.name,
@@ -262,7 +299,8 @@ def get_sales_ledger(db: Session, customer_id: int, tenant_id: str) -> SalesLedg
             amount=Decimal(str(so.total_amount)),
             amount_paid=amount_paid,
             balance_amount=balance_amount,
-            payment_status=so.status.value
+            payment_status=so.status.value,
+            account_code=account_code
         ))
 
     return SalesLedger(
@@ -425,4 +463,3 @@ def get_inventory_ledger(db: Session, item_id: int, start_date: date, end_date: 
         entries=entries,
         closing_quantity_on_hand=quantity_on_hand
     )
-

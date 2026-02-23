@@ -5,6 +5,8 @@ from models.sales_payments import SalesPayment
 from models.sales_orders import SalesOrder
 from models.business_partners import BusinessPartner
 from models.sales_order_items import SalesOrderItem
+from models.financial_settings import FinancialSettings
+from crud.financial_settings import get_financial_settings
 import os
 import uuid
 import logging
@@ -54,6 +56,10 @@ def generate_sales_receipt(db: Session, payment_id: int) -> str:
     # Receipt Info
     pdf.cell(0, 10, f'Receipt #: {db_payment.id}', 0, 1, 'L')
     pdf.cell(0, 10, f'Payment Date: {db_payment.payment_date.strftime("%Y-%m-%d")}', 0, 1, 'L')
+    # Get account code from financial settings
+    financial_settings = get_financial_settings(db, db_payment.tenant_id)
+    if financial_settings and financial_settings.default_cash_account:
+        pdf.cell(0, 10, f'Account Code: {financial_settings.default_cash_account.account_code}', 0, 1, 'L')
     pdf.ln(5)
 
     # Customer Info

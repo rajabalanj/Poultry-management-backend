@@ -40,6 +40,15 @@ from schemas.sales_orders import (
 from schemas.sales_order_items import SalesOrderItemCreateRequest, SalesOrderItemUpdate
 from schemas.egg_room_reports import EggRoomReportCreate
 
+# Imports for Journal Entry
+from crud import journal_entry as journal_entry_crud
+from schemas.journal_entry import JournalEntryCreate
+from schemas.journal_item import JournalItemCreate
+from crud.financial_settings import get_financial_settings
+
+# Define egg item names constant
+EGG_ITEM_NAMES = ["Table Egg", "Jumbo Egg", "Grade C Egg"]
+
 router = APIRouter(prefix="/sales-orders", tags=["Sales Orders"])
 logger = logging.getLogger("sales_orders")
 
@@ -61,6 +70,7 @@ def create_sales_order(
         raise HTTPException(status_code=400, detail="Business partner not found, inactive, or not a customer.")
 
     total_amount = Decimal(0)
+    total_cost_of_goods = Decimal(0)
     db_so_items = []
 
     if not so.items:
@@ -88,6 +98,15 @@ def create_sales_order(
         
         line_total = item_data.quantity * price_per_unit
         total_amount += line_total
+
+        # Calculate line cost based on item type
+        if db_inventory_item.name in EGG_ITEM_NAMES:
+            # For eggs, don't include cost here as it's tracked through composition usage
+            line_cost = Decimal(0)
+        else:
+            # For other items, use average cost
+            line_cost = item_data.quantity * (db_inventory_item.average_cost or Decimal(0))
+        total_cost_of_goods += line_cost
         
         db_so_items.append(
             SalesOrderItemModel(
@@ -201,6 +220,75 @@ def create_sales_order(
         # Refresh the egg_room_report object to get the updated values
         db.refresh(egg_room_report)
 
+    # --- Create Journal Entry for Revenue (Accrual) ---
+    try:
+        settings = get_financial_settings(db, tenant_id)
+        if not settings.default_sales_account_id or not settings.default_accounts_receivable_account_id:
+            logger.error(f"Default Sales or Accounts Receivable account not configured for tenant {tenant_id}. Revenue journal entry not created for SO {db_so.id}.")
+        else:
+            # Debit Accounts Receivable, Credit Sales Revenue
+            # Round total_amount to 2 decimal places to match journal entry requirements
+            rounded_total_amount = db_so.total_amount.quantize(Decimal('0.01'))
+            
+            journal_items = [
+                JournalItemCreate(
+                    account_id=settings.default_accounts_receivable_account_id,
+                    debit=rounded_total_amount,
+                    credit=Decimal('0.0')
+                ),
+                JournalItemCreate(
+                    account_id=settings.default_sales_account_id,
+                    debit=Decimal('0.0'),
+                    credit=rounded_total_amount
+                )
+            ]
+            journal_entry_schema = JournalEntryCreate(
+                date=db_so.order_date,
+                description=f"Invoice for Sales Order SO-{db_so.so_number}",
+                reference_document=f"SO-{db_so.so_number}",
+                items=journal_items
+            )
+            journal_entry_crud.create_journal_entry(db=db, entry=journal_entry_schema, tenant_id=tenant_id)
+            logger.info(f"Revenue Journal entry created for SO {db_so.id} with amount {db_so.total_amount}")
+    except Exception as e:
+        logger.error(f"Failed to create Revenue journal entry for SO {db_so.id}: {e}")
+    # --- End Journal Entry ---
+
+    # --- Create Journal Entry for COGS ---
+    if total_cost_of_goods > 0:
+        try:
+            settings = get_financial_settings(db, tenant_id)
+            if not settings.default_cogs_account_id or not settings.default_inventory_account_id:
+                logger.error(f"Default COGS or Inventory account not configured for tenant {tenant_id}. COGS journal entry not created for SO {db_so.id}.")
+            else:
+                # Debit COGS, Credit Inventory
+                # Round total_cost_of_goods to 2 decimal places to match journal entry requirements
+                rounded_cost_of_goods = total_cost_of_goods.quantize(Decimal('0.01'))
+                
+                journal_items = [
+                    JournalItemCreate(
+                        account_id=settings.default_cogs_account_id,
+                        debit=rounded_cost_of_goods,
+                        credit=Decimal('0.0')
+                    ),
+                    JournalItemCreate(
+                        account_id=settings.default_inventory_account_id,
+                        debit=Decimal('0.0'),
+                        credit=rounded_cost_of_goods
+                    )
+                ]
+                journal_entry_schema = JournalEntryCreate(
+                    date=db_so.order_date,
+                    description=f"COGS for Sales Order SO-{db_so.so_number}",
+                    reference_document=f"SO-{db_so.so_number}",
+                    items=journal_items
+                )
+                journal_entry_crud.create_journal_entry(db=db, entry=journal_entry_schema, tenant_id=tenant_id)
+                logger.info(f"COGS Journal entry created for SO {db_so.id} with amount {total_cost_of_goods}")
+        except Exception as e:
+            logger.error(f"Failed to create COGS journal entry for SO {db_so.id}: {e}")
+    # --- End Journal Entry ---
+
     db.refresh(db_so)
     
     db_so = db.query(SalesOrderModel).options(
@@ -210,8 +298,6 @@ def create_sales_order(
 
     logger.info(f"Sales Order (ID: {db_so.id}) created for Customer ID {db_so.customer_id} by User {get_user_identifier(user)} for tenant {tenant_id}")
     return db_so
-
-EGG_ITEM_NAMES = ["Table Egg", "Jumbo Egg", "Grade C Egg"]
 
 def _get_available_egg_stock(db: Session, tenant_id: str, order_date: date, egg_type: str) -> float:
     logger.info(f"Checking available stock for {egg_type} on {order_date} for tenant {tenant_id}")

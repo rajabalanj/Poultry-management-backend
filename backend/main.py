@@ -39,7 +39,9 @@ import routers.shed as shed
 import routers.inventory_item_variant as inventory_item_variant_router
 import routers.monthly_egg_production_cost as monthly_egg_production_cost
 import routers.feed_consumption_per_egg as feed_consumption_per_egg
-
+import routers.chart_of_accounts as chart_of_accounts
+import routers.journal_entry as journal_entry
+import routers.financial_settings as financial_settings
 
 import logging
 import os
@@ -162,6 +164,9 @@ app.include_router(shed.router)
 app.include_router(inventory_item_variant_router.router)
 app.include_router(monthly_egg_production_cost.router)
 app.include_router(feed_consumption_per_egg.router)
+app.include_router(chart_of_accounts.router)
+app.include_router(journal_entry.router)
+app.include_router(financial_settings.router)
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
@@ -182,5 +187,3 @@ async def test_route():
         dict: A welcome message
     """
     return {"message": "Welcome to the FastAPI application!"}
-
-

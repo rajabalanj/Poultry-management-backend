@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, DateTime, Numeric, UniqueConstraint
+from sqlalchemy import Column, Integer, String, DateTime, Numeric, UniqueConstraint, ForeignKey
+from sqlalchemy.orm import relationship
 from database import Base
 from datetime import datetime
 import pytz
@@ -9,10 +10,10 @@ class OperationalExpense(Base, AuditMixin):
 
     id = Column(Integer, primary_key=True, index=True)
     tenant_id = Column(String, index=True)
-    date = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(pytz.timezone('Asia/Kolkata')).date())
+    expense_date = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(pytz.timezone('Asia/Kolkata')).date())
     expense_type = Column(String, nullable=False)
     amount = Column(Numeric(10, 2), nullable=False)
 
     __table_args__ = (
-        UniqueConstraint('tenant_id', 'date', 'expense_type', name='_tenant_date_expense_uc'),
+        UniqueConstraint('tenant_id', 'expense_date', 'expense_type', name='_tenant_date_expense_uc'),
     )

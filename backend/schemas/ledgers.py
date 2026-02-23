@@ -16,6 +16,8 @@ class GeneralLedgerEntry(BaseModel):
     debit: Decimal = Decimal('0.0')
     credit: Decimal = Decimal('0.0')
     balance: Decimal
+    account_code: str  # Chart of Accounts code for traceability
+    account_name: Optional[str] = None # Human readable account name
 
     @computed_field
     def debit_str(self) -> str:
@@ -74,6 +76,7 @@ class PurchaseLedgerEntry(BaseModel):
     amount_paid: Decimal
     balance_amount: Decimal
     payment_status: str
+    account_code: Optional[str] = None
 
     @computed_field
     def amount_str(self) -> str:
@@ -115,6 +118,7 @@ class SalesLedgerEntry(BaseModel):
     amount_paid: Decimal
     balance_amount: Decimal
     payment_status: str
+    account_code: Optional[str] = None
 
     @computed_field
     def amount_str(self) -> str:

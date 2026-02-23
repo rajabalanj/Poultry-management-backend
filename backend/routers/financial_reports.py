@@ -57,7 +57,7 @@ def get_general_ledger(
     end_date: date,
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_tenant_id),
-    transaction_type: Optional[str] = Query(None, description="Filter by transaction type", enum=["purchase", "sales"])
+    transaction_type: Optional[str] = Query(None, description="Filter by transaction type", enum=["purchase", "sales", "expense"])
 ):
     return crud_financial_reports.get_general_ledger(db=db, start_date=start_date, end_date=end_date, tenant_id=tenant_id, transaction_type=transaction_type)
 

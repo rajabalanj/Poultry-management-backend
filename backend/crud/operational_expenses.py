@@ -6,6 +6,7 @@ from models import operational_expenses as models
 from schemas import operational_expenses as schemas
 from datetime import date
 from typing import List
+from sqlalchemy import func
 import datetime
 import pytz
 
@@ -15,8 +16,8 @@ def get_operational_expense(db: Session, expense_id: int, tenant_id: int):
 def get_operational_expenses_by_date_range(db: Session, start_date: date, end_date: date, tenant_id: int) -> List[models.OperationalExpense]:
     return db.query(models.OperationalExpense).filter(
         models.OperationalExpense.tenant_id == tenant_id,
-        models.OperationalExpense.date >= start_date,
-        models.OperationalExpense.date <= end_date
+        func.date(models.OperationalExpense.expense_date) >= start_date,
+        func.date(models.OperationalExpense.expense_date) <= end_date
     ).all()
 
 def create_operational_expense(db: Session, expense: schemas.OperationalExpenseCreate, tenant_id: int, user_id: str):
@@ -30,7 +31,7 @@ def update_operational_expense(db: Session, expense_id: int, expense: schemas.Op
     db_expense = get_operational_expense(db, expense_id, tenant_id)
     if db_expense:
         old_values = sqlalchemy_to_dict(db_expense)
-        for key, value in expense.model_dump().items():
+        for key, value in expense.model_dump(exclude_unset=True).items():
             setattr(db_expense, key, value)
         db_expense.updated_at = datetime.datetime.now(pytz.timezone('Asia/Kolkata'))
         db_expense.updated_by = user_id

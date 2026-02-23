@@ -107,13 +107,13 @@ def get_monthly_egg_production_cost(db: Session, start_date: date, end_date: dat
 
     # Get monthly operational expenses
     monthly_expenses_query = db.query(
-        func.to_char(OperationalExpense.date, 'YYYY-MM').label('month'),
+        func.to_char(OperationalExpense.expense_date, 'YYYY-MM').label('month'),
         func.sum(OperationalExpense.amount).label('operational_expense')
     ).filter(
-        OperationalExpense.date.between(start_date, end_date),
+        func.date(OperationalExpense.expense_date).between(start_date, end_date),
         OperationalExpense.tenant_id == tenant_id
     ).group_by(
-        func.to_char(OperationalExpense.date, 'YYYY-MM')
+        func.to_char(OperationalExpense.expense_date, 'YYYY-MM')
     ).subquery()
 
     # Join all the data

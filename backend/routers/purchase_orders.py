@@ -38,6 +38,12 @@ from schemas.purchase_orders import (
     PurchaseOrderItemCreateRequest,
 )
 
+# Imports for Journal Entry
+from crud import journal_entry as journal_entry_crud
+from schemas.journal_entry import JournalEntryCreate
+from schemas.journal_item import JournalItemCreate
+from crud.financial_settings import get_financial_settings
+
 import pandas as pd
 # Configure matplotlib for headless environments before importing plotting helpers
 import matplotlib
@@ -177,6 +183,42 @@ def create_purchase_order(
         db.add(audit)
         db.add(inv)
     
+    # --- Create Journal Entry for the Purchase Order (Accrual) ---
+    try:
+        settings = get_financial_settings(db, tenant_id)
+        
+        if not settings.default_inventory_account_id or not settings.default_accounts_payable_account_id:
+            logger.error(f"Default Inventory or Accounts Payable account not configured in Financial Settings for tenant {tenant_id}. Journal entry not created for PO.")
+        else:
+            # Debit Inventory, Credit Accounts Payable
+            # Round total_amount to 2 decimal places to match journal entry requirements
+            rounded_amount = db_po.total_amount.quantize(Decimal('0.01'))
+            
+            journal_items = [
+                JournalItemCreate(
+                    account_id=settings.default_inventory_account_id,
+                    debit=rounded_amount,
+                    credit=Decimal('0.0')
+                ),
+                JournalItemCreate(
+                    account_id=settings.default_accounts_payable_account_id,
+                    debit=Decimal('0.0'),
+                    credit=rounded_amount
+                )
+            ]
+
+            journal_entry_schema = JournalEntryCreate(
+                date=db_po.order_date,
+                description=f"Purchase Order PO-{db_po.po_number}",
+                reference_document=f"PO-{db_po.po_number}",
+                items=journal_items
+            )
+            journal_entry_crud.create_journal_entry(db=db, entry=journal_entry_schema, tenant_id=tenant_id)
+            logger.info(f"Journal entry created for PO {db_po.id}")
+    except Exception as e:
+        logger.error(f"Failed to create journal entry for PO {db_po.id}: {e}")
+    # --- End Journal Entry ---
+
     db.commit()
     db.refresh(db_po)
     

@@ -12,6 +12,13 @@ from utils import sqlalchemy_to_dict
 from datetime import datetime
 import pytz
 from pydantic import BaseModel
+from decimal import Decimal
+
+# Imports for Journal Entry
+from crud import journal_entry as journal_entry_crud
+from schemas.journal_entry import JournalEntryCreate
+from schemas.journal_item import JournalItemCreate
+from crud.financial_settings import get_financial_settings
 
 try:
     from utils.s3_utils import generate_presigned_upload_url, generate_presigned_download_url
@@ -39,9 +46,6 @@ def create_payment(
     if db_po is None:
         raise HTTPException(status_code=404, detail="Purchase Order not found for this payment.")
 
-    # No explicit CANCELLED status in enum; payments route controls PAID/PARTIALLY_PAID/APPROVED/DRAFT
-
-    # Check if payment exceeds remaining amount
     remaining_amount = db_po.total_amount - db_po.total_amount_paid
     if payment.amount_paid > remaining_amount:
         raise HTTPException(
@@ -67,6 +71,50 @@ def create_payment(
     
     db.commit() # Commit PO status update
     db.refresh(db_payment) # Re-refresh payment to ensure everything is in sync for response
+
+    # --- Create Journal Entry for the Payment ---
+    try:
+        settings = get_financial_settings(db, tenant_id)
+        
+        # On payment, we Debit Accounts Payable and Credit Cash/Bank.
+        # The Inventory debit happens at PO creation/receipt.
+        if not settings.default_cash_account_id or not settings.default_accounts_payable_account_id:
+            logger.error(f"Default Cash or Accounts Payable account not configured in Financial Settings for tenant {tenant_id}. Journal entry not created.")
+        else:
+            # Determine Credit Account (Cash/Bank) - use default from financial settings
+            credit_account_id = settings.default_cash_account_id
+
+            # Debit Accounts Payable
+            debit_account_id = settings.default_accounts_payable_account_id
+
+            # Round amount_paid to 2 decimal places to match journal entry requirements
+            rounded_amount = db_payment.amount_paid.quantize(Decimal('0.01'))
+            
+            journal_items = [
+                JournalItemCreate(
+                    account_id=credit_account_id,
+                    debit=Decimal('0.0'),
+                    credit=rounded_amount
+                ),
+                JournalItemCreate(
+                    account_id=debit_account_id,
+                    debit=rounded_amount,
+                    credit=Decimal('0.0')
+                )
+            ]
+
+            journal_entry_schema = JournalEntryCreate(
+                date=db_payment.payment_date,
+                description=f"Payment for Purchase Order PO-{db_po.po_number}",
+                reference_document=f"PO-{db_po.po_number}",
+                items=journal_items
+            )
+            journal_entry_crud.create_journal_entry(db=db, entry=journal_entry_schema, tenant_id=tenant_id)
+            logger.info(f"Journal entry created for payment {db_payment.id}")
+
+    except Exception as e:
+        logger.error(f"Failed to create journal entry for payment {db_payment.id}: {e}")
+    # --- End Journal Entry ---
 
     logger.info(f"Payment of {payment.amount_paid} recorded for Purchase Order ID {payment.purchase_order_id} by user {get_user_identifier(user)} for tenant {tenant_id}")
     return db_payment
@@ -103,7 +151,7 @@ def update_payment(
         raise HTTPException(status_code=404, detail="Payment not found")
 
     old_values = sqlalchemy_to_dict(db_payment)
-    old_amount_paid = db_payment.amount_paid # Store old amount for PO total recalculation
+    old_amount_paid = db_payment.amount_paid 
     
     payment_data = payment_update.model_dump(exclude_unset=True)
     for key, value in payment_data.items():
@@ -125,7 +173,6 @@ def update_payment(
     db.commit()
     db.refresh(db_payment)
 
-    # Re-evaluate PO payment status and total if amount changed
     db_po = db_payment.purchase_order
     if db_po and 'amount_paid' in payment_data:
         amount_difference = db_payment.amount_paid - old_amount_paid
@@ -156,7 +203,7 @@ def delete_payment(
     if db_payment is None:
         raise HTTPException(status_code=404, detail="Payment not found")
 
-    db_po = db_payment.purchase_order # Get the related PO
+    db_po = db_payment.purchase_order 
     
     old_values = sqlalchemy_to_dict(db_payment)
     db_payment.deleted_at = datetime.now(pytz.timezone('Asia/Kolkata'))
@@ -173,7 +220,6 @@ def delete_payment(
     create_audit_log(db=db, log_entry=log_entry)
     db.commit()
 
-    # Re-evaluate PO payment status after deletion
     if db_po:
         db_po.total_amount_paid -= db_payment.amount_paid
 
