@@ -175,59 +175,120 @@ def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id:
     # For Credit-normal accounts (Liability/Equity/Revenue), a positive balance here means it's in debit (negative balance).
     opening_balance = opening_balance_query.scalar() or Decimal(0)
 
-    # 2. Fetch Transactions
-    query = db.query(JournalEntry).options(
-        joinedload(JournalEntry.items).joinedload(JournalItem.account)
-    ).filter(
+    # 2. Fetch Transactions directly from JournalItem for efficiency
+    query = db.query(JournalItem).options(
+        joinedload(JournalItem.journal_entry),
+        joinedload(JournalItem.account)
+    ).join(JournalEntry).filter(
         JournalEntry.tenant_id == tenant_id,
         JournalEntry.date >= start_date,
         JournalEntry.date <= end_date
     )
 
-    # If filtering by account code, we only want JournalEntries that contain that account
+    # If filtering by account code, add the filter
     if account_code:
-        query = query.join(JournalEntry.items).join(JournalItem.account).filter(ChartOfAccounts.account_code == account_code)
+        query = query.join(ChartOfAccounts, JournalItem.account_id == ChartOfAccounts.id).filter(
+            ChartOfAccounts.account_code == account_code
+        )
 
-    journal_entries = query.order_by(JournalEntry.date, JournalEntry.id).all()
+    journal_items = query.order_by(JournalEntry.date, JournalEntry.id).all()
+
+    # Pre-fetch IDs for POs and SOs to map numbers to IDs
+    po_numbers = set()
+    so_numbers = set()
+    for item in journal_items:
+        ref_doc = item.journal_entry.reference_document or ""
+        if ref_doc.startswith("PO-"):
+            parts = ref_doc.split("-")
+            if len(parts) > 1 and parts[1].isdigit():
+                po_numbers.add(int(parts[1]))
+        elif ref_doc.startswith("SO-"):
+            parts = ref_doc.split("-")
+            if len(parts) > 1 and parts[1].isdigit():
+                so_numbers.add(int(parts[1]))
+
+    po_map = {}
+    if po_numbers:
+        pos = db.query(purchase_orders.PurchaseOrder.po_number, purchase_orders.PurchaseOrder.id).filter(
+            purchase_orders.PurchaseOrder.tenant_id == tenant_id,
+            purchase_orders.PurchaseOrder.po_number.in_(po_numbers)
+        ).all()
+        po_map = {p.po_number: str(p.id) for p in pos}
+
+    so_map = {}
+    if so_numbers:
+        sos = db.query(sales_orders.SalesOrder.so_number, sales_orders.SalesOrder.id).filter(
+            sales_orders.SalesOrder.tenant_id == tenant_id,
+            sales_orders.SalesOrder.so_number.in_(so_numbers)
+        ).all()
+        so_map = {s.so_number: str(s.id) for s in sos}
 
     balance = opening_balance
     entries = []
     
-    for je in journal_entries:
-        for item in je.items:
-            # If filtering by account, skip items that don't match
-            if account_code and item.account.account_code != account_code:
-                continue
-                
-            debit = item.debit
-            credit = item.credit
-            balance += (debit - credit)
-            
-            entries.append(GeneralLedgerEntry(
-                date=je.date,
-                transaction_type="Journal Entry",
-                party="", # Journal entries are generic, could fetch from reference doc if needed
-                reference_document=je.reference_document,
-                transaction_id=je.id,
-                reference_id=None,
-                details=je.description,
-                debit=debit,
-                credit=credit,
-                account_code=item.account.account_code,
-                account_name=item.account.account_name,
-                balance=balance
-            ))
+    for item in journal_items:
+        debit = item.debit
+        credit = item.credit
+        balance += (debit - credit)
+        
+        # Derive transaction type from reference_document prefix
+        ref_doc = item.journal_entry.reference_document or ""
+        
+        ref_id = None
+        if ref_doc.startswith("PO-"):
+            t_type = "Purchase"
+            parts = ref_doc.split("-")
+            if len(parts) > 1 and parts[1].isdigit():
+                ref_id = po_map.get(int(parts[1]))
+        elif ref_doc.startswith("SO-"):
+            t_type = "Sale"
+            parts = ref_doc.split("-")
+            if len(parts) > 1 and parts[1].isdigit():
+                ref_id = so_map.get(int(parts[1]))
+        elif ref_doc.startswith("USAGE-"):
+            t_type = "Inventory Usage"
+            parts = ref_doc.split("-")
+            if len(parts) > 1:
+                ref_id = parts[1]
+        elif ref_doc.startswith("EXP-"):
+            t_type = "Expense"
+            parts = ref_doc.split("-")
+            if len(parts) > 1:
+                ref_id = parts[1]
+        else:
+            t_type = "Journal Entry"
+            if "-" in ref_doc:
+                parts = ref_doc.split("-", 1)
+                if len(parts) == 2:
+                    ref_id = parts[1]
+
+        entries.append(GeneralLedgerEntry(
+            date=item.journal_entry.date,
+            transaction_type=t_type,
+            party="", # Journal entries are generic, could fetch from reference doc if needed
+            reference_document=item.journal_entry.reference_document,
+            transaction_id=item.journal_entry.id,
+            reference_id=ref_id,
+            details=item.journal_entry.description,
+            debit=debit,
+            credit=credit,
+            account_code=item.account.account_code,
+            account_name=item.account.account_name,
+            balance=balance
+        ))
 
     report_title = "General Ledger"
     if account_code:
         report_title = f"General Ledger ({account_code})"
 
+    # Create the GeneralLedger object and return it
     return GeneralLedger(
         title=report_title,
         opening_balance=opening_balance,
         entries=entries,
         closing_balance=balance
     )
+
 
 def get_purchase_ledger(db: Session, vendor_id: int, tenant_id: str) -> PurchaseLedger:
     vendor = db.query(business_partners.BusinessPartner).filter(business_partners.BusinessPartner.id == vendor_id, business_partners.BusinessPartner.tenant_id == tenant_id).first()
