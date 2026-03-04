@@ -43,6 +43,7 @@ from crud import journal_entry as journal_entry_crud
 from schemas.journal_entry import JournalEntryCreate
 from schemas.journal_item import JournalItemCreate
 from crud.financial_settings import get_financial_settings
+from models.journal_entry import JournalEntry as JournalEntryModel
 
 import pandas as pd
 # Configure matplotlib for headless environments before importing plotting helpers
@@ -55,6 +56,51 @@ from enum import Enum
 
 router = APIRouter(prefix="/purchase-orders", tags=["Purchase Orders"])
 logger = logging.getLogger("purchase_orders")
+
+def _adjust_po_journal_entry(db: Session, po: PurchaseOrderModel, tenant_id: str, reason: str):
+    """Reverses the latest accrual journal entry for a PO and creates a new one with the updated total."""
+    try:
+        settings = get_financial_settings(db, tenant_id)
+        if not settings.default_inventory_account_id or not settings.default_accounts_payable_account_id:
+            logger.warning(f"Cannot adjust journal entry for PO-{po.po_number}: Default accounts not set.")
+            return
+
+        # Find the latest, non-reversing accrual entry for this PO
+        original_entry = db.query(JournalEntryModel).filter(
+            JournalEntryModel.reference_document == f"PO-{po.po_number}",
+            JournalEntryModel.description == f"Accrual for Purchase Order PO-{po.po_number}",
+            ~JournalEntryModel.description.startswith('Reversal'),
+            JournalEntryModel.tenant_id == tenant_id
+        ).order_by(JournalEntryModel.id.desc()).first()
+
+        if original_entry:
+            # 1. Create Reversing Entry
+            reversing_items = [JournalItemCreate(account_id=item.account_id, debit=item.credit, credit=item.debit) for item in original_entry.items]
+            reversing_entry_schema = JournalEntryCreate(
+                date=po.order_date,
+                description=f"Reversal for {reason} on PO-{po.po_number}",
+                reference_document=f"PO-{po.po_number}",
+                items=reversing_items
+            )
+            journal_entry_crud.create_journal_entry(db=db, entry=reversing_entry_schema, tenant_id=tenant_id)
+
+        # 2. Create New Correct Entry
+        new_amount = po.total_amount.quantize(Decimal('0.01'))
+        if new_amount > 0:
+            new_items = [
+                JournalItemCreate(account_id=settings.default_inventory_account_id, debit=new_amount, credit=Decimal('0.0')),
+                JournalItemCreate(account_id=settings.default_accounts_payable_account_id, debit=Decimal('0.0'), credit=new_amount)
+            ]
+            new_entry_schema = JournalEntryCreate(
+                date=po.order_date,
+                description=f"Accrual for Purchase Order PO-{po.po_number}",
+                reference_document=f"PO-{po.po_number}",
+                items=new_items
+            )
+            journal_entry_crud.create_journal_entry(db=db, entry=new_entry_schema, tenant_id=tenant_id)
+            logger.info(f"Adjusted journal entry for PO-{po.po_number} due to {reason}.")
+    except Exception as e:
+        logger.error(f"Failed to adjust journal entry for PO-{po.po_number}: {e}")
 
 # ... (other endpoints like create_purchase_order, get_purchase_orders, etc.)
 
@@ -82,6 +128,8 @@ def get_purchase_order(
     )
     if not db_po:
         raise HTTPException(status_code=404, detail="Purchase Order not found")
+
+    db_po.payments = [p for p in db_po.payments if p.deleted_at is None]
     return db_po
 @router.post("/", response_model=PurchaseOrderSchema, status_code=status.HTTP_201_CREATED)
 def create_purchase_order(
@@ -209,7 +257,7 @@ def create_purchase_order(
 
             journal_entry_schema = JournalEntryCreate(
                 date=db_po.order_date,
-                description=f"Purchase Order PO-{db_po.po_number}",
+                description=f"Accrual for Purchase Order PO-{db_po.po_number}",
                 reference_document=f"PO-{db_po.po_number}",
                 items=journal_items
             )
@@ -227,6 +275,9 @@ def create_purchase_order(
         selectinload(PurchaseOrderModel.items),
         selectinload(PurchaseOrderModel.payments)
     ).filter(PurchaseOrderModel.id == db_po.id, PurchaseOrderModel.tenant_id == tenant_id).first()
+
+    if db_po:
+        db_po.payments = [p for p in db_po.payments if p.deleted_at is None]
 
     logger.info(f"Purchase Order (ID: {db_po.id}) created for Vendor ID {db_po.vendor_id} by user {get_user_identifier(user)} for tenant {tenant_id}")
     return db_po
@@ -260,6 +311,9 @@ def read_purchase_orders(
         selectinload(PurchaseOrderModel.payments)
     ).offset(skip).limit(limit).all()
     
+    for po in purchase_orders:
+        po.payments = [p for p in po.payments if p.deleted_at is None]
+
     return purchase_orders
 
 
@@ -511,6 +565,9 @@ def update_purchase_order(
         selectinload(PurchaseOrderModel.payments)
     ).filter(PurchaseOrderModel.id == po_id, PurchaseOrderModel.tenant_id == tenant_id).first()
     
+    if db_po:
+        db_po.payments = [p for p in db_po.payments if p.deleted_at is None]
+
     logger.info(f"Purchase Order (ID: {po_id}) updated by user {get_user_identifier(user)} for tenant {tenant_id}")
     return db_po
 
@@ -547,6 +604,25 @@ def delete_purchase_order(
         if inv:
             inv.current_stock = (inv.current_stock or 0) - item.quantity
             db.add(inv)
+
+    old_values = sqlalchemy_to_dict(db_po)
+    db_po.deleted_at = datetime.now(pytz.timezone('Asia/Kolkata'))
+    db_po.deleted_by = get_user_identifier(user)
+    new_values = sqlalchemy_to_dict(db_po)
+    log_entry = AuditLogCreate(
+        table_name='purchase_orders',
+        record_id=str(po_id),
+        changed_by=get_user_identifier(user),
+        action='DELETE',
+        old_values=old_values,
+        new_values=new_values
+    )
+    create_audit_log(db=db, log_entry=log_entry)
+
+    # --- Reverse Journal Entry on Delete ---
+    db_po.total_amount = Decimal('0.0')
+    _adjust_po_journal_entry(db, db_po, tenant_id, "PO deletion")
+    # --- End Journal Entry Reversal ---
 
     old_values = sqlalchemy_to_dict(db_po)
     db_po.deleted_at = datetime.now(pytz.timezone('Asia/Kolkata'))
@@ -645,6 +721,10 @@ def add_item_to_purchase_order(
     db_po.updated_by = get_user_identifier(user)
     
     db.commit()
+
+    # --- Adjust Journal Entry ---
+    _adjust_po_journal_entry(db, db_po, tenant_id, "item addition")
+    # --- End Journal Entry Adjustment ---
     db.refresh(db_po)
 
     # Re-query with relationships for a complete response object
@@ -652,6 +732,9 @@ def add_item_to_purchase_order(
         selectinload(PurchaseOrderModel.items).selectinload(PurchaseOrderItemModel.inventory_item),
         selectinload(PurchaseOrderModel.vendor)
     ).filter(PurchaseOrderModel.id == po_id, PurchaseOrderModel.tenant_id == tenant_id).first()
+
+    if db_po:
+        db_po.payments = [p for p in db_po.payments if p.deleted_at is None]
 
     logger.info(f"Item {db_inventory_item.name} added to Purchase Order (ID: {po_id}) by user {get_user_identifier(user)} for tenant {tenant_id}")
     return db_po
@@ -780,7 +863,14 @@ def update_item_in_purchase_order(
     db_po.updated_by = get_user_identifier(user)
 
     db.commit()
+
+    # --- Adjust Journal Entry ---
+    _adjust_po_journal_entry(db, db_po, tenant_id, "item update")
+    # --- End Journal Entry Adjustment ---
     db.refresh(db_po)
+
+    # Filter soft-deleted payments. This will trigger a lazy-load.
+    db_po.payments = [p for p in db_po.payments if p.deleted_at is None]
 
     logger.info(f"Purchase Order Item (ID: {item_id}) of Purchase Order (ID: {po_id}) updated by user {get_user_identifier(user)} for tenant {tenant_id}")
     return db_po
@@ -819,6 +909,11 @@ def remove_item_from_purchase_order(
         db.add(inv)
 
     db.delete(db_po_item)
+
+    # --- Adjust Journal Entry ---
+    _adjust_po_journal_entry(db, db_po, tenant_id, "item removal")
+    # --- End Journal Entry Adjustment ---
+
     db.commit()
     db.refresh(db_po) # Refresh the PO to reflect updated total
 

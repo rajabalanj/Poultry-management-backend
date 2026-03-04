@@ -45,12 +45,68 @@ from crud import journal_entry as journal_entry_crud
 from schemas.journal_entry import JournalEntryCreate
 from schemas.journal_item import JournalItemCreate
 from crud.financial_settings import get_financial_settings
+from models.journal_entry import JournalEntry as JournalEntryModel
 
 # Define egg item names constant
 EGG_ITEM_NAMES = ["Table Egg", "Jumbo Egg", "Grade C Egg"]
 
 router = APIRouter(prefix="/sales-orders", tags=["Sales Orders"])
 logger = logging.getLogger("sales_orders")
+
+def _adjust_so_journal_entries(db: Session, so: SalesOrderModel, tenant_id: str, reason: str, total_cost_of_goods: Decimal):
+    """Reverses latest Revenue and COGS JEs for an SO and creates new ones."""
+    try:
+        settings = get_financial_settings(db, tenant_id)
+        
+        # --- 1. Adjust Revenue Entry ---
+        if settings.default_sales_account_id and settings.default_accounts_receivable_account_id:
+            original_revenue_entry = db.query(JournalEntryModel).filter(
+                JournalEntryModel.reference_document == f"SO-{so.so_number}",
+                JournalEntryModel.description.like(f"Invoice for Sales Order SO-{so.so_number}%"),
+                ~JournalEntryModel.description.startswith('Reversal'),
+                JournalEntryModel.tenant_id == tenant_id
+            ).order_by(JournalEntryModel.id.desc()).first()
+
+            if original_revenue_entry:
+                reversing_items = [JournalItemCreate(account_id=i.account_id, debit=i.credit, credit=i.debit) for i in original_revenue_entry.items]
+                reversing_entry = JournalEntryCreate(date=so.order_date, description=f"Reversal for {reason} on SO-{so.so_number} (Revenue)", reference_document=f"SO-{so.so_number}", items=reversing_items)
+                journal_entry_crud.create_journal_entry(db=db, entry=reversing_entry, tenant_id=tenant_id)
+
+            new_revenue_amount = so.total_amount.quantize(Decimal('0.01'))
+            if new_revenue_amount > 0:
+                new_revenue_items = [
+                    JournalItemCreate(account_id=settings.default_accounts_receivable_account_id, debit=new_revenue_amount, credit=Decimal('0.0')),
+                    JournalItemCreate(account_id=settings.default_sales_account_id, debit=Decimal('0.0'), credit=new_revenue_amount)
+                ]
+                new_revenue_entry = JournalEntryCreate(date=so.order_date, description=f"Invoice for Sales Order SO-{so.so_number}", reference_document=f"SO-{so.so_number}", items=new_revenue_items)
+                journal_entry_crud.create_journal_entry(db=db, entry=new_revenue_entry, tenant_id=tenant_id)
+        
+        # --- 2. Adjust COGS Entry ---
+        if settings.default_cogs_account_id and settings.default_inventory_account_id:
+            original_cogs_entry = db.query(JournalEntryModel).filter(
+                JournalEntryModel.reference_document == f"SO-{so.so_number}",
+                JournalEntryModel.description.like(f"COGS for Sales Order SO-{so.so_number}%"),
+                ~JournalEntryModel.description.startswith('Reversal'),
+                JournalEntryModel.tenant_id == tenant_id
+            ).order_by(JournalEntryModel.id.desc()).first()
+
+            if original_cogs_entry:
+                reversing_items = [JournalItemCreate(account_id=i.account_id, debit=i.credit, credit=i.debit) for i in original_cogs_entry.items]
+                reversing_entry = JournalEntryCreate(date=so.order_date, description=f"Reversal for {reason} on SO-{so.so_number} (COGS)", reference_document=f"SO-{so.so_number}", items=reversing_items)
+                journal_entry_crud.create_journal_entry(db=db, entry=reversing_entry, tenant_id=tenant_id)
+
+            new_cogs_amount = total_cost_of_goods.quantize(Decimal('0.01'))
+            if new_cogs_amount > 0:
+                new_cogs_items = [
+                    JournalItemCreate(account_id=settings.default_cogs_account_id, debit=new_cogs_amount, credit=Decimal('0.0')),
+                    JournalItemCreate(account_id=settings.default_inventory_account_id, debit=Decimal('0.0'), credit=new_cogs_amount)
+                ]
+                new_cogs_entry = JournalEntryCreate(date=so.order_date, description=f"COGS for Sales Order SO-{so.so_number}", reference_document=f"SO-{so.so_number}", items=new_cogs_items)
+                journal_entry_crud.create_journal_entry(db=db, entry=new_cogs_entry, tenant_id=tenant_id)
+
+        logger.info(f"Adjusted journal entries for SO-{so.so_number} due to {reason}.")
+    except Exception as e:
+        logger.error(f"Failed to adjust journal entries for SO-{so.so_number}: {e}")
 
 @router.post("/", response_model=SalesOrderSchema, status_code=status.HTTP_201_CREATED)
 def create_sales_order(
@@ -295,6 +351,9 @@ def create_sales_order(
         selectinload(SalesOrderModel.items),
         selectinload(SalesOrderModel.payments)
     ).filter(SalesOrderModel.id == db_so.id, SalesOrderModel.tenant_id == tenant_id).first()
+
+    if db_so:
+        db_so.payments = [p for p in db_so.payments if p.deleted_at is None]
 
     logger.info(f"Sales Order (ID: {db_so.id}) created for Customer ID {db_so.customer_id} by User {get_user_identifier(user)} for tenant {tenant_id}")
     return db_so
@@ -562,7 +621,10 @@ def read_sales_orders(
         selectinload(SalesOrderModel.items),
         selectinload(SalesOrderModel.payments)
     ).offset(skip).limit(limit).all()
-    
+
+    for so in sales_orders:
+        so.payments = [p for p in so.payments if p.deleted_at is None]
+
     return sales_orders
 
 @router.get("/{so_id}", response_model=SalesOrderSchema)
@@ -574,6 +636,9 @@ def read_sales_order(so_id: int, db: Session = Depends(get_db), tenant_id: str =
     ).filter(SalesOrderModel.id == so_id, SalesOrderModel.tenant_id == tenant_id).first()
     if db_so is None:
         raise HTTPException(status_code=404, detail="Sales Order not found")
+
+    db_so.payments = [p for p in db_so.payments if p.deleted_at is None]
+
     return db_so
 
 @router.patch("/{so_id}", response_model=SalesOrderSchema)
@@ -696,6 +761,9 @@ def update_sales_order(
         selectinload(SalesOrderModel.payments)
     ).filter(SalesOrderModel.id == so_id, SalesOrderModel.tenant_id == tenant_id).first()
     
+    if db_so:
+        db_so.payments = [p for p in db_so.payments if p.deleted_at is None]
+
     logger.info(f"Sales Order (ID: {so_id}) updated by user {get_user_identifier(user)} for tenant {tenant_id}")
     return db_so
 
@@ -807,6 +875,17 @@ def add_item_to_sales_order(
     db_so.updated_by = get_user_identifier(user)
     
     db.commit()
+
+    # --- Adjust Journal Entries ---
+    # Recalculate total cost of goods for the entire order
+    current_total_cogs = Decimal(0)
+    for item in db_so.items:
+        if item.inventory_item.name not in EGG_ITEM_NAMES:
+            current_total_cogs += item.quantity * (item.inventory_item.average_cost or Decimal(0))
+    
+    _adjust_so_journal_entries(db, db_so, tenant_id, "item addition", current_total_cogs)
+    # --- End Journal Entry Adjustment ---
+
     db.refresh(db_so)
 
     # Re-query with relationships for a complete response object
@@ -815,6 +894,9 @@ def add_item_to_sales_order(
         selectinload(SalesOrderModel.payments),
         selectinload(SalesOrderModel.customer)
     ).filter(SalesOrderModel.id == so_id, SalesOrderModel.tenant_id == tenant_id).first()
+
+    if db_so:
+        db_so.payments = [p for p in db_so.payments if p.deleted_at is None]
 
     logger.info(f"Item {db_inventory_item.name} added to Sales Order (ID: {so_id}) by user {get_user_identifier(user)} for tenant {tenant_id}")
     return db_so
@@ -1040,7 +1122,20 @@ def update_sales_order_item(
     db_so.updated_by = get_user_identifier(user)
 
     db.commit()
+
+    # --- Adjust Journal Entries ---
+    # Recalculate total cost of goods for the entire order
+    current_total_cogs = Decimal(0)
+    for item in db_so.items:
+        if item.inventory_item.name not in EGG_ITEM_NAMES:
+            current_total_cogs += item.quantity * (item.inventory_item.average_cost or Decimal(0))
+
+    _adjust_so_journal_entries(db, db_so, tenant_id, "item update", current_total_cogs)
+    # --- End Journal Entry Adjustment ---
     db.refresh(db_so)
+
+    # Filter out soft-deleted payments before returning
+    db_so.payments = [p for p in db_so.payments if p.deleted_at is None]
 
     logger.info(f"Sales Order Item (ID: {item_id}) of Sales Order (ID: {so_id}) updated by user {get_user_identifier(user)} for tenant {tenant_id}")
     return db_so
@@ -1132,6 +1227,16 @@ def delete_sales_order_item(
     db_so.updated_by = get_user_identifier(user)
 
     db.delete(item_to_delete)
+
+    # --- Adjust Journal Entries ---
+    # Recalculate total cost of goods for the entire order
+    current_total_cogs = Decimal(0)
+    for item in db_so.items:
+        if item.inventory_item.name not in EGG_ITEM_NAMES:
+            current_total_cogs += item.quantity * (item.inventory_item.average_cost or Decimal(0))
+
+    _adjust_so_journal_entries(db, db_so, tenant_id, "item removal", current_total_cogs)
+    # --- End Journal Entry Adjustment ---
     db.commit()
     db.refresh(db_so)
 
@@ -1196,6 +1301,12 @@ def delete_sales_order(
         if inv:
             inv.current_stock = (inv.current_stock or 0) + item.quantity
             db.add(inv)
+            
+    # --- Reverse Journal Entries on Delete ---
+    db_so.total_amount = Decimal('0.0')
+    _adjust_so_journal_entries(db, db_so, tenant_id, "SO deletion", total_cost_of_goods=Decimal('0.0'))
+    # --- End Journal Entry Reversal ---
+
     old_values = sqlalchemy_to_dict(db_so)
     db_so.deleted_at = datetime.now(pytz.timezone('Asia/Kolkata'))
     db_so.deleted_by = get_user_identifier(user)
