@@ -219,6 +219,7 @@ class AdjustStockRequest(BaseModel):
     change_amount: Decimal
     change_type: Optional[str] = "manual"
     note: Optional[str] = None
+    unit_cost: Optional[Decimal] = None
 
 
 @router.post("/{item_id}/adjust", response_model=InventoryItem)
@@ -241,6 +242,13 @@ def adjust_inventory_item_stock(
         old_qty = Decimal(str(db_item.current_stock or 0))
         change_amt = Decimal(str(request.change_amount))
         new_qty = old_qty + change_amt
+
+        # Recalculate average cost if adding stock and unit_cost is provided
+        if change_amt > 0 and request.unit_cost is not None:
+            old_avg = Decimal(str(db_item.average_cost or 0))
+            if new_qty > 0:
+                new_avg = ((old_qty * old_avg) + (change_amt * request.unit_cost)) / new_qty
+                db_item.average_cost = new_avg
 
         # Update the inventory item
         db_item.current_stock = new_qty

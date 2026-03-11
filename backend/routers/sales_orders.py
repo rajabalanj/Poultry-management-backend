@@ -50,8 +50,46 @@ from models.journal_entry import JournalEntry as JournalEntryModel
 # Define egg item names constant
 EGG_ITEM_NAMES = ["Table Egg", "Jumbo Egg", "Grade C Egg"]
 
-router = APIRouter(prefix="/sales-orders", tags=["Sales Orders"])
 logger = logging.getLogger("sales_orders")
+
+def _provision_default_egg_items(db: Session, tenant_id: str):
+    """
+    Checks if default egg inventory items exist for the tenant and creates them if not.
+    This is idempotent and safe from race conditions.
+    """
+    EGG_ITEMS_TO_PROVISION = [
+        {"name": "Table Egg", "unit": "units", "category": "Supplies"},
+        {"name": "Jumbo Egg", "unit": "units", "category": "Supplies"},
+        {"name": "Grade C Egg", "unit": "units", "category": "Supplies"},
+    ]
+
+    for item_data in EGG_ITEMS_TO_PROVISION:
+        item_exists = db.query(InventoryItemModel).filter(
+            InventoryItemModel.name == item_data["name"],
+            InventoryItemModel.tenant_id == tenant_id
+        ).first()
+
+        if not item_exists:
+            try:
+                logger.info(f"Provisioning default item '{item_data['name']}' for tenant '{tenant_id}'.")
+                new_item = InventoryItemModel(
+                    **item_data,
+                    tenant_id=tenant_id,
+                    created_by='system-provision',
+                    updated_by='system-provision'
+                )
+                db.add(new_item)
+                db.commit()
+                logger.info(f"Successfully provisioned item '{item_data['name']}' for tenant '{tenant_id}'.")
+            except Exception as e:
+                db.rollback()
+                logger.warning(f"Could not provision default item '{item_data['name']}' for tenant '{tenant_id}' (it may have been created concurrently): {e}")
+
+def provision_tenant_eggs(db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
+    """A dependency that ensures default egg items are provisioned for the tenant."""
+    _provision_default_egg_items(db, tenant_id)
+
+router = APIRouter(prefix="/sales-orders", tags=["Sales Orders"], dependencies=[Depends(provision_tenant_eggs)])
 
 def _adjust_so_journal_entries(db: Session, so: SalesOrderModel, tenant_id: str, reason: str, total_cost_of_goods: Decimal):
     """Reverses latest Revenue and COGS JEs for an SO and creates new ones."""
