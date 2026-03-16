@@ -71,3 +71,30 @@ def update_financial_config_endpoint(config: FinancialConfig, db: Session = Depe
     user_id = get_user_identifier(user)
     updated_configs = crud_app_config.update_financial_config(db, config.model_dump(), tenant_id, user_id)
     return updated_configs
+
+# Standard performance source selection endpoint
+@router.get("/configurations/standard-performance", response_model=AppConfigOut)
+def get_standard_performance_config(db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id), user: dict = Depends(get_current_user)):
+    config = crud_app_config.get_config(db, tenant_id, name="performance_standard_source")
+    if not config:
+        # If not set, create it with the default 'bovans' to ensure it always returns a value.
+        # This makes the GET idempotent from a client's perspective: it always gets a config.
+        user_id = get_user_identifier(user)
+        new_config_data = AppConfigCreate(name="performance_standard_source", value="bovans")
+        config = crud_app_config.create_config(db, new_config_data, tenant_id, user_id=user_id)
+        logger.info(f"Created default 'performance_standard_source' for tenant {tenant_id}")
+    return config
+
+@router.patch("/configurations/standard-performance", response_model=AppConfigOut)
+def update_standard_performance_config(config: AppConfigUpdate, db: Session = Depends(get_db), user: dict = Depends(require_group(["admin"])), tenant_id: str = Depends(get_tenant_id)):
+    user_id = get_user_identifier(user)
+    if not config.value or config.value not in ["bovans", "bv300"]:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="performance_standard_source must be 'bovans' or 'bv300'")
+
+    existing_config = crud_app_config.get_config(db, tenant_id, name="performance_standard_source")
+    if existing_config:
+        return crud_app_config.update_config_by_name(db, "performance_standard_source", config, tenant_id, user_id)
+
+    from schemas.app_config import AppConfigCreate
+    create_obj = AppConfigCreate(name="performance_standard_source", value=config.value)
+    return crud_app_config.create_config(db, create_obj, tenant_id, user_id)

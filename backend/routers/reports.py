@@ -19,6 +19,9 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models.batch import Batch
 from models.bovanswhitelayerperformance import BovansWhiteLayerPerformance
+from models.bv300_layer_performance import BV300LayerPerformance
+from models.bv300_rearing_performance import BV300RearingPerformance
+from models.app_config import AppConfig
 from models.daily_batch import DailyBatch
 from models.inventory_items import InventoryItem
 from models.sales_order_items import SalesOrderItem
@@ -42,6 +45,48 @@ def _is_layer_age(age_str):
         return age_str > 17
     except (ValueError, TypeError):
         return False
+
+
+def _get_standard_source(db: Session, tenant_id: str):
+    if not tenant_id:
+        return "bovans"
+    config = db.query(AppConfig).filter(
+        AppConfig.tenant_id == tenant_id,
+        AppConfig.name == "performance_standard_source"
+    ).first()
+    if config and config.value and config.value.lower() in ["bovans", "bv300"]:
+        return config.value.lower()
+    return "bovans"
+
+
+def _get_standard_lookup_week(source: str, week: int):
+    if source == "bv300":
+        if week <= 18:
+            return min(max(week, 1), 18)
+        return min(max(week, 19), 80)
+
+    # Bovans behavior
+    return min(max(week, 1), 100)
+
+
+def _get_standard_performance(db: Session, tenant_id: str, age_weeks: int):
+    source = _get_standard_source(db, tenant_id)
+    if source == "bv300":
+        if age_weeks <= 18:
+            model = BV300RearingPerformance
+            age_weeks = min(max(age_weeks, 1), 18)
+        else:
+            model = BV300LayerPerformance
+            age_weeks = min(max(age_weeks, 19), 80)
+    else:
+        model = BovansWhiteLayerPerformance
+        age_weeks = min(max(age_weeks, 1), 100)
+
+    return db.query(model).filter(
+        model.age_weeks == age_weeks,
+        model.tenant_id == tenant_id
+    ).first()
+
 
 def get_daily_batches_by_date_range(db: Session, start_date: date, end_date: date, tenant_id: str):
     return db.query(DailyBatch).filter(
@@ -138,32 +183,51 @@ def _calculate_cumulative_report(db: Session, batch_id: int, current_week: int, 
         week_eggs = sum(batch.total_eggs for batch in week_batches if batch.total_eggs is not None)
         cum_egg_total += week_eggs
     
-    # Get Bovans standard data for current week
-    # If current_week > 100, use data for week 100.
-    lookup_week = 100 if current_week > 100 else current_week
-    bovans_data = db.query(BovansWhiteLayerPerformance).filter(
-        BovansWhiteLayerPerformance.age_weeks == lookup_week,
-        BovansWhiteLayerPerformance.tenant_id == tenant_id
-    ).first()
+    # Get standard data for current week based on tenant preference
+    source = _get_standard_source(db, tenant_id)
+    lookup_week = current_week
+    if source == "bovans":
+        lookup_week = 100 if current_week > 100 else current_week
+    else:
+        lookup_week = _get_standard_lookup_week(source, current_week)
+
+    standard_data = _get_standard_performance(db, tenant_id, lookup_week)
     
     # Section 1: Feed data
+    standard_cum_feed = 0
+    if standard_data and hasattr(standard_data, "feed_intake_cum_kg") and standard_data.feed_intake_cum_kg is not None:
+        standard_cum_feed = standard_data.feed_intake_cum_kg
+    elif standard_data and hasattr(standard_data, "feed_intake_cum_g") and standard_data.feed_intake_cum_g is not None:
+        standard_cum_feed = standard_data.feed_intake_cum_g / 1000
+
+    standard_eggs_cum = 0
+    if standard_data and hasattr(standard_data, "eggs_per_bird_cum") and standard_data.eggs_per_bird_cum is not None:
+        standard_eggs_cum = standard_data.eggs_per_bird_cum
+
+    standard_weekly_feed = 0
+    if standard_data and hasattr(standard_data, "feed_intake_per_day_g") and standard_data.feed_intake_per_day_g is not None:
+        standard_weekly_feed = round((standard_data.feed_intake_per_day_g * 7 / 1000), 4)
+
+    standard_livability = standard_data.livability_percent if standard_data and hasattr(standard_data, "livability_percent") and standard_data.livability_percent is not None else 0
+    standard_feed_per_day = standard_data.feed_intake_per_day_g if standard_data and hasattr(standard_data, "feed_intake_per_day_g") and standard_data.feed_intake_per_day_g is not None else 0
+
     section1 = {
         "cum_feed": {
             "cum": cum_feed_total,
             "actual": round(cum_feed_total / hen_housing, 4) if hen_housing > 0 else 0,
-            "standard": bovans_data.feed_intake_cum_kg if bovans_data and bovans_data.feed_intake_cum_kg else 0,
+            "standard": standard_cum_feed,
             "diff": 0  # Will calculate after
         },
         "weekly_feed": {
             "cum": current_summary["actual_feed_consumed"],
             "actual": round(current_summary["actual_feed_consumed"] / hen_housing, 4) if hen_housing > 0 else 0,
-            "standard": round((bovans_data.feed_intake_per_day_g * 7 / 1000), 4) if bovans_data and bovans_data.feed_intake_per_day_g else 0,
+            "standard": standard_weekly_feed,
             "diff": 0  # Will calculate after
         },
         "cum_egg": {
             "cum": cum_egg_total,
             "actual": round(cum_egg_total / hen_housing, 4) if hen_housing > 0 else 0,
-            "standard": bovans_data.eggs_per_bird_cum if bovans_data and bovans_data.eggs_per_bird_cum else 0,
+            "standard": standard_eggs_cum,
             "diff": 0  # Will calculate after
         },
         "weekly_egg": {
@@ -184,12 +248,12 @@ def _calculate_cumulative_report(db: Session, batch_id: int, current_week: int, 
     section2 = {
         "livability": {
             "actual": round((current_summary["closing_count"] / hen_housing) * 100, 2) if hen_housing > 0 else 0,
-            "standard": bovans_data.livability_percent if bovans_data and bovans_data.livability_percent else 0,
+            "standard": standard_livability,
             "diff": 0  # Will calculate after
         },
         "feed_grams": {
             "actual": round((current_summary["actual_feed_consumed"] * 1000) / hen_housing, 2) if hen_housing > 0 else 0,
-            "standard": bovans_data.feed_intake_per_day_g if bovans_data and bovans_data.feed_intake_per_day_g else 0,
+            "standard": standard_feed_per_day,
             "diff": 0  # Will calculate after
         }
     }
