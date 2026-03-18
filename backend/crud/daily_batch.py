@@ -183,9 +183,10 @@ def get_feed_consumption_per_egg(db: Session, start_date: date, end_date: date, 
         monthly_eggs_query.c.total_eggs,
         func.coalesce(monthly_feed_query.c.total_feed_grams, 0).label('total_feed_grams')
     ).select_from(
-        monthly_eggs_query
-    ).outerjoin(
-        monthly_feed_query, monthly_eggs_query.c.month == monthly_feed_query.c.month
+        monthly_eggs_query.outerjoin(
+            monthly_feed_query,
+            monthly_eggs_query.c.month == monthly_feed_query.c.month
+        )
     ).all()
     
     # Calculate feed consumption per egg for each month

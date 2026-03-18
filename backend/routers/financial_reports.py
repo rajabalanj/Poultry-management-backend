@@ -64,18 +64,22 @@ def get_general_ledger(
 @router.get("/subsidiary-ledger/purchases/{vendor_id}", response_model=PurchaseLedger)
 def get_purchase_ledger(
     vendor_id: int,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_tenant_id)
 ):
-    return crud_financial_reports.get_purchase_ledger(db=db, vendor_id=vendor_id, tenant_id=tenant_id)
+    return crud_financial_reports.get_purchase_ledger(db=db, vendor_id=vendor_id, start_date=start_date, end_date=end_date, tenant_id=tenant_id)
 
 @router.get("/subsidiary-ledger/sales/{customer_id}", response_model=SalesLedger)
 def get_sales_ledger(
     customer_id: int,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_tenant_id)
 ):
-    return crud_financial_reports.get_sales_ledger(db=db, customer_id=customer_id, tenant_id=tenant_id)
+    return crud_financial_reports.get_sales_ledger(db=db, customer_id=customer_id, start_date=start_date, end_date=end_date, tenant_id=tenant_id)
 
 @router.get("/subsidiary-ledger/inventory/{item_id}", response_model=InventoryLedger)
 def get_inventory_ledger(

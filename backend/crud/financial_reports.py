@@ -10,6 +10,7 @@ from schemas.ledgers import GeneralLedger, GeneralLedgerEntry, PurchaseLedger, P
 from datetime import date
 from datetime import datetime
 from decimal import Decimal
+from typing import Optional
 from crud import app_config as crud_app_config
 from crud.egg_room_reports import get_reports_by_date_range
 from models import purchase_order_items, sales_order_items, inventory_items
@@ -290,26 +291,27 @@ def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id:
     )
 
 
-def get_purchase_ledger(db: Session, vendor_id: int, tenant_id: str) -> PurchaseLedger:
+def get_purchase_ledger(db: Session, vendor_id: int, tenant_id: str, start_date: Optional[date] = None, end_date: Optional[date] = None) -> PurchaseLedger:
     vendor = db.query(business_partners.BusinessPartner).filter(business_partners.BusinessPartner.id == vendor_id, business_partners.BusinessPartner.tenant_id == tenant_id).first()
     
-    purchase_orders_query = db.query(purchase_orders.PurchaseOrder).options(joinedload(purchase_orders.PurchaseOrder.payments)).filter(
+    query = db.query(purchase_orders.PurchaseOrder).options(joinedload(purchase_orders.PurchaseOrder.payments)).filter(
         purchase_orders.PurchaseOrder.vendor_id == vendor_id,
         purchase_orders.PurchaseOrder.tenant_id == tenant_id,
         purchase_orders.PurchaseOrder.deleted_at.is_(None)
-    ).all()
+    )
+
+    if start_date:
+        query = query.filter(purchase_orders.PurchaseOrder.order_date >= start_date)
+    if end_date:
+        query = query.filter(purchase_orders.PurchaseOrder.order_date <= end_date)
+
+    purchase_orders_query = query.all()
 
     entries = []
     for po in purchase_orders_query:
         non_deleted_payments = [p for p in po.payments if p.deleted_at is None]
         amount_paid = sum(Decimal(str(p.amount_paid)) for p in non_deleted_payments)
         balance_amount = Decimal(str(po.total_amount)) - amount_paid
-        # Get the account code from the most recent payment if available
-        account_code = None
-        if non_deleted_payments:
-            latest_payment = sorted(non_deleted_payments, key=lambda p: p.payment_date, reverse=True)[0]
-            if latest_payment.account:
-                account_code = latest_payment.account.account_code
 
         entries.append(PurchaseLedgerEntry(
             date=po.order_date,
@@ -321,35 +323,36 @@ def get_purchase_ledger(db: Session, vendor_id: int, tenant_id: str) -> Purchase
             amount_paid=amount_paid,
             balance_amount=balance_amount,
             payment_status=po.status.value,
-            account_code=account_code
+            account_code=None
         ))
 
     return PurchaseLedger(
         title=f"Purchase Ledger for {vendor.name}",
         vendor_id=vendor_id,
-        entries=entries
+        entries=sorted(entries, key=lambda x: x.date, reverse=True)
     )
 
-def get_sales_ledger(db: Session, customer_id: int, tenant_id: str) -> SalesLedger:
+def get_sales_ledger(db: Session, customer_id: int, tenant_id: str, start_date: Optional[date] = None, end_date: Optional[date] = None) -> SalesLedger:
     customer = db.query(business_partners.BusinessPartner).filter(business_partners.BusinessPartner.id == customer_id, business_partners.BusinessPartner.tenant_id == tenant_id).first()
 
-    sales_orders_query = db.query(sales_orders.SalesOrder).options(joinedload(sales_orders.SalesOrder.payments)).filter(
+    query = db.query(sales_orders.SalesOrder).options(joinedload(sales_orders.SalesOrder.payments)).filter(
         sales_orders.SalesOrder.customer_id == customer_id,
         sales_orders.SalesOrder.tenant_id == tenant_id,
         sales_orders.SalesOrder.deleted_at.is_(None)
-    ).all()
+    )
+
+    if start_date:
+        query = query.filter(sales_orders.SalesOrder.order_date >= start_date)
+    if end_date:
+        query = query.filter(sales_orders.SalesOrder.order_date <= end_date)
+
+    sales_orders_query = query.all()
 
     entries = []
     for so in sales_orders_query:
         non_deleted_payments = [p for p in so.payments if p.deleted_at is None]
         amount_paid = sum(Decimal(str(p.amount_paid)) for p in non_deleted_payments)
         balance_amount = Decimal(str(so.total_amount)) - amount_paid
-        # Get the account code from the most recent payment if available
-        account_code = None
-        if non_deleted_payments:
-            latest_payment = sorted(non_deleted_payments, key=lambda p: p.payment_date, reverse=True)[0]
-            if latest_payment.account:
-                account_code = latest_payment.account.account_code
 
         entries.append(SalesLedgerEntry(
             date=so.order_date,
@@ -361,13 +364,13 @@ def get_sales_ledger(db: Session, customer_id: int, tenant_id: str) -> SalesLedg
             amount_paid=amount_paid,
             balance_amount=balance_amount,
             payment_status=so.status.value,
-            account_code=account_code
+            account_code=None
         ))
 
     return SalesLedger(
         title=f"Sales Ledger for {customer.name}",
         customer_id=customer_id,
-        entries=entries
+        entries=sorted(entries, key=lambda x: x.date, reverse=True)
     )
 
 def get_inventory_ledger(db: Session, item_id: int, start_date: date, end_date: date, tenant_id: str) -> InventoryLedger:
