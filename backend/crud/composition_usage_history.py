@@ -64,14 +64,23 @@ def use_composition(db: Session, composition_id: int, batch_id: int, times: int,
     for iic in items_in_comp:
         item = db.query(InventoryItem).filter(InventoryItem.id == iic.inventory_item_id, InventoryItem.tenant_id == tenant_id).first()
         if item:
-            wastage_percentage = iic.wastage_percentage
-            if wastage_percentage is None and item:
-                wastage_percentage = item.default_wastage_percentage
-            
+            # Start of wastage logic
+            wastage_percentage = iic.wastage_percentage  # Level 1: Specific item in composition
+
             if wastage_percentage is None:
-                wastage_percentage = Decimal('0')
+                if item.default_wastage_percentage is not None:
+                    wastage_percentage = item.default_wastage_percentage  # Level 2: Item default
+
+            if wastage_percentage is None:
+                if composition_obj.wastage_percentage is not None:
+                    wastage_percentage = composition_obj.wastage_percentage  # Level 3: Composition default
+
+            if wastage_percentage is None:
+                wastage_percentage = Decimal('0')  # Fallback to 0 if not set anywhere
             else:
                 wastage_percentage = Decimal(str(wastage_percentage))
+            # End of wastage logic
+            
             usage_item = CompositionUsageItem(
                 usage_history_id=usage.id,
                 inventory_item_id=iic.inventory_item_id,

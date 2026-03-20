@@ -1,9 +1,11 @@
 from pydantic import BaseModel
 from typing import List, Optional
+from decimal import Decimal
 from .inventory_item_in_composition import InventoryItemInComposition, InventoryItemInCompositionCreate
 
 class CompositionBase(BaseModel):
     name: str
+    wastage_percentage: Optional[Decimal] = None
     tenant_id: Optional[str] = None
 
 

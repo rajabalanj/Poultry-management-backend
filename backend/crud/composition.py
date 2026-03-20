@@ -14,7 +14,12 @@ import pytz
 
 
 def create_composition(db: Session, composition: CompositionCreate, tenant_id: str, user_id: str):
-    db_composition = Composition(name=composition.name, tenant_id=tenant_id, created_by=user_id)
+    db_composition = Composition(
+        name=composition.name,
+        wastage_percentage=composition.wastage_percentage,
+        tenant_id=tenant_id,
+        created_by=user_id
+    )
     db.add(db_composition)
     db.flush()
     for item in composition.inventory_items:
@@ -68,6 +73,7 @@ def update_composition(db: Session, composition_id: int, composition: Compositio
     old_values = sqlalchemy_to_dict(db_composition)
 
     db_composition.name = composition.name
+    db_composition.wastage_percentage = composition.wastage_percentage
     db_composition.updated_at = datetime.datetime.now(pytz.timezone('Asia/Kolkata'))
     db_composition.updated_by = user_id
     db.query(InventoryItemInComposition).filter(InventoryItemInComposition.composition_id == composition_id, InventoryItemInComposition.tenant_id == tenant_id).delete()

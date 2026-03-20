@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String
+from sqlalchemy import Column, Integer, String, Numeric
 from sqlalchemy.orm import relationship
 from database import Base
 from models.audit_mixin import TimestampMixin
@@ -8,4 +8,5 @@ class Composition(Base, TimestampMixin):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
     tenant_id = Column(String, index=True)
+    wastage_percentage = Column(Numeric(5, 2), default=0.0)
     inventory_items = relationship("InventoryItemInComposition", cascade="all, delete-orphan", backref="composition")
