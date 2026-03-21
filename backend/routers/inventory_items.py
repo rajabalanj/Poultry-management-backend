@@ -12,12 +12,14 @@ from sqlalchemy.orm import Session
 # Local application imports
 from crud import inventory_item_audit as crud_inventory_item_audit
 from crud import inventory_items as crud_inventory_items
+from crud import inventory_item_stock as crud_inventory_item_stock
 from database import get_db
 from models.egg_room_reports import EggRoomReport
 from models.inventory_items import InventoryItem as InventoryItemModel
 from models.purchase_order_items import PurchaseOrderItem as PurchaseOrderItemModel
 from schemas.inventory_item_audit import InventoryItemAudit
 from schemas.inventory_items import InventoryItem, InventoryItemCreate, InventoryItemUpdate
+from schemas.inventory_item_stock import DailyStock, DailyStockReport
 from schemas.reports import InventoryValue
 from utils.auth_utils import get_current_user, get_user_identifier
 from utils.tenancy import get_tenant_id
@@ -128,6 +130,47 @@ def get_inventory_value_report(db: Session = Depends(get_db), tenant_id: str = D
     
     return {"total_inventory_value": Decimal(str(total_value or 0))}
 
+
+@router.get("/reports/daily-stock/{item_id}", response_model=List[DailyStock], tags=["Inventory Reports"])
+def get_daily_stock_report_for_item(
+    item_id: int,
+    start_date: date,
+    end_date: date,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant_id),
+):
+    """
+    Get the daily stock report for a specific inventory item over a date range.
+    """
+    report_data = crud_inventory_item_stock.get_daily_stock_report(
+        db=db, 
+        inventory_item_id=item_id, 
+        tenant_id=tenant_id, 
+        start_date=start_date, 
+        end_date=end_date
+    )
+    return report_data
+
+
+@router.get("/{item_id}/stock-at-date", response_model=DailyStock, tags=["Inventory Items"])
+def get_item_stock_at_date(
+    item_id: int,
+    target_date: date,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant_id),
+):
+    """
+    Get the stock of an inventory item at the end of a specific date.
+    """
+    stock = crud_inventory_item_stock.get_stock_at_date(
+        db=db, 
+        inventory_item_id=item_id, 
+        tenant_id=tenant_id, 
+        target_date=target_date
+    )
+    return DailyStock(date=target_date.isoformat(), stock=stock)
+
+
 @router.get("/{item_id}", response_model=InventoryItem)
 def read_inventory_item(item_id: int, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
     """Retrieve a single inventory item by ID."""
@@ -232,7 +275,7 @@ def adjust_inventory_item_stock(
 ):
     """Manually adjust an inventory item's stock and create an audit record.
 
-    `change_amount` is positive to increase stock, negative to decrease.
+    change_amount is positive to increase stock, negative to decrease.
     """
     db_item = crud_inventory_items.get_inventory_item(db=db, item_id=item_id, tenant_id=tenant_id)
     if db_item is None:
