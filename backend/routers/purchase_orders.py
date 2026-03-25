@@ -286,7 +286,7 @@ def create_purchase_order(
 def read_purchase_orders(
     skip: int = 0,
     limit: int = 100,
-    vendor_id: Optional[int] = None,
+    vendor_id: Optional[str] = None,
     status: Optional[PurchaseOrderStatus] = None,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
@@ -297,7 +297,8 @@ def read_purchase_orders(
     query = db.query(PurchaseOrderModel).filter(PurchaseOrderModel.tenant_id == tenant_id)
 
     if vendor_id:
-        query = query.filter(PurchaseOrderModel.vendor_id == vendor_id)
+        vendor_ids = [int(vid.strip()) for vid in vendor_id.split(",")]
+        query = query.filter(PurchaseOrderModel.vendor_id.in_(vendor_ids))
     if status:
         query = query.filter(PurchaseOrderModel.status == status)
     if start_date:

@@ -636,7 +636,7 @@ def export_detailed_sales_order_report(
 def read_sales_orders(
     skip: int = 0,
     limit: int = 100,
-    customer_id: Optional[int] = None,
+    customer_id: Optional[str] = None,
     status: Optional[SalesOrderStatus] = None,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
@@ -647,7 +647,8 @@ def read_sales_orders(
     query = db.query(SalesOrderModel).filter(SalesOrderModel.tenant_id == tenant_id)
 
     if customer_id:
-        query = query.filter(SalesOrderModel.customer_id == customer_id)
+        customer_ids = [int(cid.strip()) for cid in customer_id.split(",")]
+        query = query.filter(SalesOrderModel.customer_id.in_(customer_ids))
     if status:
         query = query.filter(SalesOrderModel.status == status)
     if start_date:
