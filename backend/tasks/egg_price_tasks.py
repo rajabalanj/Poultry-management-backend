@@ -7,6 +7,14 @@ import logging
 from datetime import datetime
 from typing import Dict, Optional
 import requests
+try:
+    import cloudscraper
+except ImportError:
+    cloudscraper = None
+try:
+    from curl_cffi import requests as curl_requests
+except ImportError:
+    curl_requests = None
 from bs4 import BeautifulSoup
 from sqlalchemy.orm import Session
 from database import SessionLocal
@@ -22,23 +30,28 @@ def fetch_egg_price_from_kisandeals() -> Optional[Dict[str, str]]:
         Dict containing egg price information or None if fetch fails
     """
     url = "https://www.kisandeals.com/egg-rate/TAMIL-NADU/NAMAKKAL"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate",
-        "Referer": "https://www.google.com/",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1"
-    }
 
     try:
-        response = requests.get(url, headers=headers, timeout=30)
+        if curl_requests:
+            # curl_cffi mimics Chrome's TLS fingerprint (JA3) exactly
+            response = curl_requests.get(url, impersonate="chrome120", timeout=30)
+        elif cloudscraper:
+            scraper = cloudscraper.create_scraper()
+            response = scraper.get(url, timeout=20)
+        else:
+            logger.warning("Neither curl_cffi nor cloudscraper installed, falling back to requests")
+            response = requests.get(url, timeout=20)
+            
         response.raise_for_status()
 
-        # Using response.text (decoded string) instead of response.content (bytes)
-        # allows 'requests' to handle character encoding detection automatically.
+        # Requests library handles decompression automatically
         soup = BeautifulSoup(response.text, "html.parser")
+
+        # Check for bot protection / challenge pages
+        page_text = response.text.lower()
+        if "verify you are human" in page_text or "cloudflare-static" in page_text:
+            logger.error("KisanDeals fetch blocked by bot detection (Cloudflare/Challenge).")
+            return None
 
         # Find the market summary table
         market_summary_table = soup.find("div", id="market-summary-tables")
@@ -47,15 +60,18 @@ def fetch_egg_price_from_kisandeals() -> Optional[Dict[str, str]]:
         if market_summary_table:
             table = market_summary_table.find("table")
             
-        # Fallback: If the specific div is missing, search for any table containing the price data
+        # Fallback: Search all tables for identifying keywords if ID is missing or changed
         if not table:
             for t in soup.find_all("table"):
-                if "Single Egg Rate" in t.get_text():
+                t_text = t.get_text()
+                if "Single Egg Rate" in t_text or "Namakkal" in t_text:
                     table = t
                     break
         
         if not table:
-            logger.error("Could not find market-summary-tables or any relevant price table")
+            # Log a snippet of the body to help debug structure changes
+            body_snippet = response.text[:500].replace('\n', ' ')
+            logger.error(f"Could not find price table. Response snippet: {body_snippet}")
             return None
 
         rows = table.find_all("tr")
@@ -65,8 +81,12 @@ def fetch_egg_price_from_kisandeals() -> Optional[Dict[str, str]]:
             cells = row.find_all("td")
             if len(cells) >= 2:
                 label = cells[0].get_text(strip=True)
-                value = cells[1].get_text(strip=True)
-                price_data[label] = value
+                # Extract text and clean currency symbols (₹), commas, and whitespace
+                value_raw = cells[1].get_text(strip=True)
+                value_clean = value_raw.replace('₹', '').replace(',', '').strip()
+                
+                # Normalize label to ensure database keys match exactly
+                price_data[label] = value_clean
 
         return price_data
 
