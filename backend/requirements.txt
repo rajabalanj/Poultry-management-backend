@@ -71,4 +71,6 @@ zope.event==5.0
 zope.interface==7.2
 fpdf2==2.8.4
 matplotlib
+beautifulsoup4==4.12.3
+lxml==5.1.0
 

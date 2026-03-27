@@ -1,4 +1,9 @@
 
+from database import get_db
+from crud import subscription as crud_subscription
+from utils.tenancy import get_tenant_id
+from datetime import date, datetime
+from sqlalchemy.orm import Session
 import json
 import time
 from typing import Dict, List
@@ -169,6 +174,34 @@ def require_group(allowed_groups: List[str]):
     return dependency
 
 
+def require_super_admin(user: Dict[str, any] = Depends(get_current_user)) -> Dict[str, any]:
+    """
+    FastAPI dependency to check if the current user is a super admin.
+    Super admins can manage subscription plans and other system-wide operations.
+    """
+    user_groups = user.get("cognito:groups", [])
+    if "SuperAdmin" not in user_groups:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User is not authorized. SuperAdmin role required.",
+        )
+    return user
+
+
+def require_tenant_admin(user: Dict[str, any] = Depends(get_current_user)) -> Dict[str, any]:
+    """
+    FastAPI dependency to check if the current user is a tenant admin.
+    Tenant admins can manage their tenant's configuration and operations.
+    """
+    user_groups = user.get("cognito:groups", [])
+    if "Admin" not in user_groups:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User is not authorized. Admin role required.",
+        )
+    return user
+
+
 def get_user_identifier(user: Dict[str, any]) -> str:
     """
     Return a readable identifier for the user dict returned by Cognito JWT payload.
@@ -198,3 +231,22 @@ def get_user_identifier(user: Dict[str, any]) -> str:
         return str(sub)
 
     return "unknown"
+def check_subscription_status(db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
+    """
+    FastAPI dependency to check if the current tenant has paid subscription.
+    """
+    is_paid = crud_subscription.check_subscription_status(db, tenant_id)
+    
+    if not is_paid:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="Your subscription is not active. Please contact support.",
+        )
+    
+    return True
+
+def subscription_check(user: Dict[str, any] = Depends(get_current_user), is_valid: bool = Depends(check_subscription_status)):
+    """
+    Combined dependency that checks both authentication and subscription status.
+    """
+    return user
