@@ -110,26 +110,42 @@ def fetch_current_price(
     
     # If not in database, fetch from external source
     price_data = fetch_egg_price_from_kisandeals()
-    if not price_data:
-        raise HTTPException(status_code=500, detail="Failed to fetch egg price data")
-    
-    # Store the fetched data in the database
-    from schemas.egg_price import EggPriceCreate
-    egg_price_create = EggPriceCreate(
-        price_date=today,
-        single_egg_rate=price_data.get("Single Egg Rate"),
-        dozen_eggs_rate=price_data.get("Dozen Eggs Rate"),
-        hundred_eggs_rate=price_data.get("100 Eggs Rate"),
-        average_market_price=price_data.get("Average Market Price"),
-        best_market_price=price_data.get("Best Market Price"),
-        lowest_market_price=price_data.get("Lowest Market Price"),
-        best_price_market=price_data.get("Best Price Market"),
-        lowest_price_market=price_data.get("Lowest Price Market")
-    )
-    create_egg_price(db, egg_price_create)
-    
-    # Add source information to the response
-    price_data["source"] = "external_api"
-    price_data["date"] = today.strftime("%Y-%m-%d")
-    
-    return price_data
+    if price_data:
+        # Store the fetched data in the database
+        from schemas.egg_price import EggPriceCreate
+        egg_price_create = EggPriceCreate(
+            price_date=today,
+            single_egg_rate=price_data.get("Single Egg Rate"),
+            dozen_eggs_rate=price_data.get("Dozen Eggs Rate"),
+            hundred_eggs_rate=price_data.get("100 Eggs Rate"),
+            average_market_price=price_data.get("Average Market Price"),
+            best_market_price=price_data.get("Best Market Price"),
+            lowest_market_price=price_data.get("Lowest Market Price"),
+            best_price_market=price_data.get("Best Price Market"),
+            lowest_price_market=price_data.get("Lowest Price Market")
+        )
+        create_egg_price(db, egg_price_create)
+
+        # Add source information to the response
+        price_data["source"] = "external_api"
+        price_data["date"] = today.strftime("%Y-%m-%d")
+        return price_data
+
+    # If external API fails, fallback to latest cached DB price
+    logger.warning("Egg price fetch failed from external source; falling back to latest cached value")
+    latest_price = get_latest_egg_price(db)
+    if latest_price:
+        return {
+            "source": "fallback_database",
+            "date": latest_price.price_date.strftime("%Y-%m-%d"),
+            "Single Egg Rate": latest_price.single_egg_rate,
+            "Dozen Eggs Rate": latest_price.dozen_eggs_rate,
+            "100 Eggs Rate": latest_price.hundred_eggs_rate,
+            "Average Market Price": latest_price.average_market_price,
+            "Best Market Price": latest_price.best_market_price,
+            "Lowest Market Price": latest_price.lowest_market_price,
+            "Best Price Market": latest_price.best_price_market,
+            "Lowest Price Market": latest_price.lowest_price_market,
+        }
+
+    raise HTTPException(status_code=503, detail="Egg price data unavailable (external source down and no cached value)")
