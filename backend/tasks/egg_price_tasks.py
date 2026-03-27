@@ -23,24 +23,39 @@ def fetch_egg_price_from_kisandeals() -> Optional[Dict[str, str]]:
     """
     url = "https://www.kisandeals.com/egg-rate/TAMIL-NADU/NAMAKKAL"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate",
+        "Referer": "https://www.google.com/",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1"
     }
 
     try:
         response = requests.get(url, headers=headers, timeout=30)
         response.raise_for_status()
 
-        soup = BeautifulSoup(response.content, "html.parser")
+        # Using response.text (decoded string) instead of response.content (bytes)
+        # allows 'requests' to handle character encoding detection automatically.
+        soup = BeautifulSoup(response.text, "html.parser")
 
         # Find the market summary table
         market_summary_table = soup.find("div", id="market-summary-tables")
-        if not market_summary_table:
-            logger.error("Could not find market-summary-tables div")
-            return None
-
-        table = market_summary_table.find("table")
+        table = None
+        
+        if market_summary_table:
+            table = market_summary_table.find("table")
+            
+        # Fallback: If the specific div is missing, search for any table containing the price data
         if not table:
-            logger.error("Could not find table within market-summary-tables div")
+            for t in soup.find_all("table"):
+                if "Single Egg Rate" in t.get_text():
+                    table = t
+                    break
+        
+        if not table:
+            logger.error("Could not find market-summary-tables or any relevant price table")
             return None
 
         rows = table.find_all("tr")

@@ -3,6 +3,7 @@
 Database model for storing daily egg price information.
 """
 from datetime import datetime
+import uuid
 from sqlalchemy import Column, String, DateTime, Date
 from database import Base
 
@@ -27,7 +28,7 @@ class EggPrice(Base):
     """
     __tablename__ = "egg_prices"
 
-    id = Column(String, primary_key=True, index=True)
+    id = Column(String, primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
     price_date = Column(Date, unique=True, index=True, nullable=False)
     single_egg_rate = Column(String)
     dozen_eggs_rate = Column(String)
