@@ -84,9 +84,14 @@ def fetch_current_price(
     Fetch current egg price from the source website.
     First checks if today's data is already in the database.
     If not, fetches from the source website and stores it.
+    If external fetch fails, falls back to latest cached data.
+    If no cached data exists, returns default values with a warning.
 
     Returns:
-        Dict: Current egg price information
+        Dict: Current egg price information with status field indicating:
+              - 'success': Data from external API or today's database record
+              - 'fallback': Data from latest cached database record
+              - 'unavailable': No data available, returning default values
     """
     today = date.today()
     
@@ -105,14 +110,14 @@ def fetch_current_price(
             "Best Market Price": existing_price.best_market_price,
             "Lowest Market Price": existing_price.lowest_market_price,
             "Best Price Market": existing_price.best_price_market,
-            "Lowest Price Market": existing_price.lowest_price_market
+            "Lowest Price Market": existing_price.lowest_price_market,
+            "status": "success"
         }
     
     # If not in database, fetch from external source
     price_data = fetch_egg_price_from_kisandeals()
     if price_data:
         # Store the fetched data in the database
-        from schemas.egg_price import EggPriceCreate
         egg_price_create = EggPriceCreate(
             price_date=today,
             single_egg_rate=price_data.get("Single Egg Rate"),
@@ -129,6 +134,7 @@ def fetch_current_price(
         # Add source information to the response
         price_data["source"] = "external_api"
         price_data["date"] = today.strftime("%Y-%m-%d")
+        price_data["status"] = "success"
         return price_data
 
     # If external API fails, fallback to latest cached DB price
@@ -146,6 +152,22 @@ def fetch_current_price(
             "Lowest Market Price": latest_price.lowest_market_price,
             "Best Price Market": latest_price.best_price_market,
             "Lowest Price Market": latest_price.lowest_price_market,
+            "status": "fallback"
         }
 
-    raise HTTPException(status_code=503, detail="Egg price data unavailable (external source down and no cached value)")
+    # If no cached data exists, return default values with a warning
+    logger.error("No egg price data available from any source; returning default values")
+    return {
+        "source": "default",
+        "date": today.strftime("%Y-%m-%d"),
+        "Single Egg Rate": "N/A",
+        "Dozen Eggs Rate": "N/A",
+        "100 Eggs Rate": "N/A",
+        "Average Market Price": "N/A",
+        "Best Market Price": "N/A",
+        "Lowest Market Price": "N/A",
+        "Best Price Market": "N/A",
+        "Lowest Price Market": "N/A",
+        "status": "unavailable",
+        "message": "Egg price data currently unavailable. Please try again later."
+    }
