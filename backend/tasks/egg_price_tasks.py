@@ -90,11 +90,8 @@ def fetch_egg_price_from_kisandeals() -> Optional[Dict[str, str]]:
 
         return price_data
 
-    except requests.RequestException as e:
+    except (requests.RequestException, Exception) as e:
         logger.error(f"Error fetching egg price from kisandeals: {e}")
-        return None
-    except Exception as e:
-        logger.error(f"Unexpected error parsing egg price data: {e}")
         return None
 
 
