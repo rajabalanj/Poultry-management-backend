@@ -73,4 +73,7 @@ fpdf2==2.8.4
 matplotlib
 beautifulsoup4==4.12.3
 lxml==5.1.0
+brotli==1.1.0
+cloudscraper==1.2.71
+curl_cffi==0.6.2
 
