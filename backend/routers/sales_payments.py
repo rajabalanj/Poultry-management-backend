@@ -56,8 +56,24 @@ def create_sales_payment(
 
     db_payment = SalesPaymentModel(**payment.model_dump(), tenant_id=tenant_id, created_by=get_user_identifier(user))
     db.add(db_payment)
+
+    # Update total_amount_paid and SO status BEFORE generating receipt
+    db_so.total_amount_paid += payment.amount_paid
+    
+    if db_so.total_amount_paid >= db_so.total_amount:
+        db_so.status = SalesOrderStatus.PAID
+        logger.info(f"SO {db_so.id} status updated to 'PAID' (fully paid).")
+    elif db_so.total_amount_paid > 0:
+        if db_so.status != SalesOrderStatus.PARTIALLY_PAID:
+            db_so.status = SalesOrderStatus.PARTIALLY_PAID
+            logger.info(f"SO {db_so.id} status updated to 'PARTIALLY_PAID'.")
+    
+    db_so.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
+    db_so.updated_by = get_user_identifier(user)
+
     db.commit()
     db.refresh(db_payment)
+    db.refresh(db_so)
 
     # Generate and upload receipt
     receipt_path = None
@@ -83,20 +99,6 @@ def create_sales_payment(
             os.remove(receipt_path)
             logger.debug(f"Temporary receipt file removed: {receipt_path}")
 
-    # Update total_amount_paid and SO status
-    db_so.total_amount_paid += payment.amount_paid
-    
-    if db_so.total_amount_paid >= db_so.total_amount:
-        db_so.status = SalesOrderStatus.PAID
-        logger.info(f"SO {db_so.id} status updated to 'PAID' (fully paid).")
-    elif db_so.total_amount_paid > 0:
-        if db_so.status != SalesOrderStatus.PARTIALLY_PAID:
-            db_so.status = SalesOrderStatus.PARTIALLY_PAID
-            logger.info(f"SO {db_so.id} status updated to 'PARTIALLY_PAID'.")
-    
-    db_so.updated_at = datetime.now(pytz.timezone('Asia/Kolkata'))
-    db_so.updated_by = get_user_identifier(user)
-    db.commit()
     db.refresh(db_payment)
 
     # --- Create Journal Entry for the Sales Payment ---

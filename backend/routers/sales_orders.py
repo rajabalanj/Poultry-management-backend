@@ -1430,10 +1430,17 @@ def get_receipt_download_url(
         raise HTTPException(status_code=501, detail="S3 download functionality is not configured.")
 
     db_so = db.query(SalesOrderModel).filter(SalesOrderModel.id == so_id, SalesOrderModel.tenant_id == tenant_id).first()
-    if not db_so or not db_so.payment_receipt:
-        raise HTTPException(status_code=404, detail="Receipt not found")
+    
+    if not db_so:
+        logger.warning(f"Sales Order {so_id} not found for tenant {tenant_id}")
+        raise HTTPException(status_code=404, detail="Sales Order not found")
+        
+    if not db_so.payment_receipt:
+        logger.warning(f"Sales Order {so_id} exists but has no payment_receipt path recorded.")
+        raise HTTPException(status_code=404, detail="Receipt not found for this order")
 
     if not db_so.payment_receipt.startswith('s3://'):
+        logger.error(f"Invalid receipt path format for SO {so_id}: {db_so.payment_receipt}")
         raise HTTPException(status_code=400, detail="Receipt is not stored in S3.")
 
     try:
