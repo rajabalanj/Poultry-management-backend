@@ -13,7 +13,7 @@ def get_sales_order_report(
     skip: int = 0,
     limit: int = 100,
     customer_id: Optional[int] = None,
-    status: Optional[SalesOrderStatus] = None,
+    status: Optional[str] = None,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None
 ) -> List[SalesOrderReport]:
@@ -32,7 +32,10 @@ def get_sales_order_report(
     if customer_id:
         query = query.filter(SalesOrder.customer_id == customer_id)
     if status:
-        query = query.filter(SalesOrder.status == status)
+        if status == "paid":
+            query = query.filter(SalesOrder.status == SalesOrderStatus.PAID)
+        elif status == "unpaid":
+            query = query.filter(SalesOrder.status != SalesOrderStatus.PAID)
     if start_date:
         query = query.filter(SalesOrder.order_date >= start_date)
     if end_date:

@@ -1,216 +1,182 @@
-from fpdf import FPDF
-import datetime
-from sqlalchemy.orm import Session
-from models.sales_payments import SalesPayment
-from models.sales_orders import SalesOrder
-from models.business_partners import BusinessPartner
-from models.sales_order_items import SalesOrderItem
-from models.financial_settings import FinancialSettings
-from crud.financial_settings import get_financial_settings
 import os
-import uuid
-import logging
+from datetime import date
+from typing import List, Optional
+from decimal import Decimal
+from fpdf import FPDF # Assuming fpdf or similar library is used for PDF generation
+from sqlalchemy.orm import Session, selectinload
 
-logger = logging.getLogger(__name__)
+from models.sales_orders import SalesOrder as SalesOrderModel
+from models.business_partners import BusinessPartner as BusinessPartnerModel
+from models.sales_order_items import SalesOrderItem as SalesOrderItemModel
 
-class PDF(FPDF):
-    def header(self):
-        self.set_font('Arial', 'B', 12)
-        self.cell(0, 10, 'Receipt', 0, 1, 'C')
-        self.ln(10)
-
-    def footer(self):
-        self.set_y(-15)
-        self.set_font('Arial', 'I', 8)
-        self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
-
-def generate_sales_receipt(db: Session, payment_id: int) -> str:
+def generate_sales_order_receipt(db: Session, so_id: int) -> str:
     """
-    Generates a PDF receipt for a given sales payment.
-
-    Args:
-        db: The database session.
-        payment_id: The ID of the sales payment.
-
-    Returns:
-        The path to the generated PDF file.
+    Generates a PDF receipt for a single sales order.
     """
-    db_payment = db.query(SalesPayment).filter(SalesPayment.id == payment_id).first()
-    if not db_payment:
-        raise FileNotFoundError("Payment not found")
+    # 1. Fetch the sales order with all related data
+    so = db.query(SalesOrderModel).options(
+        selectinload(SalesOrderModel.items).selectinload(SalesOrderItemModel.inventory_item),
+        selectinload(SalesOrderModel.customer),
+        selectinload(SalesOrderModel.payments)
+    ).filter(SalesOrderModel.id == so_id).first()
 
-    db_sales_order = db_payment.sales_order
-    db_customer = db_sales_order.customer
+    if not so:
+        raise FileNotFoundError(f"Sales Order {so_id} not found")
 
-    pdf = PDF()
+    # 2. Setup PDF
+    pdf = FPDF()
     pdf.add_page()
-    pdf.set_font('Arial', '', 12)
-
-    # Company Info
-    pdf.set_font('Arial', 'B', 16)
-    pdf.cell(0, 10, 'Poultry Management System', 0, 1, 'L')
-    pdf.set_font('Arial', '', 12)
-    pdf.cell(0, 10, '123 Poultry Lane, Farmville, FS 54321', 0, 1, 'L')
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(0, 10, txt=f"Sales Order Receipt", ln=True, align="C")
     pdf.ln(10)
 
-    # Receipt Info
-    pdf.cell(0, 10, f'Receipt #: {db_payment.id}', 0, 1, 'L')
-    pdf.cell(0, 10, f'Payment Date: {db_payment.payment_date.strftime("%Y-%m-%d")}', 0, 1, 'L')
-    # Get account code from financial settings
-    financial_settings = get_financial_settings(db, db_payment.tenant_id)
-    if financial_settings and financial_settings.default_cash_account:
-        pdf.cell(0, 10, f'Account Code: {financial_settings.default_cash_account.account_code}', 0, 1, 'L')
+    # 3. Order & Customer Info
+    pdf.set_font("Arial", size=10)
+    pdf.cell(100, 6, txt=f"Order Number: SO-{so.so_number}", ln=0)
+    pdf.cell(0, 6, txt=f"Date: {so.order_date.isoformat()}", ln=1)
+    pdf.cell(100, 6, txt=f"Bill No: {so.bill_no or 'N/A'}", ln=0)
+    pdf.cell(0, 6, txt=f"Status: {so.status.value}", ln=1)
     pdf.ln(5)
 
-    # Customer Info
-    pdf.set_font('Arial', 'B', 12)
-    pdf.cell(0, 10, 'Bill To:', 0, 1, 'L')
-    pdf.set_font('Arial', '', 12)
-    pdf.cell(0, 10, db_customer.name, 0, 1, 'L')
-    if db_customer.address:
-        pdf.cell(0, 10, db_customer.address, 0, 1, 'L')
-    if db_customer.email:
-        pdf.cell(0, 10, db_customer.email, 0, 1, 'L')
-    if db_customer.phone:
-        pdf.cell(0, 10, db_customer.phone, 0, 1, 'L')
-    pdf.ln(10)
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(0, 6, txt="Customer Details:", ln=1)
+    pdf.set_font("Arial", size=10)
+    pdf.cell(0, 6, txt=f"Name: {so.customer.name}", ln=1)
+    pdf.cell(0, 6, txt=f"Contact: {so.customer.phone or 'N/A'}", ln=1)
+    pdf.ln(5)
 
-    # Items Table Header
-    pdf.set_font('Arial', 'B', 12)
-    pdf.cell(100, 10, 'Item', 1, 0, 'C')
-    pdf.cell(30, 10, 'Quantity', 1, 0, 'C')
-    pdf.cell(30, 10, 'Unit Price', 1, 0, 'C')
-    pdf.cell(30, 10, 'Total', 1, 1, 'C')
+    # 4. Items Table
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(80, 8, "Item Description", 1)
+    pdf.cell(30, 8, "Quantity", 1, 0, 'C')
+    pdf.cell(40, 8, "Unit Price", 1, 0, 'R')
+    pdf.cell(40, 8, "Total", 1, 1, 'R')
 
-    # Items Table Rows
-    pdf.set_font('Arial', '', 12)
-    for item in db_sales_order.items:
-        pdf.cell(100, 10, item.inventory_item.name, 1, 0, 'L')
-        pdf.cell(30, 10, str(item.quantity), 1, 0, 'R')
-        pdf.cell(30, 10, f'{item.price_per_unit:.2f}', 1, 0, 'R')
-        pdf.cell(30, 10, f'{item.line_total:.2f}', 1, 1, 'R')
+    pdf.set_font("Arial", size=10)
+    for item in so.items:
+        item_name = item.inventory_item.name if item.inventory_item else "Unknown Item"
+        if item.variant_name:
+            item_name += f" ({item.variant_name})"
+            
+        pdf.cell(80, 8, item_name, 1)
+        pdf.cell(30, 8, str(item.quantity), 1, 0, 'C')
+        pdf.cell(40, 8, f"{item.price_per_unit:.2f}", 1, 0, 'R')
+        pdf.cell(40, 8, f"{item.line_total:.2f}", 1, 1, 'R')
 
-    pdf.ln(10)
-
-    # Totals
-    pdf.set_font('Arial', 'B', 12)
-    pdf.cell(130, 10, '', 0, 0)
-    pdf.cell(30, 10, 'Subtotal:', 1, 0, 'R')
-    pdf.cell(30, 10, f'{db_sales_order.total_amount:.2f}', 1, 1, 'R')
-
-    pdf.cell(130, 10, '', 0, 0)
-    pdf.cell(30, 10, 'Amount Paid:', 1, 0, 'R')
-    pdf.cell(30, 10, f'{db_sales_order.total_amount_paid:.2f}', 1, 1, 'R')
-
-    balance_due = db_sales_order.total_amount - db_sales_order.total_amount_paid
-    pdf.cell(130, 10, '', 0, 0)
-    pdf.cell(30, 10, 'Balance Due:', 1, 0, 'R')
-    pdf.cell(30, 10, f'{balance_due:.2f}', 1, 1, 'R')
-
-
-    # Save the PDF
-    # Create a unique filename
-    temp_dir = r'd:\poultry project git\Poultry-Management\backend\temp'
-    if not os.path.exists(temp_dir):
-        os.makedirs(temp_dir)
+    # 5. Financial Summary
+    pdf.ln(5)
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(150, 8, "Grand Total:", 0, 0, 'R')
+    pdf.cell(40, 8, f"{so.total_amount:.2f}", 0, 1, 'R')
     
-    logger.debug(f"Defining filename for payment ID: {db_payment.id}")
-    filename = f'receipt_{db_payment.id}_{uuid.uuid4().hex}.pdf'
-    logger.debug(f"Filename defined as: {filename}")
-    filepath = os.path.join(temp_dir, filename)
+    total_paid = sum(p.amount_paid for p in so.payments if p.deleted_at is None)
+    pdf.cell(150, 8, "Amount Paid:", 0, 0, 'R')
+    pdf.cell(40, 8, f"{total_paid:.2f}", 0, 1, 'R')
     
+    pdf.cell(150, 8, "Balance Due:", 0, 0, 'R')
+    pdf.cell(40, 8, f"{(so.total_amount - total_paid):.2f}", 0, 1, 'R')
+
+    # 6. Save and Return Path
+    output_dir = "temp_receipts"
+    os.makedirs(output_dir, exist_ok=True)
+    filepath = os.path.join(output_dir, f"SO_Receipt_{so.so_number}.pdf")
     pdf.output(filepath)
-    
     return filepath
 
-def generate_sales_order_receipt(db: Session, order_id: int) -> str:
+def generate_customer_bill_pdf(
+    db, # Session object might be needed for additional lookups, though ideally data is pre-fetched
+    customer: BusinessPartnerModel,
+    sales_orders: List[SalesOrderModel],
+    start_date: Optional[date],
+    end_date: Optional[date]
+) -> str:
     """
-    Generates a PDF receipt for a given sales order.
-
-    Args:
-        db: The database session.
-        order_id: The ID of the sales order.
-
-    Returns:
-        The path to the generated PDF file.
+    Generates a consolidated PDF bill for a customer based on a list of sales orders.
     """
-    db_sales_order = db.query(SalesOrder).filter(SalesOrder.id == order_id).first()
-    if not db_sales_order:
-        raise FileNotFoundError("Sales Order not found")
-
-    db_customer = db_sales_order.customer
-
-    pdf = PDF()
+    pdf = FPDF()
     pdf.add_page()
-    pdf.set_font('Arial', '', 12)
+    pdf.set_font("Arial", size=12)
 
-    # Company Info
-    pdf.set_font('Arial', 'B', 16)
-    pdf.cell(0, 10, 'Poultry Management System', 0, 1, 'L')
-    pdf.set_font('Arial', '', 12)
-    pdf.cell(0, 10, '123 Poultry Lane, Farmville, FS 54321', 0, 1, 'L')
+    # Header
+    pdf.cell(200, 10, txt="Customer Bill", ln=True, align="C")
     pdf.ln(10)
 
-    # Receipt Info
-    pdf.cell(0, 10, f'Order #: {db_sales_order.id}', 0, 1, 'L')
-    pdf.cell(0, 10, f'Order Date: {db_sales_order.order_date.strftime("%Y-%m-%d")}', 0, 1, 'L')
+    # Customer Information
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(0, 5, txt=f"Customer Name: {customer.name}", ln=True)
+    pdf.set_font("Arial", '', 10)
+    pdf.cell(0, 5, txt=f"Address: {customer.address or 'N/A'}", ln=True)
+    pdf.cell(0, 5, txt=f"Contact: {customer.phone or 'N/A'}", ln=True)
     pdf.ln(5)
 
-    # Customer Info
-    pdf.set_font('Arial', 'B', 12)
-    pdf.cell(0, 10, 'Bill To:', 0, 1, 'L')
-    pdf.set_font('Arial', '', 12)
-    pdf.cell(0, 10, db_customer.name, 0, 1, 'L')
-    if db_customer.address:
-        pdf.cell(0, 10, db_customer.address, 0, 1, 'L')
-    if db_customer.email:
-        pdf.cell(0, 10, db_customer.email, 0, 1, 'L')
-    if db_customer.phone:
-        pdf.cell(0, 10, db_customer.phone, 0, 1, 'L')
-    pdf.ln(10)
+    # Date Range
+    date_range_str = ""
+    if start_date and end_date:
+        date_range_str = f"Period: {start_date.isoformat()} to {end_date.isoformat()}"
+    elif start_date:
+        date_range_str = f"Period from: {start_date.isoformat()}"
+    elif end_date:
+        date_range_str = f"Period up to: {end_date.isoformat()}"
+    
+    if date_range_str:
+        pdf.cell(0, 5, txt=date_range_str, ln=True)
+        pdf.ln(5)
 
-    # Items Table Header
-    pdf.set_font('Arial', 'B', 12)
-    pdf.cell(100, 10, 'Item', 1, 0, 'C')
-    pdf.cell(30, 10, 'Quantity', 1, 0, 'C')
-    pdf.cell(30, 10, 'Unit Price', 1, 0, 'C')
-    pdf.cell(30, 10, 'Total', 1, 1, 'C')
+    # Sales Orders Details
+    total_billed_amount = Decimal('0.0')
+    total_paid_amount = Decimal('0.0')
 
-    # Items Table Rows
-    pdf.set_font('Arial', '', 12)
-    for item in db_sales_order.items:
-        pdf.cell(100, 10, item.inventory_item.name, 1, 0, 'L')
-        pdf.cell(30, 10, str(item.quantity), 1, 0, 'R')
-        pdf.cell(30, 10, f'{item.price_per_unit:.2f}', 1, 0, 'R')
-        pdf.cell(30, 10, f'{item.line_total:.2f}', 1, 1, 'R')
+    for so in sales_orders:
+        pdf.set_font("Arial", 'B', 10)
+        pdf.cell(0, 7, txt=f"Sales Order #{so.so_number} (Date: {so.order_date.isoformat()}) - Status: {so.status.value}", ln=True)
+        pdf.set_font("Arial", '', 9)
+        pdf.cell(0, 5, txt=f"  Bill No: {so.bill_no or 'N/A'}", ln=True)
+        
+        # Items table header
+        pdf.set_font("Arial", 'B', 9)
+        pdf.cell(70, 6, "Item", 1)
+        pdf.cell(30, 6, "Quantity", 1)
+        pdf.cell(30, 6, "Price/Unit", 1)
+        pdf.cell(30, 6, "Line Total", 1, ln=True)
+        
+        # Items
+        pdf.set_font("Arial", '', 9)
+        for item in so.items:
+            pdf.cell(70, 6, item.inventory_item.name if item.inventory_item else "N/A", 1)
+            pdf.cell(30, 6, str(item.quantity), 1)
+            pdf.cell(30, 6, str(item.price_per_unit), 1)
+            pdf.cell(30, 6, str(item.line_total), 1, ln=True)
+        
+        # Sales Order Totals
+        pdf.set_font("Arial", 'B', 10)
+        pdf.cell(130, 7, "Sales Order Total:", 1, 0, 'R')
+        pdf.cell(30, 7, str(so.total_amount), 1, ln=True)
+        
+        current_so_paid = sum(p.amount_paid for p in so.payments if p.deleted_at is None)
+        pdf.cell(130, 7, "Amount Paid for SO:", 1, 0, 'R')
+        pdf.cell(30, 7, str(current_so_paid), 1, ln=True)
+        
+        outstanding_so = so.total_amount - current_so_paid
+        pdf.cell(130, 7, "Outstanding for SO:", 1, 0, 'R')
+        pdf.cell(30, 7, str(outstanding_so), 1, ln=True)
+        pdf.ln(5)
 
-    pdf.ln(10)
+        total_billed_amount += so.total_amount
+        total_paid_amount += current_so_paid
 
-    # Totals
-    pdf.set_font('Arial', 'B', 12)
-    pdf.cell(130, 10, '', 0, 0)
-    pdf.cell(30, 10, 'Subtotal:', 1, 0, 'R')
-    pdf.cell(30, 10, f'{db_sales_order.total_amount:.2f}', 1, 1, 'R')
-
-    pdf.cell(130, 10, '', 0, 0)
-    pdf.cell(30, 10, 'Amount Paid:', 1, 0, 'R')
-    pdf.cell(30, 10, f'{db_sales_order.total_amount_paid:.2f}', 1, 1, 'R')
-
-    balance_due = db_sales_order.total_amount - db_sales_order.total_amount_paid
-    pdf.cell(130, 10, '', 0, 0)
-    pdf.cell(30, 10, 'Balance Due:', 1, 0, 'R')
-    pdf.cell(30, 10, f'{balance_due:.2f}', 1, 1, 'R')
-
+    # Grand Summary
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(0, 10, "--- Grand Summary ---", ln=True, align="C")
+    pdf.cell(130, 8, "Total Billed Amount:", 1, 0, 'R')
+    pdf.cell(30, 8, str(total_billed_amount), 1, ln=True)
+    pdf.cell(130, 8, "Total Amount Paid:", 1, 0, 'R')
+    pdf.cell(30, 8, str(total_paid_amount), 1, ln=True)
+    pdf.cell(130, 8, "Total Outstanding Balance:", 1, 0, 'R')
+    pdf.cell(30, 8, str(total_billed_amount - total_paid_amount), 1, ln=True)
 
     # Save the PDF
-    # Create a unique filename
-    temp_dir = r'd:\poultry project git\Poultry-Management\backend\temp'
-    if not os.path.exists(temp_dir):
-        os.makedirs(temp_dir)
-    
-    filename = f'sales_order_receipt_{db_sales_order.id}_{uuid.uuid4().hex}.pdf'
-    filepath = os.path.join(temp_dir, filename)
-    
+    output_dir = "temp_bills"
+    os.makedirs(output_dir, exist_ok=True)
+    filepath = os.path.join(output_dir, f"customer_bill_{customer.id}_{date.today().isoformat()}.pdf")
     pdf.output(filepath)
-    
     return filepath

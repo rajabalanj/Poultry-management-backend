@@ -12,7 +12,7 @@ from crud.audit_log import create_audit_log
 from schemas.audit_log import AuditLogCreate
 from utils import sqlalchemy_to_dict
 from pydantic import BaseModel
-from utils.receipt_utils import generate_sales_receipt
+from utils.receipt_utils import generate_sales_order_receipt
 from decimal import Decimal
 
 # Imports for Journal Entry
@@ -79,7 +79,7 @@ def create_sales_payment(
     receipt_path = None
     try:
         logger.debug(f"Attempting to generate receipt for payment {db_payment.id}.")
-        receipt_path = generate_sales_receipt(db, db_payment.id)
+        receipt_path = generate_sales_order_receipt(db, db_so.id)
         logger.debug(f"Receipt generated at: {receipt_path}")
 
         if upload_generated_receipt_to_s3:

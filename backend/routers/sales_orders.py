@@ -35,13 +35,15 @@ from crud import egg_room_reports as crud_egg_room_reports # Import egg_room_rep
 from schemas.sales_orders import (
     SalesOrder as SalesOrderSchema,
     SalesOrderCreate,
-    SalesOrderUpdate
+    SalesOrderUpdate,
 )
 from schemas.sales_order_items import SalesOrderItemCreateRequest, SalesOrderItemUpdate
 from schemas.egg_room_reports import EggRoomReportCreate
 
 # Imports for Journal Entry
 from crud import journal_entry as journal_entry_crud
+from crud import sales_orders as crud_sales_orders # New import for sales order CRUD
+from models.business_partners import BusinessPartner as BusinessPartnerModel # New import
 from schemas.journal_entry import JournalEntryCreate
 from schemas.journal_item import JournalItemCreate
 from crud.financial_settings import get_financial_settings
@@ -49,6 +51,7 @@ from models.journal_entry import JournalEntry as JournalEntryModel
 
 # Define egg item names constant
 EGG_ITEM_NAMES = ["Table Egg", "Jumbo Egg", "Grade C Egg"]
+from utils.receipt_utils import generate_customer_bill_pdf # New import
 
 logger = logging.getLogger("sales_orders")
 
@@ -448,13 +451,17 @@ class ExportFormat(str, Enum):
     excel = "excel"
     pdf = "pdf"
 
+class SalesOrderFilterStatus(str, Enum):
+    paid = "paid"
+    unpaid = "unpaid"
+
 
 @router.get("/reports/detailed", response_model=List[SalesOrderReport])
 def get_detailed_sales_order_report(
     skip: int = 0,
     limit: int = 100,
     customer_id: Optional[int] = None,
-    status: Optional[SalesOrderStatus] = None,
+    status: Optional[SalesOrderFilterStatus] = None,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     db: Session = Depends(get_db),
@@ -469,7 +476,7 @@ def get_detailed_sales_order_report(
         skip=skip,
         limit=limit,
         customer_id=customer_id,
-        status=status,
+        status=status.value if status else None,
         start_date=start_date,
         end_date=end_date
     )
@@ -479,7 +486,7 @@ def get_detailed_sales_order_report(
 def export_detailed_sales_order_report(
     format: ExportFormat,
     customer_id: Optional[int] = None,
-    status: Optional[SalesOrderStatus] = None,
+    status: Optional[SalesOrderFilterStatus] = None,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     db: Session = Depends(get_db),
@@ -495,7 +502,7 @@ def export_detailed_sales_order_report(
         skip=0,
         limit=None,  # Get all records for export
         customer_id=customer_id,
-        status=status,
+        status=status.value if status else None,
         start_date=start_date,
         end_date=end_date
     )
@@ -637,7 +644,7 @@ def read_sales_orders(
     skip: int = 0,
     limit: int = 100,
     customer_id: Optional[str] = None,
-    status: Optional[SalesOrderStatus] = None,
+    status: Optional[SalesOrderFilterStatus] = None,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     db: Session = Depends(get_db),
@@ -650,7 +657,10 @@ def read_sales_orders(
         customer_ids = [int(cid.strip()) for cid in customer_id.split(",")]
         query = query.filter(SalesOrderModel.customer_id.in_(customer_ids))
     if status:
-        query = query.filter(SalesOrderModel.status == status)
+        if status == SalesOrderFilterStatus.paid:
+            query = query.filter(SalesOrderModel.status == SalesOrderStatus.PAID)
+        else:
+            query = query.filter(SalesOrderModel.status != SalesOrderStatus.PAID)
     if start_date:
         query = query.filter(SalesOrderModel.order_date >= start_date)
     if end_date:
@@ -1451,3 +1461,47 @@ def get_receipt_download_url(
     except Exception as e:
         logger.exception(f"Failed to generate download URL for SO {so_id}")
         raise HTTPException(status_code=500, detail=f"Failed to generate download URL: {str(e)}")
+
+
+@router.get("/customer-bill/{customer_id}", response_class=FileResponse)
+def get_customer_bill_pdf(
+    customer_id: int,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    status: Optional[SalesOrderFilterStatus] = None,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """
+    Generate and return a PDF bill for a specific customer, optionally filtered by date range and sales order status.
+    """
+    # 1. Fetch customer details
+    db_customer = db.query(BusinessPartnerModel).filter(
+        BusinessPartnerModel.id == customer_id,
+        BusinessPartnerModel.tenant_id == tenant_id,
+        BusinessPartnerModel.is_customer == True
+    ).first()
+    if not db_customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    # 2. Fetch relevant sales orders using the new CRUD function
+    sales_orders_for_bill = crud_sales_orders.get_sales_orders_for_customer_bill(
+        db=db,
+        tenant_id=tenant_id,
+        customer_id=customer_id,
+        start_date=start_date,
+        end_date=end_date,
+        status=status.value if status else None
+    )
+
+    if not sales_orders_for_bill:
+        raise HTTPException(status_code=404, detail="No sales orders found for this customer within the specified criteria.")
+
+    # 3. Generate the PDF bill using the new utility function
+    try:
+        filepath = generate_customer_bill_pdf(db, db_customer, sales_orders_for_bill, start_date, end_date)
+        filename = os.path.basename(filepath)
+        return FileResponse(filepath, media_type='application/pdf', filename=filename)
+    except Exception as e:
+        logger.exception(f"Failed to generate customer bill for customer {customer_id}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate customer bill: {str(e)}")
