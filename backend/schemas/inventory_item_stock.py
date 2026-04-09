@@ -6,6 +6,7 @@ from typing import Optional, List
 class DailyStock(BaseModel):
     date: str
     stock: Optional[Decimal]
+    unit: Optional[str]
 
 class DailyStockReport(BaseModel):
     data: List[DailyStock]

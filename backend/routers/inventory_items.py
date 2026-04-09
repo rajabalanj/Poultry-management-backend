@@ -142,6 +142,11 @@ def get_daily_stock_report_for_item(
     """
     Get the daily stock report for a specific inventory item over a date range.
     """
+    # Get the inventory item to fetch its unit
+    db_item = crud_inventory_items.get_inventory_item(db=db, item_id=item_id, tenant_id=tenant_id)
+    if db_item is None:
+        raise HTTPException(status_code=404, detail="Inventory item not found")
+    
     report_data = crud_inventory_item_stock.get_daily_stock_report(
         db=db, 
         inventory_item_id=item_id, 
@@ -149,7 +154,13 @@ def get_daily_stock_report_for_item(
         start_date=start_date, 
         end_date=end_date
     )
+    
+    # Add unit to each DailyStock item in the report
+    for item in report_data:
+        item.unit = db_item.unit
+    
     return report_data
+
 
 
 @router.get("/{item_id}/stock-at-date", response_model=DailyStock, tags=["Inventory Items"])
@@ -162,13 +173,44 @@ def get_item_stock_at_date(
     """
     Get the stock of an inventory item at the end of a specific date.
     """
-    stock = crud_inventory_item_stock.get_stock_at_date(
-        db=db, 
-        inventory_item_id=item_id, 
-        tenant_id=tenant_id, 
-        target_date=target_date
+    # Get the inventory item to fetch its unit
+    db_item = crud_inventory_items.get_inventory_item(db=db, item_id=item_id, tenant_id=tenant_id)
+    if db_item is None:
+        raise HTTPException(status_code=404, detail="Inventory item not found")
+    
+    # Check if the item is an egg and get stock from egg room reports
+    if db_item.name in EGG_INVENTORY_NAMES:
+        # Get the egg room report for the target date
+        egg_report = db.query(EggRoomReport).filter(
+            EggRoomReport.tenant_id == tenant_id,
+            EggRoomReport.report_date == target_date
+        ).first()
+        
+        if egg_report:
+            # Map the egg type to the corresponding closing stock field
+            egg_stock_map = {
+                "Table Egg": egg_report.table_closing,
+                "Jumbo Egg": egg_report.jumbo_closing,
+                "Grade C Egg": egg_report.grade_c_closing,
+            }
+            stock = egg_stock_map.get(db_item.name)
+        else:
+            stock = None
+    else:
+        # For non-egg items, use the regular stock calculation
+        stock = crud_inventory_item_stock.get_stock_at_date(
+            db=db,
+            inventory_item_id=item_id,
+            tenant_id=tenant_id,
+            target_date=target_date
+        )
+    
+    return DailyStock(
+        date=target_date.isoformat(), 
+        stock=stock,
+        unit=db_item.unit
     )
-    return DailyStock(date=target_date.isoformat(), stock=stock)
+
 
 
 @router.get("/{item_id}", response_model=InventoryItem)
