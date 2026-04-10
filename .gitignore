@@ -43,3 +43,9 @@ backend/uploads/sales_receipts/
 backend/uploads/receipts/
 backend/.env.prod
 backend/tests/
+backend/temp/sales_order_receipt_42_1b73ef2d659247df94dd7145934e45fd.pdf
+backend/temp/sales_order_receipt_42_f022e5c53717499ab4da44a834f72095.pdf
+backend/temp/sales_order_receipt_51_fc86fd0eb6194caf9202d388a2e2d851.pdf
+backend/temp_bills/customer_bill_5_2026-04-06.pdf
+backend/temp_bills/customer_bill_5_2026-04-07.pdf
+backend/temp_bills/customer_bill_7_2026-04-07.pdf

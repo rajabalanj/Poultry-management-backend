@@ -18,6 +18,7 @@ from models import (
     composition_usage_item,
     composition,
     daily_batch,
+    egg_price,
     egg_room_reports,
     inventory_item_audit,
     inventory_item_in_composition,
