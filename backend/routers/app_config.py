@@ -98,3 +98,30 @@ def update_standard_performance_config(config: AppConfigUpdate, db: Session = De
     from schemas.app_config import AppConfigCreate
     create_obj = AppConfigCreate(name="performance_standard_source", value=config.value)
     return crud_app_config.create_config(db, create_obj, tenant_id, user_id)
+
+@router.get("/configurations/seller-address", response_model=AppConfigOut)
+def get_seller_address(db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
+    """
+    Retrieve the seller address used in receipts for the current tenant.
+    """
+    config = crud_app_config.get_config(db, tenant_id, name="seller_address")
+    if not config:
+        raise HTTPException(status_code=404, detail="Seller address not configured for this tenant.")
+    return config
+
+@router.patch("/configurations/seller-address", response_model=AppConfigOut)
+def update_seller_address(config: AppConfigUpdate, db: Session = Depends(get_db), user: dict = Depends(require_group(["admin"])), tenant_id: str = Depends(get_tenant_id)):
+    """
+    Dedicated endpoint to update or create the seller address used in receipts for the current tenant.
+    """
+    user_id = get_user_identifier(user)
+    name = "seller_address"
+    
+    existing_config = crud_app_config.get_config(db, tenant_id, name=name)
+    if existing_config:
+        return crud_app_config.update_config_by_name(db, name, config, tenant_id, user_id)
+    
+    if not config.value:
+        raise HTTPException(status_code=422, detail="Field 'value' (the address) is required for creation.")
+        
+    return crud_app_config.create_config(db, AppConfigCreate(name=name, value=config.value), tenant_id, user_id)

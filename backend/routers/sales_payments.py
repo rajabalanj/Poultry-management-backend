@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List
 import logging
@@ -22,10 +23,11 @@ from schemas.journal_item import JournalItemCreate
 from crud.financial_settings import get_financial_settings
 
 try:
-    from utils.s3_utils import generate_presigned_download_url, upload_generated_receipt_to_s3
+    from utils.s3_utils import generate_presigned_download_url, upload_generated_receipt_to_s3, stream_s3_object
 except ImportError:
     generate_presigned_download_url = None
     upload_generated_receipt_to_s3 = None
+    stream_s3_object = None
 
 from database import get_db
 from models.sales_payments import SalesPayment as SalesPaymentModel
@@ -286,8 +288,23 @@ def get_receipt_download_url(
         raise HTTPException(status_code=404, detail="Sales Payment not found")
 
     if not db_payment.payment_receipt:
-        logger.warning(f"Sales Payment {payment_id} has no payment_receipt recorded for tenant_id: {tenant_id}. Raising 404.")
-        raise HTTPException(status_code=404, detail="Receipt not found")
+        logger.info(f"Sales Payment {payment_id} has no receipt, generating one now.")
+        try:
+            # Generate receipt for the associated Sales Order
+            receipt_path = generate_sales_order_receipt(db, db_payment.sales_order_id)
+            logger.debug(f"Receipt generated at: {receipt_path}")
+
+            # Upload to S3 and update the payment record
+            if upload_generated_receipt_to_s3:
+                s3_path = upload_generated_receipt_to_s3(tenant_id, payment_id, receipt_path)
+                db_payment.payment_receipt = s3_path
+                db.commit()
+                logger.info(f"Receipt uploaded to S3: {s3_path} and payment_receipt updated for payment {payment_id}.")
+            else:
+                raise HTTPException(status_code=501, detail="S3 upload functionality is not configured.")
+        except Exception as e:
+            logger.exception(f"Failed to generate and upload receipt for payment {payment_id}")
+            raise HTTPException(status_code=500, detail=f"Failed to generate receipt: {str(e)}")
     
     logger.debug(f"Payment {payment_id} payment_receipt value: {db_payment.payment_receipt}")
     if not db_payment.payment_receipt.startswith('s3://'):
@@ -304,3 +321,42 @@ def get_receipt_download_url(
     except Exception as e:
         logger.exception(f"Failed to generate download URL for payment {payment_id} for tenant_id: {tenant_id}")
         raise HTTPException(status_code=500, detail=f"Failed to generate download URL: {str(e)}")
+
+
+@router.get("/{payment_id}/receipt", response_class=StreamingResponse)
+def get_sales_payment_receipt(
+    payment_id: int,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """Download the sales payment receipt through the backend to avoid browser S3 CORS issues."""
+    logger.debug(f"Attempting to stream receipt for payment_id: {payment_id}, tenant_id: {tenant_id}")
+
+    if not stream_s3_object:
+        logger.warning(f"S3 streaming functionality is not configured for tenant_id: {tenant_id}. Raising 501.")
+        raise HTTPException(status_code=501, detail="S3 streaming functionality is not configured.")
+
+    db_payment = db.query(SalesPaymentModel).filter(SalesPaymentModel.id == payment_id, SalesPaymentModel.tenant_id == tenant_id).first()
+    if not db_payment:
+        logger.warning(f"Sales Payment with ID {payment_id} not found for tenant_id: {tenant_id}. Raising 404.")
+        raise HTTPException(status_code=404, detail="Sales Payment not found")
+
+    if not db_payment.payment_receipt:
+        logger.warning(f"Sales Payment {payment_id} has no payment_receipt recorded for tenant_id: {tenant_id}. Raising 404.")
+        raise HTTPException(status_code=404, detail="Receipt not found")
+
+    if not db_payment.payment_receipt.startswith('s3://'):
+        logger.warning(f"Payment {payment_id} receipt path '{db_payment.payment_receipt}' is not an S3 path for tenant_id: {tenant_id}. Raising 400.")
+        raise HTTPException(status_code=400, detail="Receipt is not stored in S3.")
+
+    try:
+        stream, content_type, filename = stream_s3_object(db_payment.payment_receipt)
+        headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+        logger.debug(f"Streaming receipt for payment {payment_id} with filename {filename}.")
+        return StreamingResponse(stream, media_type=content_type, headers=headers)
+    except FileNotFoundError as e:
+        logger.error(f"S3 file not found for payment {payment_id} at path {db_payment.payment_receipt}: {e}", exc_info=True)
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.exception(f"Failed to stream receipt for payment {payment_id} for tenant_id: {tenant_id}")
+        raise HTTPException(status_code=500, detail=f"Failed to stream receipt: {str(e)}")

@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 from datetime import date
 from decimal import Decimal
 from sqlalchemy import func
+from models.inventory_item_usage_history import InventoryItemUsageHistory
 
 from models import (
     EggRoomReport,
@@ -64,6 +65,18 @@ def get_financial_summary(db: Session, start_date: date, end_date: date, tenant_
         for item in usage.items:
             usage_cost += Decimal(item.weight) * item.inventory_item.average_cost
         cogs += usage_cost * usage.times
+    
+    # Add direct inventory item usage costs
+    direct_inventory_usages = db.query(InventoryItemUsageHistory).filter(
+        InventoryItemUsageHistory.used_at.between(start_date, end_date),
+        InventoryItemUsageHistory.tenant_id == tenant_id
+    ).all()
+
+    for usage in direct_inventory_usages:
+        # The used_quantity is already in the item's unit (after conversion)
+        # So we can directly multiply by average_cost
+        cogs += Decimal(usage.used_quantity) * usage.inventory_item.average_cost
+
 
     # Get operating expenses for the period (for cost calculation)
     period_operating_expenses = db.query(func.sum(OperationalExpense.amount)).filter(

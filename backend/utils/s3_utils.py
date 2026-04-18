@@ -120,3 +120,43 @@ def generate_presigned_download_url(s3_path: str, expires_in: int = 3600) -> str
             raise FileNotFoundError(f"File not found in S3 at path: {s3_path}")
         raise RuntimeError(f"Could not generate S3 download URL: {e}")
 
+
+def stream_s3_object(s3_path: str):
+    """
+    Stream an S3 object body for direct download through the backend.
+
+    Args:
+        s3_path: The full S3 path (e.g., 's3://bucket-name/key').
+
+    Returns:
+        A tuple of (stream_generator, content_type, filename).
+    """
+    if not s3_path.startswith(f's3://{S3_BUCKET_NAME}/'):
+        raise ValueError(f"Invalid S3 path format. Must start with 's3://{S3_BUCKET_NAME}/'")
+
+    s3_client = get_s3_client()
+    s3_key = s3_path.replace(f's3://{S3_BUCKET_NAME}/', '')
+
+    try:
+        response = s3_client.get_object(Bucket=S3_BUCKET_NAME, Key=s3_key)
+        body = response['Body']
+        content_type = response.get('ContentType', 'application/octet-stream')
+        filename = os.path.basename(s3_key)
+
+        def _stream():
+            try:
+                while True:
+                    chunk = body.read(8192)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                body.close()
+
+        return _stream(), content_type, filename
+    except ClientError as e:
+        logger.exception(f"Failed to stream S3 object for key: {s3_key}")
+        if e.response['Error']['Code'] == 'NoSuchKey':
+            raise FileNotFoundError(f"File not found in S3 at path: {s3_path}")
+        raise RuntimeError(f"Could not stream S3 object: {e}")
+

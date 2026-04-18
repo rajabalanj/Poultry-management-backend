@@ -2,12 +2,18 @@ import os
 from datetime import date
 from typing import List, Optional
 from decimal import Decimal
-from fpdf import FPDF # Assuming fpdf or similar library is used for PDF generation
+from fpdf import FPDF
 from sqlalchemy.orm import Session, selectinload
+
+
+class PDF(FPDF):
+    def header(self):
+        pass  # suppress default FPDF header
 
 from models.sales_orders import SalesOrder as SalesOrderModel
 from models.business_partners import BusinessPartner as BusinessPartnerModel
 from models.sales_order_items import SalesOrderItem as SalesOrderItemModel
+from models.app_config import AppConfig
 
 def generate_sales_order_receipt(db: Session, so_id: int) -> str:
     """
@@ -24,11 +30,22 @@ def generate_sales_order_receipt(db: Session, so_id: int) -> str:
         raise FileNotFoundError(f"Sales Order {so_id} not found")
 
     # 2. Setup PDF
-    pdf = FPDF()
+    pdf = PDF()
     pdf.add_page()
+
+    # Fetch Seller Address from AppConfig for the current tenant
+    seller_address_config = db.query(AppConfig).filter(
+        AppConfig.name == 'seller_address', 
+        AppConfig.tenant_id == so.tenant_id
+    ).first()
+    seller_address = seller_address_config.value if seller_address_config else ""
+
     pdf.set_font("Arial", 'B', 16)
     pdf.cell(0, 10, txt=f"Sales Order Receipt", ln=True, align="C")
-    pdf.ln(10)
+    if seller_address:
+        pdf.set_font("Arial", size=9)
+        pdf.multi_cell(0, 5, txt=seller_address, align="C")
+    pdf.ln(5)
 
     # 3. Order & Customer Info
     pdf.set_font("Arial", size=10)
@@ -47,9 +64,9 @@ def generate_sales_order_receipt(db: Session, so_id: int) -> str:
 
     # 4. Items Table
     pdf.set_font("Arial", 'B', 10)
-    pdf.cell(80, 8, "Item Description", 1)
-    pdf.cell(30, 8, "Quantity", 1, 0, 'C')
-    pdf.cell(40, 8, "Unit Price", 1, 0, 'R')
+    pdf.cell(80, 8, "Item", 1)
+    pdf.cell(30, 8, "Qty", 1, 0, 'C')
+    pdf.cell(40, 8, "Price", 1, 0, 'R')
     pdf.cell(40, 8, "Total", 1, 1, 'R')
 
     pdf.set_font("Arial", size=10)
@@ -60,21 +77,33 @@ def generate_sales_order_receipt(db: Session, so_id: int) -> str:
             
         pdf.cell(80, 8, item_name, 1)
         pdf.cell(30, 8, str(item.quantity), 1, 0, 'C')
-        pdf.cell(40, 8, f"{item.price_per_unit:.2f}", 1, 0, 'R')
-        pdf.cell(40, 8, f"{item.line_total:.2f}", 1, 1, 'R')
+        pdf.cell(40, 8, f"{item.price_per_unit:,.2f}", 1, 0, 'R')
+        pdf.cell(40, 8, f"{item.line_total:,.2f}", 1, 1, 'R')
 
     # 5. Financial Summary
     pdf.ln(5)
     pdf.set_font("Arial", 'B', 10)
-    pdf.cell(150, 8, "Grand Total:", 0, 0, 'R')
-    pdf.cell(40, 8, f"{so.total_amount:.2f}", 0, 1, 'R')
+    pdf.cell(150, 8, "GRAND TOTAL SALES:", 0, 0, 'R')
+    pdf.cell(40, 8, f"{so.total_amount:,.2f}", 1, 1, 'R')
     
     total_paid = sum(p.amount_paid for p in so.payments if p.deleted_at is None)
-    pdf.cell(150, 8, "Amount Paid:", 0, 0, 'R')
-    pdf.cell(40, 8, f"{total_paid:.2f}", 0, 1, 'R')
+    pdf.cell(150, 8, "TOTAL AMOUNT PAID:", 0, 0, 'R')
+    pdf.cell(40, 8, f"{total_paid:,.2f}", 1, 1, 'R')
     
-    pdf.cell(150, 8, "Balance Due:", 0, 0, 'R')
-    pdf.cell(40, 8, f"{(so.total_amount - total_paid):.2f}", 0, 1, 'R')
+    pdf.set_text_color(255, 0, 0)
+    pdf.cell(150, 8, "TOTAL OUTSTANDING:", 0, 0, 'R')
+    pdf.cell(40, 8, f"{(so.total_amount - total_paid):,.2f}", 1, 1, 'R')
+    pdf.set_text_color(0, 0, 0) # Reset color
+
+    # Add payment status note
+    pdf.ln(5)
+    pdf.set_font("Arial", 'I', 9)
+    if total_paid == 0:
+        pdf.cell(0, 6, txt="* No payments have been made for this order yet.", ln=True, align='C')
+    elif total_paid < so.total_amount:
+        pdf.cell(0, 6, txt=f"* Partial payment: {(total_paid/so.total_amount*100):.1f}% of total amount paid.", ln=True, align='C')
+    else:
+        pdf.cell(0, 6, txt="* This order has been fully paid.", ln=True, align='C')
 
     # 6. Save and Return Path
     output_dir = "temp_receipts"
@@ -93,7 +122,7 @@ def generate_customer_bill_pdf(
     """
     Generates a consolidated PDF bill for a customer based on a list of sales orders.
     """
-    pdf = FPDF()
+    pdf = PDF()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
 

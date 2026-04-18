@@ -18,10 +18,11 @@ from utils import sqlalchemy_to_dict
 from pydantic import BaseModel
 
 try:
-    from utils.s3_utils import generate_presigned_upload_url, generate_presigned_download_url
+    from utils.s3_utils import generate_presigned_upload_url, generate_presigned_download_url, upload_generated_receipt_to_s3
 except ImportError:
     generate_presigned_upload_url = None
     generate_presigned_download_url = None
+    upload_generated_receipt_to_s3 = None
 
 from database import get_db
 from models.sales_orders import SalesOrder as SalesOrderModel, SalesOrderStatus
@@ -512,39 +513,44 @@ def export_detailed_sales_order_report(
 
     # Flatten the data
     flattened_data = []
+    total_sales = Decimal('0.0')
+    total_received = Decimal('0.0')
+
     for report in report_data:
+        total_sales += report.total_amount
+        total_received += report.total_amount_paid
+
         if report.items:
             for item in report.items:
+                # Include variant in item name for consistency
+                item_name = item.inventory_item_name
+                if item.variant_name:
+                    item_name += f" ({item.variant_name})"
+
                 flat_item = {
-                    "SO Number": report.so_number,
-                    "Bill No": report.bill_no,
-                    "Customer Name": report.customer_name,
-                    "Order Date": report.order_date,
-                    "Item Name": item.inventory_item_name,
-                    "Variant Name": item.variant_name,
-                    "Quantity": item.quantity,
-                    "Price Per Unit": item.price_per_unit,
-                    "Line Total": item.line_total,
-                    "Order Total Amount": report.total_amount,
-                    "Amount Paid": report.total_amount_paid,
-                    "Order Status": report.status.value,
+                    "Date": report.order_date,
+                    "SO #": report.so_number,
+                    "Bill #": report.bill_no or "",
+                    "Customer": report.customer_name,
+                    "Item": item_name,
+                    "Qty": item.quantity,
+                    "Price": item.price_per_unit,
+                    "Total": item.line_total,
+                    "Status": report.status.value,
                 }
                 flattened_data.append(flat_item)
         else:
             # Include orders with no items
             flat_item = {
-                "SO Number": report.so_number,
-                "Bill No": report.bill_no,
-                "Customer Name": report.customer_name,
-                "Order Date": report.order_date,
-                "Item Name": None,
-                "Variant Name": None,
-                "Quantity": 0,
-                "Price Per Unit": 0,
-                "Line Total": 0,
-                "Order Total Amount": report.total_amount,
-                "Amount Paid": report.total_amount_paid,
-                "Order Status": report.status.value,
+                "Date": report.order_date,
+                "SO #": report.so_number,
+                "Bill #": report.bill_no or "",
+                "Customer": report.customer_name,
+                "Item": "No Items",
+                "Qty": 0,
+                "Price": 0,
+                "Total": 0,
+                "Status": report.status.value,
             }
             flattened_data.append(flat_item)
 
@@ -554,7 +560,22 @@ def export_detailed_sales_order_report(
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, sheet_name='Sales Report')
-        
+            # Add grand totals at the bottom (matching PDF logic)
+            worksheet = writer.sheets['Sales Report']
+            start_row = len(df) + 3 # Leave a blank row after data
+            
+            from openpyxl.styles import Font
+            bold_font = Font(bold=True)
+            
+            worksheet.cell(row=start_row, column=1, value="GRAND TOTAL SALES:").font = bold_font
+            worksheet.cell(row=start_row, column=8, value=total_sales).font = bold_font
+            
+            worksheet.cell(row=start_row + 1, column=1, value="TOTAL AMOUNT PAID:").font = bold_font
+            worksheet.cell(row=start_row + 1, column=8, value=total_received).font = bold_font
+            
+            worksheet.cell(row=start_row + 2, column=1, value="TOTAL OUTSTANDING:").font = bold_font
+            worksheet.cell(row=start_row + 2, column=8, value=total_sales - total_received).font = bold_font
+
         output.seek(0)
         
         return StreamingResponse(
@@ -565,62 +586,78 @@ def export_detailed_sales_order_report(
 
     elif format == ExportFormat.pdf:  # NOTE: This route now generates a PDF for scalability.
         try:
-            import matplotlib.pyplot as plt
-            from matplotlib.backends.backend_pdf import PdfPages
-            from pandas.plotting import table
-            import textwrap
-            import numpy as np
-
+            from fpdf import FPDF
             output = io.BytesIO()
-            # Use PdfPages to create a multi-page PDF document
-            with PdfPages(output) as pdf:
-                df_for_pdf = df.copy()
+            pdf = FPDF(orientation='L', unit='mm', format='A4')
+            pdf.add_page()
+            pdf.set_font("Arial", 'B', 16)
+            pdf.cell(0, 10, "Detailed Sales Order Report", ln=True, align='C')
+            pdf.set_font("Arial", '', 10)
+            pdf.cell(0, 10, f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M')}", ln=True, align='R')
+            pdf.ln(5)
 
-                # Drop columns not needed for PDF export
-                columns_to_drop = ['SO Number', 'Order Status']
-                df_for_pdf.drop(columns=[col for col in columns_to_drop if col in df_for_pdf.columns], inplace=True)
+            # Header Table
+            pdf.set_font("Arial", 'B', 9)
+            pdf.set_fill_color(200, 220, 255)
+            headers = ["Date", "SO #", "Bill #", "Customer", "Item", "Qty", "Price", "Total", "Status"]
+            widths = [25, 20, 25, 45, 45, 15, 25, 25, 30]
+            
+            for i, header in enumerate(headers):
+                pdf.cell(widths[i], 8, header, 1, 0, 'C', fill=True)
+            pdf.ln()
 
-                # Rename columns for shorter headers in PDF
-                df_for_pdf.rename(columns={
-                    "Price Per Unit": "Unit Price",
-                    "Bill No": "Bill#",
-                    "Customer Name": "Customer",
-                    "Order Date": "Date",
-                    "Item Name": "Item",
-                    "Variant Name": "Variant",
-                    "Line Total": "Item Total",
-                    "Order Total Amount": "SO Total",
-                    "Amount Paid": "Paid",
-                }, inplace=True)
+            # Data Rows
+            pdf.set_font("Arial", size=8)
+            total_sales = Decimal('0.0')
+            total_received = Decimal('0.0')
 
-                # Wrap text for better layout
-                for col in ['Customer', 'Item']:
-                    if col in df_for_pdf.columns:
-                        df_for_pdf[col] = df_for_pdf[col].apply(
-                            lambda x: '\n'.join(textwrap.wrap(str(x), width=20)) if isinstance(x, str) else x
-                        )
+            for report in report_data:
+                # Financial totals for summary
+                total_sales += report.total_amount
+                total_received += report.total_amount_paid
                 
-                rows_per_page = 35  # Number of rows per PDF page
-                num_pages = int(np.ceil(len(df_for_pdf) / rows_per_page))
+                # Row logic: Handle multiple items per SO
+                first_item = True
+                if not report.items:
+                    # Logic for orders with no items
+                    pdf.cell(widths[0], 7, str(report.order_date), 1)
+                    pdf.cell(widths[1], 7, str(report.so_number), 1)
+                    pdf.cell(widths[2], 7, str(report.bill_no or ""), 1)
+                    pdf.cell(widths[3], 7, report.customer_name[:25], 1)
+                    pdf.cell(widths[4], 7, "No Items", 1)
+                    pdf.cell(widths[5], 7, "0", 1)
+                    pdf.cell(widths[6], 7, "0.00", 1)
+                    pdf.cell(widths[7], 7, "0.00", 1)
+                    pdf.cell(widths[8], 7, report.status.value, 1)
+                    pdf.ln()
+                else:
+                    for item in report.items:
+                        pdf.cell(widths[0], 7, str(report.order_date) if first_item else "", 1)
+                        pdf.cell(widths[1], 7, str(report.so_number) if first_item else "", 1)
+                        pdf.cell(widths[2], 7, str(report.bill_no or "") if first_item else "", 1)
+                        pdf.cell(widths[3], 7, (report.customer_name[:25]) if first_item else "", 1)
+                        pdf.cell(widths[4], 7, item.inventory_item_name[:25], 1)
+                        pdf.cell(widths[5], 7, str(item.quantity), 1, 0, 'C')
+                        pdf.cell(widths[6], 7, f"{item.price_per_unit:,.2f}", 1, 0, 'R')
+                        pdf.cell(widths[7], 7, f"{item.line_total:,.2f}", 1, 0, 'R')
+                        pdf.cell(widths[8], 7, report.status.value if first_item else "", 1)
+                        pdf.ln()
+                        first_item = False
 
-                for i in range(num_pages):
-                    chunk = df_for_pdf.iloc[i * rows_per_page : (i + 1) * rows_per_page]
-                    
-                    # Standard A4 size in landscape for more width
-                    fig, ax = plt.subplots(figsize=(11.7, 8.3)) # A4 landscape
-                    ax.axis('off')
-                    
-                    # Add a title to each page
-                    ax.set_title(f"Detailed Sales Report - Page {i + 1} of {num_pages}", fontsize=14, pad=20)
+            # Summary Footer
+            pdf.ln(5)
+            pdf.set_font("Arial", 'B', 10)
+            pdf.cell(sum(widths[:7]), 8, "GRAND TOTAL SALES:", 0, 0, 'R')
+            pdf.cell(widths[7], 8, f"{total_sales:,.2f}", 1, 1, 'R')
+            pdf.cell(sum(widths[:7]), 8, "TOTAL AMOUNT PAID:", 0, 0, 'R')
+            pdf.cell(widths[7], 8, f"{total_received:,.2f}", 1, 1, 'R')
+            pdf.set_text_color(255, 0, 0)
+            pdf.cell(sum(widths[:7]), 8, "TOTAL OUTSTANDING:", 0, 0, 'R')
+            pdf.cell(widths[7], 8, f"{(total_sales - total_received):,.2f}", 1, 1, 'R')
 
-                    the_table = table(ax, chunk, loc='center', cellLoc='left', colLoc='center')
-                    the_table.auto_set_font_size(False)
-                    the_table.set_fontsize(9) # Slightly smaller font for more data
-                    the_table.scale(1, 1.5)  # Adjust vertical scaling
-
-                    pdf.savefig(fig, bbox_inches='tight')
-                    plt.close(fig)
-
+            # Finalize
+            pdf_content = pdf.output(dest='S')
+            output.write(pdf_content)
             output.seek(0)
 
             # Return as PDF
@@ -1446,8 +1483,19 @@ def get_receipt_download_url(
         raise HTTPException(status_code=404, detail="Sales Order not found")
         
     if not db_so.payment_receipt:
-        logger.warning(f"Sales Order {so_id} exists but has no payment_receipt path recorded.")
-        raise HTTPException(status_code=404, detail="Receipt not found for this order")
+        logger.info(f"Sales Order {so_id} has no receipt, generating one now.")
+        try:
+            receipt_path = generate_sales_order_receipt(db, so_id)
+            logger.debug(f"Receipt generated at: {receipt_path}")
+
+            # Upload to S3 and update the sales order
+            s3_path = upload_generated_receipt_to_s3(tenant_id, so_id, receipt_path)
+            db_so.payment_receipt = s3_path
+            db.commit()
+            logger.info(f"Receipt uploaded to S3: {s3_path} and payment_receipt field updated for SO {so_id}.")
+        except Exception as e:
+            logger.exception(f"Failed to generate and upload receipt for SO {so_id}")
+            raise HTTPException(status_code=500, detail=f"Failed to generate receipt: {str(e)}")
 
     if not db_so.payment_receipt.startswith('s3://'):
         logger.error(f"Invalid receipt path format for SO {so_id}: {db_so.payment_receipt}")

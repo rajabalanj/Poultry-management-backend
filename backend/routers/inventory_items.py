@@ -13,17 +13,30 @@ from sqlalchemy.orm import Session
 from crud import inventory_item_audit as crud_inventory_item_audit
 from crud import inventory_items as crud_inventory_items
 from crud import inventory_item_stock as crud_inventory_item_stock
+from crud.inventory_item_usage_history import (
+    use_inventory_item,
+    get_inventory_item_usage_history,
+    get_inventory_item_usage_by_date,
+    revert_inventory_item_usage
+)
 from database import get_db
 from models.egg_room_reports import EggRoomReport
 from models.inventory_items import InventoryItem as InventoryItemModel
+from models.inventory_item_usage_history import InventoryItemUsageHistory as InventoryItemUsageHistoryModel
 from models.purchase_order_items import PurchaseOrderItem as PurchaseOrderItemModel
+from models.batch import Batch as BatchModel
 from schemas.inventory_item_audit import InventoryItemAudit
+from schemas.inventory_item_usage_history import (
+    InventoryItemUsageHistoryCreate,
+    InventoryItemUsageHistory,
+    PaginatedInventoryItemUsageHistoryResponse,
+    InventoryItemUsageByDate,
+)
 from schemas.inventory_items import InventoryItem, InventoryItemCreate, InventoryItemUpdate
 from schemas.inventory_item_stock import DailyStock, DailyStockReport
 from schemas.reports import InventoryValue
 from utils.auth_utils import get_current_user, get_user_identifier
 from utils.tenancy import get_tenant_id
-from database import get_db
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/inventory-items", tags=["Inventory Items"])
@@ -43,22 +56,6 @@ def _get_latest_egg_report_stock(db: Session, tenant_id: str) -> dict:
             "Grade C Egg": latest_report.grade_c_closing,
         }
     return {}
-
-@router.post("/", response_model=InventoryItem, status_code=status.HTTP_201_CREATED)
-def create_inventory_item(
-    item: InventoryItemCreate,
-    db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user),
-    tenant_id: str = Depends(get_tenant_id)
-):
-    """Create a new inventory item."""
-    db_item = db.query(InventoryItemModel).filter(InventoryItemModel.name == item.name, InventoryItemModel.tenant_id == tenant_id).first()
-    if db_item:
-        raise HTTPException(status_code=400, detail="Inventory item with this name already exists")
-    
-    new_item = crud_inventory_items.create_inventory_item(db=db, item=item, tenant_id=tenant_id, user=user)
-    logger.info(f"Inventory item '{new_item.name}' created by user {get_user_identifier(user)} for tenant {tenant_id}")
-    return new_item
 
 @router.get("/", response_model=List[InventoryItem])
 def read_inventory_items(
@@ -83,6 +80,23 @@ def read_inventory_items(
             item.current_stock = latest_egg_stock.get(item.name, item.current_stock)
             
     return items
+
+@router.post("/", response_model=InventoryItem, status_code=status.HTTP_201_CREATED)
+def create_inventory_item(
+    item: InventoryItemCreate,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """Create a new inventory item."""
+    db_item = db.query(InventoryItemModel).filter(InventoryItemModel.name == item.name, InventoryItemModel.tenant_id == tenant_id).first()
+    if db_item:
+        raise HTTPException(status_code=400, detail="Inventory item with this name already exists")
+    
+    new_item = crud_inventory_items.create_inventory_item(db=db, item=item, tenant_id=tenant_id, user=user)
+    logger.info(f"Inventory item '{new_item.name}' created by user {get_user_identifier(user)} for tenant {tenant_id}")
+    return new_item
+
 
 @router.get("/reports/stock-levels", response_model=List[InventoryItem], tags=["Inventory Reports"])
 def get_stock_levels_report(
@@ -130,6 +144,85 @@ def get_inventory_value_report(db: Session = Depends(get_db), tenant_id: str = D
     
     return {"total_inventory_value": Decimal(str(total_value or 0))}
 
+@router.get("/usage-history", response_model=PaginatedInventoryItemUsageHistoryResponse)
+def get_all_inventory_item_usage_history(
+    offset: int = 0,
+    limit: int = 10,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    return get_inventory_item_usage_history(
+        db=db,
+        tenant_id=tenant_id,
+        offset=offset,
+        limit=limit,
+        start_date=start_date,
+        end_date=end_date
+    )
+
+@router.get("/usage-by-date", response_model=InventoryItemUsageByDate)
+def get_inventory_item_usage_by_date_endpoint(
+    usage_date: date,
+    batch_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    return get_inventory_item_usage_by_date(db=db, usage_date=usage_date, tenant_id=tenant_id, batch_id=batch_id)
+
+@router.get("/usage-history/filtered", response_model=List[InventoryItemUsageHistory])
+def get_filtered_inventory_item_usage_history(
+    usage_date: date,
+    batch_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    start_of_day = datetime.combine(usage_date, datetime.min.time())
+    end_of_day = datetime.combine(usage_date, datetime.max.time())
+
+    query = db.query(InventoryItemUsageHistoryModel).filter(
+        InventoryItemUsageHistoryModel.tenant_id == tenant_id,
+        InventoryItemUsageHistoryModel.used_at >= start_of_day,
+        InventoryItemUsageHistoryModel.used_at <= end_of_day
+    )
+
+    if batch_id:
+        query = query.filter(InventoryItemUsageHistoryModel.batch_id == batch_id)
+
+    return query.order_by(InventoryItemUsageHistoryModel.used_at.desc()).all()
+
+@router.post("/use", response_model=InventoryItemUsageHistory, status_code=status.HTTP_201_CREATED)
+def use_inventory_item_endpoint(
+    data: InventoryItemUsageHistoryCreate,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    used_at = data.usedAt or datetime.now()
+    batch = db.query(BatchModel).filter(
+        BatchModel.batch_no == data.batch_no,
+        BatchModel.is_active,
+        BatchModel.tenant_id == tenant_id
+    ).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail=f"Active batch with batch number '{data.batch_no}' not found.")
+
+    try:
+        usage = use_inventory_item(
+            db=db,
+            inventory_item_id=data.inventory_item_id,
+            batch_id=batch.id,
+            used_quantity=data.used_quantity,
+            used_at=used_at,
+            tenant_id=tenant_id,
+            changed_by=get_user_identifier(user),
+            unit=data.unit
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return usage
 
 @router.get("/reports/daily-stock/{item_id}", response_model=List[DailyStock], tags=["Inventory Reports"])
 def get_daily_stock_report_for_item(
@@ -161,7 +254,22 @@ def get_daily_stock_report_for_item(
     
     return report_data
 
-
+@router.post("/revert-usage/{usage_id}")
+def revert_inventory_item_usage_endpoint(
+    usage_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    success, message = revert_inventory_item_usage(
+        db=db,
+        usage_id=usage_id,
+        tenant_id=tenant_id,
+        changed_by=get_user_identifier(user)
+    )
+    if not success:
+        raise HTTPException(status_code=404, detail=message)
+    return {"message": message}
 
 @router.get("/{item_id}/stock-at-date", response_model=DailyStock, tags=["Inventory Items"])
 def get_item_stock_at_date(
@@ -211,7 +319,111 @@ def get_item_stock_at_date(
         unit=db_item.unit
     )
 
+@router.get("/{item_id}/audit", response_model=List[InventoryItemAudit])
+def get_inventory_item_audit_history(
+    item_id: int, 
+    db: Session = Depends(get_db), 
+    tenant_id: str = Depends(get_tenant_id),
+    start_date: Optional[date] = Query(None, description="Start date for filtering audit history"),
+    end_date: Optional[date] = Query(None, description="End date for filtering audit history")
+):
+    """
+    Retrieve the audit history for a specific inventory item.
+    """
+    db_item = crud_inventory_items.get_inventory_item(db=db, item_id=item_id, tenant_id=tenant_id)
+    if db_item is None:
+        raise HTTPException(status_code=404, detail="Inventory item not found")
+    
+    audit_history = crud_inventory_item_audit.get_inventory_item_audits(
+        db=db, 
+        inventory_item_id=item_id, 
+        tenant_id=tenant_id,
+        start_date=start_date,
+        end_date=end_date
+    )
+    return audit_history
 
+@router.get("/{item_id}/usage-history", response_model=PaginatedInventoryItemUsageHistoryResponse)
+def get_inventory_item_usage_history_endpoint(
+    item_id: int,
+    offset: int = 0,
+    limit: int = 10,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    return get_inventory_item_usage_history(
+        db=db,
+        tenant_id=tenant_id,
+        inventory_item_id=item_id,
+        offset=offset,
+        limit=limit,
+        start_date=start_date,
+        end_date=end_date
+    )
+
+class AdjustStockRequest(BaseModel):
+    change_amount: Decimal
+    change_type: Optional[str] = "manual"
+    note: Optional[str] = None
+    unit_cost: Optional[Decimal] = None
+
+
+@router.post("/{item_id}/adjust", response_model=InventoryItem)
+def adjust_inventory_item_stock(
+    item_id: int,
+    request: AdjustStockRequest,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """Manually adjust an inventory item's stock and create an audit record.
+
+    change_amount is positive to increase stock, negative to decrease.
+    """
+    db_item = crud_inventory_items.get_inventory_item(db=db, item_id=item_id, tenant_id=tenant_id)
+    if db_item is None:
+        raise HTTPException(status_code=404, detail="Inventory item not found")
+
+    try:
+        old_qty = Decimal(str(db_item.current_stock or 0))
+        change_amt = Decimal(str(request.change_amount))
+        new_qty = old_qty + change_amt
+
+        # Recalculate average cost if adding stock and unit_cost is provided
+        if change_amt > 0 and request.unit_cost is not None:
+            old_avg = Decimal(str(db_item.average_cost or 0))
+            if new_qty > 0:
+                new_avg = ((old_qty * old_avg) + (change_amt * request.unit_cost)) / new_qty
+                db_item.average_cost = new_avg
+
+        # Update the inventory item
+        db_item.current_stock = new_qty
+        db_item.updated_by = get_user_identifier(user)
+        db_item.updated_at = datetime.now()
+        db.commit()
+        db.refresh(db_item)
+
+        # Create an audit record
+        crud_inventory_item_audit.create_inventory_item_audit(
+            db=db,
+            inventory_item_id=item_id,
+            change_type=request.change_type or "manual",
+            change_amount=change_amt,
+            old_quantity=old_qty,
+            new_quantity=new_qty,
+            tenant_id=tenant_id,
+            changed_by=get_user_identifier(user),
+            note=request.note
+        )
+
+        logger.info(f"Inventory item (ID: {item_id}) adjusted by {get_user_identifier(user)}: {change_amt} for tenant {tenant_id}")
+        return db_item
+    except Exception as e:
+        db.rollback()
+        logger.exception("Failed to adjust inventory item stock")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/{item_id}", response_model=InventoryItem)
 def read_inventory_item(item_id: int, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
@@ -275,89 +487,3 @@ def delete_inventory_item(
     logger.info(f"Inventory item '{db_item.name}' (ID: {item_id}) deleted by user {get_user_identifier(user)} for tenant {tenant_id}")
     return {"message": "Inventory item deleted successfully"}
 
-@router.get("/{item_id}/audit", response_model=List[InventoryItemAudit])
-def get_inventory_item_audit_history(
-    item_id: int, 
-    db: Session = Depends(get_db), 
-    tenant_id: str = Depends(get_tenant_id),
-    start_date: Optional[date] = Query(None, description="Start date for filtering audit history"),
-    end_date: Optional[date] = Query(None, description="End date for filtering audit history")
-):
-    """
-    Retrieve the audit history for a specific inventory item.
-    """
-    db_item = crud_inventory_items.get_inventory_item(db=db, item_id=item_id, tenant_id=tenant_id)
-    if db_item is None:
-        raise HTTPException(status_code=404, detail="Inventory item not found")
-    
-    audit_history = crud_inventory_item_audit.get_inventory_item_audits(
-        db=db, 
-        inventory_item_id=item_id, 
-        tenant_id=tenant_id,
-        start_date=start_date,
-        end_date=end_date
-    )
-    return audit_history
-
-
-class AdjustStockRequest(BaseModel):
-    change_amount: Decimal
-    change_type: Optional[str] = "manual"
-    note: Optional[str] = None
-    unit_cost: Optional[Decimal] = None
-
-
-@router.post("/{item_id}/adjust", response_model=InventoryItem)
-def adjust_inventory_item_stock(
-    item_id: int,
-    request: AdjustStockRequest,
-    db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user),
-    tenant_id: str = Depends(get_tenant_id)
-):
-    """Manually adjust an inventory item's stock and create an audit record.
-
-    change_amount is positive to increase stock, negative to decrease.
-    """
-    db_item = crud_inventory_items.get_inventory_item(db=db, item_id=item_id, tenant_id=tenant_id)
-    if db_item is None:
-        raise HTTPException(status_code=404, detail="Inventory item not found")
-
-    try:
-        old_qty = Decimal(str(db_item.current_stock or 0))
-        change_amt = Decimal(str(request.change_amount))
-        new_qty = old_qty + change_amt
-
-        # Recalculate average cost if adding stock and unit_cost is provided
-        if change_amt > 0 and request.unit_cost is not None:
-            old_avg = Decimal(str(db_item.average_cost or 0))
-            if new_qty > 0:
-                new_avg = ((old_qty * old_avg) + (change_amt * request.unit_cost)) / new_qty
-                db_item.average_cost = new_avg
-
-        # Update the inventory item
-        db_item.current_stock = new_qty
-        db_item.updated_by = get_user_identifier(user)
-        db_item.updated_at = datetime.now()
-        db.commit()
-        db.refresh(db_item)
-
-        # Create an audit record
-        crud_inventory_item_audit.create_inventory_item_audit(
-            db=db,
-            inventory_item_id=item_id,
-            change_type=request.change_type or "manual",
-            change_amount=change_amt,
-            old_quantity=old_qty,
-            new_quantity=new_qty,
-            tenant_id=tenant_id,
-            changed_by=get_user_identifier(user),
-            note=request.note
-        )
-
-        logger.info(f"Inventory item (ID: {item_id}) adjusted by {get_user_identifier(user)}: {change_amt} for tenant {tenant_id}")
-        return db_item
-    except Exception as e:
-        db.rollback()
-        logger.exception("Failed to adjust inventory item stock")
-        raise HTTPException(status_code=500, detail=str(e))
