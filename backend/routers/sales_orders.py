@@ -1523,16 +1523,25 @@ def get_customer_bill_pdf(
     """
     Generate and return a PDF bill for a specific customer, optionally filtered by date range and sales order status.
     """
+    # Log the incoming request details
+    logger.info(f"Customer bill request received - Customer ID: {customer_id}, Tenant ID: {tenant_id}, Start Date: {start_date}, End Date: {end_date}, Status: {status}")
+    
     # 1. Fetch customer details
+    logger.info(f"Fetching customer details for ID: {customer_id} and tenant: {tenant_id}")
     db_customer = db.query(BusinessPartnerModel).filter(
         BusinessPartnerModel.id == customer_id,
         BusinessPartnerModel.tenant_id == tenant_id,
         BusinessPartnerModel.is_customer == True
     ).first()
+    
     if not db_customer:
+        logger.warning(f"Customer not found - ID: {customer_id}, Tenant: {tenant_id}")
         raise HTTPException(status_code=404, detail="Customer not found")
+    
+    logger.info(f"Customer found: {db_customer.name} (ID: {db_customer.id})")
 
     # 2. Fetch relevant sales orders using the new CRUD function
+    logger.info(f"Fetching sales orders for customer bill - Customer ID: {customer_id}, Start Date: {start_date}, End Date: {end_date}, Status: {status}")
     sales_orders_for_bill = crud_sales_orders.get_sales_orders_for_customer_bill(
         db=db,
         tenant_id=tenant_id,
@@ -1542,13 +1551,18 @@ def get_customer_bill_pdf(
         status=status.value if status else None
     )
 
+    logger.info(f"Found {len(sales_orders_for_bill) if sales_orders_for_bill else 0} sales orders for customer")
+    
     if not sales_orders_for_bill:
+        logger.warning(f"No sales orders found for customer bill - Customer ID: {customer_id}, Date Range: {start_date} to {end_date}, Status: {status}")
         raise HTTPException(status_code=404, detail="No sales orders found for this customer within the specified criteria.")
 
     # 3. Generate the PDF bill using the new utility function
     try:
+        logger.info(f"Generating customer bill PDF for customer {customer_id} with {len(sales_orders_for_bill)} sales orders")
         filepath = generate_customer_bill_pdf(db, db_customer, sales_orders_for_bill, start_date, end_date)
         filename = os.path.basename(filepath)
+        logger.info(f"Successfully generated customer bill PDF: {filepath}")
         return FileResponse(filepath, media_type='application/pdf', filename=filename)
     except Exception as e:
         logger.exception(f"Failed to generate customer bill for customer {customer_id}")

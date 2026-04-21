@@ -14,6 +14,10 @@ from models.sales_orders import SalesOrder as SalesOrderModel
 from models.business_partners import BusinessPartner as BusinessPartnerModel
 from models.sales_order_items import SalesOrderItem as SalesOrderItemModel
 from models.app_config import AppConfig
+from models.journal_entry import JournalEntry
+from models.journal_item import JournalItem
+from crud.financial_settings import get_financial_settings
+from sqlalchemy import func
 
 def generate_sales_order_receipt(db: Session, so_id: int) -> str:
     """
@@ -113,29 +117,75 @@ def generate_sales_order_receipt(db: Session, so_id: int) -> str:
     return filepath
 
 def generate_customer_bill_pdf(
-    db, # Session object might be needed for additional lookups, though ideally data is pre-fetched
+    db: Session,
     customer: BusinessPartnerModel,
     sales_orders: List[SalesOrderModel],
-    start_date: Optional[date],
-    end_date: Optional[date]
+    start_date: date,
+    end_date: date
 ) -> str:
     """
-    Generates a consolidated PDF bill for a customer based on a list of sales orders.
+    Generates a customer statement PDF in ledger format with opening balance, transactions, and closing balance.
     """
+    # Get financial settings
+    settings = get_financial_settings(db, customer.tenant_id)
+    if not settings or not settings.default_accounts_receivable_account_id:
+        raise ValueError("Accounts Receivable account not configured")
+
+    ar_account_id = settings.default_accounts_receivable_account_id
+
+    # Get all reference documents for this customer to accurately calculate balances and find all transactions
+    all_customer_sos = db.query(SalesOrderModel).filter(
+        SalesOrderModel.customer_id == customer.id,
+        SalesOrderModel.tenant_id == customer.tenant_id
+    ).all()
+    all_ref_docs = [f"SO-{so.so_number}" for so in all_customer_sos]
+
+    if not all_ref_docs:
+        opening_balance = Decimal('0.0')
+        transactions = []
+    else:
+        # Calculate opening balance: sum(debit - credit) for AR account, all_ref_docs, date < start_date
+        opening_balance_query = db.query(func.sum(JournalItem.debit - JournalItem.credit)).join(JournalEntry).filter(
+            JournalEntry.tenant_id == customer.tenant_id,
+            JournalEntry.reference_document.in_(all_ref_docs),
+            JournalEntry.date < start_date,
+            JournalItem.account_id == ar_account_id
+        )
+        opening_balance = opening_balance_query.scalar() or Decimal('0.0')
+
+        # Get transactions: journal entries for all_ref_docs in date range
+        transactions = db.query(JournalEntry).options(
+            selectinload(JournalEntry.items).selectinload(JournalItem.account)
+        ).filter(
+            JournalEntry.tenant_id == customer.tenant_id,
+            JournalEntry.reference_document.in_(all_ref_docs),
+            JournalEntry.date >= start_date,
+            JournalEntry.date <= end_date
+        ).order_by(JournalEntry.date, JournalEntry.id).all()
+
+    # Setup PDF
     pdf = PDF()
     pdf.add_page()
-    pdf.set_font("Arial", size=12)
 
-    # Header
-    pdf.cell(200, 10, txt="Customer Bill", ln=True, align="C")
-    pdf.ln(10)
+    # Fetch Seller Address from AppConfig
+    seller_address_config = db.query(AppConfig).filter(
+        AppConfig.name == 'seller_address',
+        AppConfig.tenant_id == customer.tenant_id
+    ).first()
+    seller_address = seller_address_config.value if seller_address_config else ""
+
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(0, 10, txt="Customer Statement", ln=True, align="C")
+    if seller_address:
+        pdf.set_font("Arial", size=9)
+        pdf.multi_cell(0, 5, txt=seller_address, align="C")
+    pdf.ln(5)
 
     # Customer Information
-    pdf.set_font("Arial", 'B', 10)
-    pdf.cell(0, 5, txt=f"Customer Name: {customer.name}", ln=True)
-    pdf.set_font("Arial", '', 10)
-    pdf.cell(0, 5, txt=f"Address: {customer.address or 'N/A'}", ln=True)
-    pdf.cell(0, 5, txt=f"Contact: {customer.phone or 'N/A'}", ln=True)
+    pdf.set_font("Arial", size=10)
+    pdf.cell(0, 6, txt=f"Customer: {customer.name}", ln=True)
+    pdf.cell(0, 6, txt=f"Contact: {customer.phone or 'N/A'}", ln=True)
+    pdf.cell(0, 6, txt=f"Address: {customer.address or 'N/A'}", ln=True)
     pdf.ln(5)
 
     # Date Range
@@ -151,61 +201,43 @@ def generate_customer_bill_pdf(
         pdf.cell(0, 5, txt=date_range_str, ln=True)
         pdf.ln(5)
 
-    # Sales Orders Details
-    total_billed_amount = Decimal('0.0')
-    total_paid_amount = Decimal('0.0')
+    # Opening Balance
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(0, 8, txt=f"Opening Balance: {opening_balance:,.2f}", ln=True)
+    pdf.ln(5)
 
-    for so in sales_orders:
-        pdf.set_font("Arial", 'B', 10)
-        pdf.cell(0, 7, txt=f"Sales Order #{so.so_number} (Date: {so.order_date.isoformat()}) - Status: {so.status.value}", ln=True)
-        pdf.set_font("Arial", '', 9)
-        pdf.cell(0, 5, txt=f"  Bill No: {so.bill_no or 'N/A'}", ln=True)
-        
-        # Items table header
-        pdf.set_font("Arial", 'B', 9)
-        pdf.cell(70, 6, "Item", 1)
-        pdf.cell(30, 6, "Quantity", 1)
-        pdf.cell(30, 6, "Price/Unit", 1)
-        pdf.cell(30, 6, "Line Total", 1, ln=True)
-        
-        # Items
-        pdf.set_font("Arial", '', 9)
-        for item in so.items:
-            pdf.cell(70, 6, item.inventory_item.name if item.inventory_item else "N/A", 1)
-            pdf.cell(30, 6, str(item.quantity), 1)
-            pdf.cell(30, 6, str(item.price_per_unit), 1)
-            pdf.cell(30, 6, str(item.line_total), 1, ln=True)
-        
-        # Sales Order Totals
-        pdf.set_font("Arial", 'B', 10)
-        pdf.cell(130, 7, "Sales Order Total:", 1, 0, 'R')
-        pdf.cell(30, 7, str(so.total_amount), 1, ln=True)
-        
-        current_so_paid = sum(p.amount_paid for p in so.payments if p.deleted_at is None)
-        pdf.cell(130, 7, "Amount Paid for SO:", 1, 0, 'R')
-        pdf.cell(30, 7, str(current_so_paid), 1, ln=True)
-        
-        outstanding_so = so.total_amount - current_so_paid
-        pdf.cell(130, 7, "Outstanding for SO:", 1, 0, 'R')
-        pdf.cell(30, 7, str(outstanding_so), 1, ln=True)
-        pdf.ln(5)
+    # Transactions Table
+    pdf.set_font("Arial", 'B', 9)
+    pdf.cell(25, 8, "Date", 1)
+    pdf.cell(80, 8, "Description", 1)
+    pdf.cell(30, 8, "Debit", 1, 0, 'R')
+    pdf.cell(30, 8, "Credit", 1, 0, 'R')
+    pdf.cell(30, 8, "Balance", 1, 1, 'R')
 
-        total_billed_amount += so.total_amount
-        total_paid_amount += current_so_paid
+    pdf.set_font("Arial", size=9)
+    balance = opening_balance
+    for entry in transactions:
+        # Find the AR journal item
+        ar_item = next((item for item in entry.items if item.account_id == ar_account_id), None)
+        if ar_item:
+            debit = ar_item.debit
+            credit = ar_item.credit
+            balance += debit - credit
 
-    # Grand Summary
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(0, 10, "--- Grand Summary ---", ln=True, align="C")
-    pdf.cell(130, 8, "Total Billed Amount:", 1, 0, 'R')
-    pdf.cell(30, 8, str(total_billed_amount), 1, ln=True)
-    pdf.cell(130, 8, "Total Amount Paid:", 1, 0, 'R')
-    pdf.cell(30, 8, str(total_paid_amount), 1, ln=True)
-    pdf.cell(130, 8, "Total Outstanding Balance:", 1, 0, 'R')
-    pdf.cell(30, 8, str(total_billed_amount - total_paid_amount), 1, ln=True)
+            pdf.cell(25, 8, str(entry.date), 1)
+            pdf.cell(80, 8, entry.description, 1)
+            pdf.cell(30, 8, f"{debit:,.2f}" if debit else "", 1, 0, 'R')
+            pdf.cell(30, 8, f"{credit:,.2f}" if credit else "", 1, 0, 'R')
+            pdf.cell(30, 8, f"{balance:,.2f}", 1, 1, 'R')
 
-    # Save the PDF
+    # Closing Balance
+    pdf.ln(5)
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(0, 8, txt=f"Closing Balance: {balance:,.2f}", ln=True)
+
+    # Save and Return Path
     output_dir = "temp_bills"
     os.makedirs(output_dir, exist_ok=True)
-    filepath = os.path.join(output_dir, f"customer_bill_{customer.id}_{date.today().isoformat()}.pdf")
+    filepath = os.path.join(output_dir, f"customer_statement_{customer.id}_{start_date}_{end_date}.pdf")
     pdf.output(filepath)
     return filepath
