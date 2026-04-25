@@ -246,22 +246,33 @@ def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id:
             parts = ref_doc.split("-")
             if len(parts) > 1 and parts[1].isdigit():
                 ref_id = so_map.get(int(parts[1]))
-        elif ref_doc.startswith("USAGE-"):
-            t_type = "Inventory Usage"
+        elif ref_doc.startswith("INV-USAGE-"):
+            t_type = "Direct Inventory Usage"
             parts = ref_doc.split("-")
-            if len(parts) > 1:
-                ref_id = parts[1]
+            if len(parts) > 2 and parts[-1].isdigit():
+                ref_id = parts[-1]
+        elif ref_doc.startswith("USAGE-"):
+            t_type = "Composition Usage"
+            parts = ref_doc.split("-")
+            if len(parts) > 1 and parts[-1].isdigit():
+                ref_id = parts[-1]
         elif ref_doc.startswith("EXP-"):
             t_type = "Expense"
             parts = ref_doc.split("-")
-            if len(parts) > 1:
-                ref_id = parts[1]
+            if len(parts) > 1 and parts[-1].isdigit():
+                ref_id = parts[-1]
+        elif ref_doc.startswith("PAYMENT-"):
+            t_type = "Payment"
+            parts = ref_doc.split("-")
+            if len(parts) > 1 and parts[-1].isdigit():
+                ref_id = parts[-1]
         else:
             t_type = "Journal Entry"
-            if "-" in ref_doc:
-                parts = ref_doc.split("-", 1)
-                if len(parts) == 2:
-                    ref_id = parts[1]
+            parts = ref_doc.split("-")
+            if len(parts) > 1 and parts[-1].isdigit():
+                ref_id = parts[-1]
+            else:
+                ref_id = None
 
         entries.append(GeneralLedgerEntry(
             date=item.journal_entry.date,
