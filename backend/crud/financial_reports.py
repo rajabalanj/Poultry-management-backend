@@ -302,21 +302,35 @@ def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id:
     )
 
 
-def get_purchase_ledger(db: Session, vendor_id: int, tenant_id: str, start_date: Optional[date] = None, end_date: Optional[date] = None) -> PurchaseLedger:
-    vendor = db.query(business_partners.BusinessPartner).filter(business_partners.BusinessPartner.id == vendor_id, business_partners.BusinessPartner.tenant_id == tenant_id).first()
+def get_purchase_ledger(db: Session, tenant_id: str, vendor_id: Optional[int] = None, skip: int = 0, limit: int = 100, start_date: Optional[date] = None, end_date: Optional[date] = None) -> PurchaseLedger:
+    vendor = None
+    vendor_name = "All Vendors"
+    if vendor_id:
+        vendor = db.query(business_partners.BusinessPartner).filter(business_partners.BusinessPartner.id == vendor_id, business_partners.BusinessPartner.tenant_id == tenant_id).first()
+        if vendor:
+            vendor_name = vendor.name
+        else:
+            # If vendor_id is given but not found, return an empty ledger.
+            return PurchaseLedger(title="Vendor not found", vendor_name=None, entries=[], total_records=0)
     
-    query = db.query(purchase_orders.PurchaseOrder).options(joinedload(purchase_orders.PurchaseOrder.payments)).filter(
-        purchase_orders.PurchaseOrder.vendor_id == vendor_id,
+    query = db.query(purchase_orders.PurchaseOrder).options(
+        joinedload(purchase_orders.PurchaseOrder.payments),
+        joinedload(purchase_orders.PurchaseOrder.vendor)
+    ).filter(
         purchase_orders.PurchaseOrder.tenant_id == tenant_id,
         purchase_orders.PurchaseOrder.deleted_at.is_(None)
     )
+
+    if vendor_id:
+        query = query.filter(purchase_orders.PurchaseOrder.vendor_id == vendor_id)
 
     if start_date:
         query = query.filter(purchase_orders.PurchaseOrder.order_date >= start_date)
     if end_date:
         query = query.filter(purchase_orders.PurchaseOrder.order_date <= end_date)
 
-    purchase_orders_query = query.all()
+    total_records = query.count()
+    purchase_orders_query = query.order_by(purchase_orders.PurchaseOrder.order_date.desc()).offset(skip).limit(limit).all()
 
     entries = []
     for po in purchase_orders_query:
@@ -324,9 +338,12 @@ def get_purchase_ledger(db: Session, vendor_id: int, tenant_id: str, start_date:
         amount_paid = sum(Decimal(str(p.amount_paid)) for p in non_deleted_payments)
         balance_amount = Decimal(str(po.total_amount)) - amount_paid
 
+        # If a specific vendor was requested, use that name, otherwise use the name from the purchase order.
+        entry_vendor_name = vendor.name if vendor else (po.vendor.name if po.vendor else "N/A")
+
         entries.append(PurchaseLedgerEntry(
             date=po.order_date,
-            vendor_name=vendor.name,
+            vendor_name=entry_vendor_name,
             po_id=po.id,
             invoice_number=f"PO-{po.po_number}",
             description=po.notes,
@@ -338,26 +355,42 @@ def get_purchase_ledger(db: Session, vendor_id: int, tenant_id: str, start_date:
         ))
 
     return PurchaseLedger(
-        title=f"Purchase Ledger for {vendor.name}",
+        title=f"Purchase Ledger for {vendor_name}",
         vendor_id=vendor_id,
-        entries=sorted(entries, key=lambda x: x.date, reverse=True)
+        vendor_name=vendor.name if vendor else None,
+        entries=entries,
+        total_records=total_records
     )
 
-def get_sales_ledger(db: Session, customer_id: int, tenant_id: str, start_date: Optional[date] = None, end_date: Optional[date] = None) -> SalesLedger:
-    customer = db.query(business_partners.BusinessPartner).filter(business_partners.BusinessPartner.id == customer_id, business_partners.BusinessPartner.tenant_id == tenant_id).first()
+def get_sales_ledger(db: Session, customer_id: Optional[int], tenant_id: str, skip: int =0, limit: int = 100, start_date: Optional[date] = None, end_date: Optional[date] = None) -> SalesLedger:
+    customer = None
+    customer_name = "All Customers"
+    if customer_id:
+        customer = db.query(business_partners.BusinessPartner).filter(business_partners.BusinessPartner.id == customer_id, business_partners.BusinessPartner.tenant_id == tenant_id).first()
+        if customer:
+            customer_name = customer.name
+        else:
+            # If customer_id is given but not found, return an empty ledger.
+            return SalesLedger(title="Customer not found", customer_name=None, entries=[], total_records=0)
 
-    query = db.query(sales_orders.SalesOrder).options(joinedload(sales_orders.SalesOrder.payments)).filter(
-        sales_orders.SalesOrder.customer_id == customer_id,
+    query = db.query(sales_orders.SalesOrder).options(
+        joinedload(sales_orders.SalesOrder.payments),
+        joinedload(sales_orders.SalesOrder.customer)
+        ).filter(
         sales_orders.SalesOrder.tenant_id == tenant_id,
         sales_orders.SalesOrder.deleted_at.is_(None)
     )
+
+    if customer_id:
+        query = query.filter(sales_orders.SalesOrder.customer_id == customer_id)
 
     if start_date:
         query = query.filter(sales_orders.SalesOrder.order_date >= start_date)
     if end_date:
         query = query.filter(sales_orders.SalesOrder.order_date <= end_date)
 
-    sales_orders_query = query.all()
+    total_records = query.count()
+    sales_orders_query = query.order_by(sales_orders.SalesOrder.order_date.desc()).offset(skip).limit(limit).all()
 
     entries = []
     for so in sales_orders_query:
@@ -365,9 +398,12 @@ def get_sales_ledger(db: Session, customer_id: int, tenant_id: str, start_date: 
         amount_paid = sum(Decimal(str(p.amount_paid)) for p in non_deleted_payments)
         balance_amount = Decimal(str(so.total_amount)) - amount_paid
 
+        # If a specific customer was requested, use that name, otherwise use the name from the sales order.
+        entry_customer_name = customer.name if customer else (so.customer.name if so.customer else "N/A")
+
         entries.append(SalesLedgerEntry(
             date=so.order_date,
-            customer_name=customer.name,
+            customer_name=entry_customer_name,
             so_id=so.id,
             invoice_number=f"SO-{so.so_number}",
             description=so.notes,
@@ -379,19 +415,19 @@ def get_sales_ledger(db: Session, customer_id: int, tenant_id: str, start_date: 
         ))
 
     return SalesLedger(
-        title=f"Sales Ledger for {customer.name}",
+        title=f"Sales Ledger for {customer_name}",
         customer_id=customer_id,
-        entries=sorted(entries, key=lambda x: x.date, reverse=True)
+        customer_name=customer.name if customer else None,
+        entries=entries,
+        total_records=total_records
     )
 
-def get_inventory_ledger(db: Session, item_id: int, start_date: date, end_date: date, tenant_id: str) -> InventoryLedger:
-    item = db.query(inventory_items.InventoryItem).filter(
-        inventory_items.InventoryItem.id == item_id, 
-        inventory_items.InventoryItem.tenant_id == tenant_id
-    ).first()
-
+def get_inventory_ledger(db: Session, item_id: int, start_date: date, end_date: date, tenant_id: str, skip: int = 0, limit: int = 100) -> InventoryLedger:
+    item = db.query(inventory_items.InventoryItem).filter(inventory_items.InventoryItem.id == item_id, inventory_items.InventoryItem.tenant_id == tenant_id).first()
     if not item:
-        return None  # Or raise an exception
+        return InventoryLedger(title="Item not found", item_id=item_id, opening_quantity=Decimal('0.0'), entries=[], closing_quantity_on_hand=Decimal('0.0'))
+
+    item_name = item.name
 
     # Special handling for "egg" items
     if 'egg' in item.name.lower():
@@ -446,46 +482,48 @@ def get_inventory_ledger(db: Session, item_id: int, start_date: date, end_date: 
                         quantity_on_hand=quantity_on_hand
                     ))
 
+        paginated_entries = entries[skip:skip+limit] if limit > 0 else entries[skip:]
+
         return InventoryLedger(
-            title=f"Inventory Ledger for {item.name}",
+            title=f"Inventory Ledger for {item_name}",
             item_id=item_id,
             opening_quantity=opening_quantity,
-            entries=entries,
+            entries=paginated_entries,
             closing_quantity_on_hand=closing_quantity
         )
 
     # Calculate opening quantity for non-egg items
     purchases_before = db.query(func.sum(purchase_order_items.PurchaseOrderItem.quantity)).join(purchase_orders.PurchaseOrder).filter(
-        purchase_order_items.PurchaseOrderItem.inventory_item_id == item_id,
         purchase_orders.PurchaseOrder.tenant_id == tenant_id,
         purchase_orders.PurchaseOrder.order_date < start_date,
-        purchase_orders.PurchaseOrder.deleted_at.is_(None)
+        purchase_orders.PurchaseOrder.deleted_at.is_(None),
+        purchase_order_items.PurchaseOrderItem.inventory_item_id == item_id
     ).scalar() or Decimal('0.0')
 
     sales_before = db.query(func.sum(sales_order_items.SalesOrderItem.quantity)).join(sales_orders.SalesOrder).filter(
-        sales_order_items.SalesOrderItem.inventory_item_id == item_id,
         sales_orders.SalesOrder.tenant_id == tenant_id,
         sales_orders.SalesOrder.order_date < start_date,
-        sales_orders.SalesOrder.deleted_at.is_(None)
+        sales_orders.SalesOrder.deleted_at.is_(None),
+        sales_order_items.SalesOrderItem.inventory_item_id == item_id
     ).scalar() or Decimal('0.0')
 
     opening_quantity = purchases_before - sales_before
 
     # Get transactions within the date range
     purchase_items = db.query(purchase_order_items.PurchaseOrderItem).join(purchase_orders.PurchaseOrder).filter(
-        purchase_order_items.PurchaseOrderItem.inventory_item_id == item_id,
         purchase_orders.PurchaseOrder.tenant_id == tenant_id,
         purchase_orders.PurchaseOrder.order_date >= start_date,
         purchase_orders.PurchaseOrder.order_date <= end_date,
-        purchase_orders.PurchaseOrder.deleted_at.is_(None)
+        purchase_orders.PurchaseOrder.deleted_at.is_(None),
+        purchase_order_items.PurchaseOrderItem.inventory_item_id == item_id
     ).all()
 
     sales_items = db.query(sales_order_items.SalesOrderItem).join(sales_orders.SalesOrder).filter(
-        sales_order_items.SalesOrderItem.inventory_item_id == item_id,
         sales_orders.SalesOrder.tenant_id == tenant_id,
         sales_orders.SalesOrder.order_date >= start_date,
         sales_orders.SalesOrder.order_date <= end_date,
-        sales_orders.SalesOrder.deleted_at.is_(None)
+        sales_orders.SalesOrder.deleted_at.is_(None),
+        sales_order_items.SalesOrderItem.inventory_item_id == item_id
     ).all()
 
     transactions = []
@@ -531,10 +569,12 @@ def get_inventory_ledger(db: Session, item_id: int, start_date: date, end_date: 
             quantity_on_hand=quantity_on_hand
         ))
 
+    paginated_entries = entries[skip:skip+limit] if limit > 0 else entries[skip:]
+
     return InventoryLedger(
-        title=f"Inventory Ledger for {item.name}",
+        title=f"Inventory Ledger for {item_name}",
         item_id=item_id,
         opening_quantity=opening_quantity,
-        entries=entries,
+        entries=paginated_entries,
         closing_quantity_on_hand=quantity_on_hand
     )

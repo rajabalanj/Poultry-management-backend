@@ -138,20 +138,24 @@ def export_general_ledger(
     background_tasks.add_task(os.remove, filepath)
     return FileResponse(path=filepath, filename=f"general_ledger_{start_date}_{end_date}.pdf", media_type="application/pdf")
 
-@router.get("/subsidiary-ledger/purchases/{vendor_id}", response_model=PurchaseLedger)
+@router.get("/subsidiary-ledger/purchases", response_model=PurchaseLedger)
 def get_purchase_ledger(
-    vendor_id: int,
+    skip: int = Query(0, ge=0, description="Pagination skip"),
+    limit: int = Query(100, ge=1, le=1000, description="Pagination limit"),
+    vendor_id: Optional[int] = Query(None, description="Optional vendor ID filter"),
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_tenant_id)
 ):
-    return crud_financial_reports.get_purchase_ledger(db=db, vendor_id=vendor_id, start_date=start_date, end_date=end_date, tenant_id=tenant_id)
+    return crud_financial_reports.get_purchase_ledger(db=db, tenant_id=tenant_id, vendor_id=vendor_id, skip=skip, limit=limit, start_date=start_date, end_date=end_date)
 
-@router.get("/subsidiary-ledger/purchases/{vendor_id}/export")
+@router.get("/subsidiary-ledger/purchases/export")
 def export_purchase_ledger(
-    vendor_id: int,
     background_tasks: BackgroundTasks,
+    vendor_id: Optional[int] = Query(None, description="Optional vendor ID filter"),
+    skip: int = Query(0, ge=0, description="Pagination skip"),
+    limit: int = Query(100, ge=1, le=1000, description="Pagination limit"),
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     export_format: str = Query("pdf", alias="format", description="Export format"),
@@ -161,25 +165,30 @@ def export_purchase_ledger(
     if export_format.lower() != "pdf":
         raise HTTPException(status_code=400, detail="Only PDF format is currently supported")
         
-    data = crud_financial_reports.get_purchase_ledger(db=db, vendor_id=vendor_id, start_date=start_date, end_date=end_date, tenant_id=tenant_id)
+    data = crud_financial_reports.get_purchase_ledger(db=db, tenant_id=tenant_id, vendor_id=vendor_id, skip=skip, limit=limit, start_date=start_date, end_date=end_date)
     filepath = generate_purchase_sales_ledger_pdf(data, start_date, end_date, db, tenant_id, is_sales=False)
     background_tasks.add_task(os.remove, filepath)
-    return FileResponse(path=filepath, filename=f"purchase_ledger_{vendor_id}.pdf", media_type="application/pdf")
+    filename_vendor_part = vendor_id if vendor_id is not None else "all"
+    return FileResponse(path=filepath, filename=f"purchase_ledger_{filename_vendor_part}.pdf", media_type="application/pdf")
 
-@router.get("/subsidiary-ledger/sales/{customer_id}", response_model=SalesLedger)
+@router.get("/subsidiary-ledger/sales", response_model=SalesLedger)
 def get_sales_ledger(
-    customer_id: int,
+    skip: int = Query(0, ge=0, description="Pagination skip"),
+    limit: int = Query(100, ge=1, le=1000, description="Pagination limit"),
+    customer_id: Optional[int] = Query(None, description="Optional customer ID filter"),
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_tenant_id)
 ):
-    return crud_financial_reports.get_sales_ledger(db=db, customer_id=customer_id, start_date=start_date, end_date=end_date, tenant_id=tenant_id)
+    return crud_financial_reports.get_sales_ledger(db=db, customer_id=customer_id, start_date=start_date, end_date=end_date, tenant_id=tenant_id, skip=skip, limit=limit)
 
-@router.get("/subsidiary-ledger/sales/{customer_id}/export")
+@router.get("/subsidiary-ledger/sales/export")
 def export_sales_ledger(
-    customer_id: int,
     background_tasks: BackgroundTasks,
+    skip: int = Query(0, ge=0, description="Pagination skip"),
+    limit: int = Query(100, ge=1, le=1000, description="Pagination limit"),
+    customer_id: Optional[int] = Query(None, description="Optional customer ID filter"),
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     export_format: str = Query("pdf", alias="format", description="Export format"),
@@ -189,27 +198,32 @@ def export_sales_ledger(
     if export_format.lower() != "pdf":
         raise HTTPException(status_code=400, detail="Only PDF format is currently supported")
         
-    data = crud_financial_reports.get_sales_ledger(db=db, customer_id=customer_id, start_date=start_date, end_date=end_date, tenant_id=tenant_id)
+    data = crud_financial_reports.get_sales_ledger(db=db, customer_id=customer_id, start_date=start_date, end_date=end_date, tenant_id=tenant_id, skip=skip, limit=limit)
     filepath = generate_purchase_sales_ledger_pdf(data, start_date, end_date, db, tenant_id, is_sales=True)
     background_tasks.add_task(os.remove, filepath)
-    return FileResponse(path=filepath, filename=f"sales_ledger_{customer_id}.pdf", media_type="application/pdf")
+    filename_customer_part = customer_id if customer_id is not None else "all"
+    return FileResponse(path=filepath, filename=f"sales_ledger_{filename_customer_part}.pdf", media_type="application/pdf")
 
-@router.get("/subsidiary-ledger/inventory/{item_id}", response_model=InventoryLedger)
+@router.get("/subsidiary-ledger/inventory", response_model=InventoryLedger)
 def get_inventory_ledger(
-    item_id: int,
     start_date: date,
     end_date: date,
+    skip: int = Query(0, ge=0, description="Pagination skip"),
+    limit: int = Query(100, ge=1, le=1000, description="Pagination limit"),
+    item_id: int = Query(..., description="Mandatory item ID filter"),
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_tenant_id)
 ):
-    return crud_financial_reports.get_inventory_ledger(db=db, item_id=item_id, start_date=start_date, end_date=end_date, tenant_id=tenant_id)
+    return crud_financial_reports.get_inventory_ledger(db=db, item_id=item_id, start_date=start_date, end_date=end_date, tenant_id=tenant_id, skip=skip, limit=limit)
 
-@router.get("/subsidiary-ledger/inventory/{item_id}/export")
+@router.get("/subsidiary-ledger/inventory/export")
 def export_inventory_ledger(
-    item_id: int,
     start_date: date,
     end_date: date,
     background_tasks: BackgroundTasks,
+    skip: int = Query(0, ge=0, description="Pagination skip"),
+    limit: int = Query(100, ge=1, le=1000, description="Pagination limit"),
+    item_id: int = Query(..., description="Mandatory item ID filter"),
     export_format: str = Query("pdf", alias="format", description="Export format"),
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_tenant_id)
@@ -217,7 +231,7 @@ def export_inventory_ledger(
     if export_format.lower() != "pdf":
         raise HTTPException(status_code=400, detail="Only PDF format is currently supported")
         
-    data = crud_financial_reports.get_inventory_ledger(db=db, item_id=item_id, start_date=start_date, end_date=end_date, tenant_id=tenant_id)
+    data = crud_financial_reports.get_inventory_ledger(db=db, item_id=item_id, start_date=start_date, end_date=end_date, tenant_id=tenant_id, skip=skip, limit=limit)
     filepath = generate_inventory_ledger_pdf(data, start_date, end_date, db, tenant_id)
     background_tasks.add_task(os.remove, filepath)
     return FileResponse(path=filepath, filename=f"inventory_ledger_{item_id}.pdf", media_type="application/pdf")
