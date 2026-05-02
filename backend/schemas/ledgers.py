@@ -104,8 +104,10 @@ class PurchaseLedgerEntry(BaseModel):
 
 class PurchaseLedger(BaseModel):
     title: str
-    vendor_id: int
+    vendor_id: Optional[int] = None
+    vendor_name: Optional[str] = None
     entries: List[PurchaseLedgerEntry]
+    total_records: Optional[int] = 0
 
 # Subsidiary Ledger - Sales
 class SalesLedgerEntry(BaseModel):
@@ -146,8 +148,10 @@ class SalesLedgerEntry(BaseModel):
 
 class SalesLedger(BaseModel):
     title: str
-    customer_id: int
+    customer_id: Optional[int] = None
+    customer_name: Optional[str] = None
     entries: List[SalesLedgerEntry]
+    total_records: Optional[int] = 0
 
 # Subsidiary Ledger - Inventory
 class InventoryLedgerEntry(BaseModel):
