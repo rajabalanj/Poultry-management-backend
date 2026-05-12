@@ -194,45 +194,45 @@ def _calculate_cumulative_report(db: Session, batch_id: int, current_week: int, 
     standard_data = _get_standard_performance(db, tenant_id, lookup_week)
     
     # Section 1: Feed data
-    standard_cum_feed = 0
+    standard_cum_feed = 0.0
     if standard_data and hasattr(standard_data, "feed_intake_cum_kg") and standard_data.feed_intake_cum_kg is not None:
-        standard_cum_feed = standard_data.feed_intake_cum_kg
+        standard_cum_feed = float(standard_data.feed_intake_cum_kg)
     elif standard_data and hasattr(standard_data, "feed_intake_cum_g") and standard_data.feed_intake_cum_g is not None:
-        standard_cum_feed = standard_data.feed_intake_cum_g / 1000
+        standard_cum_feed = float(standard_data.feed_intake_cum_g) / 1000
 
-    standard_eggs_cum = 0
+    standard_eggs_cum = 0.0
     if standard_data and hasattr(standard_data, "eggs_per_bird_cum") and standard_data.eggs_per_bird_cum is not None:
-        standard_eggs_cum = standard_data.eggs_per_bird_cum
+        standard_eggs_cum = float(standard_data.eggs_per_bird_cum)
 
-    standard_weekly_feed = 0
+    standard_weekly_feed = 0.0
     if standard_data and hasattr(standard_data, "feed_intake_per_day_g") and standard_data.feed_intake_per_day_g is not None:
-        standard_weekly_feed = round((standard_data.feed_intake_per_day_g * 7 / 1000), 4)
+        standard_weekly_feed = round((float(standard_data.feed_intake_per_day_g) * 7 / 1000), 4)
 
-    standard_livability = standard_data.livability_percent if standard_data and hasattr(standard_data, "livability_percent") and standard_data.livability_percent is not None else 0
-    standard_feed_per_day = standard_data.feed_intake_per_day_g if standard_data and hasattr(standard_data, "feed_intake_per_day_g") and standard_data.feed_intake_per_day_g is not None else 0
+    standard_livability = float(standard_data.livability_percent) if standard_data and hasattr(standard_data, "livability_percent") and standard_data.livability_percent is not None else 0.0
+    standard_feed_per_day = float(standard_data.feed_intake_per_day_g) if standard_data and hasattr(standard_data, "feed_intake_per_day_g") and standard_data.feed_intake_per_day_g is not None else 0.0
 
     section1 = {
         "cum_feed": {
-            "cum": cum_feed_total,
-            "actual": round(cum_feed_total / hen_housing, 4) if hen_housing > 0 else 0,
+            "cum": float(cum_feed_total),
+            "actual": round(float(cum_feed_total) / hen_housing, 4) if hen_housing > 0 else 0.0,
             "standard": standard_cum_feed,
             "diff": 0  # Will calculate after
         },
         "weekly_feed": {
-            "cum": current_summary["actual_feed_consumed"],
-            "actual": round(current_summary["actual_feed_consumed"] / hen_housing, 4) if hen_housing > 0 else 0,
+            "cum": float(current_summary["actual_feed_consumed"]),
+            "actual": round(float(current_summary["actual_feed_consumed"]) / hen_housing, 4) if hen_housing > 0 else 0.0,
             "standard": standard_weekly_feed,
             "diff": 0  # Will calculate after
         },
         "cum_egg": {
-            "cum": cum_egg_total,
-            "actual": round(cum_egg_total / hen_housing, 4) if hen_housing > 0 else 0,
+            "cum": float(cum_egg_total),
+            "actual": round(float(cum_egg_total) / hen_housing, 4) if hen_housing > 0 else 0.0,
             "standard": standard_eggs_cum,
             "diff": 0  # Will calculate after
         },
         "weekly_egg": {
-            "cum": current_summary["total_eggs"],
-            "actual": round(current_summary["total_eggs"] / current_summary["opening_count"], 4) if current_summary["opening_count"] > 0 else 0,
+            "cum": float(current_summary["total_eggs"]),
+            "actual": round(float(current_summary["total_eggs"]) / current_summary["opening_count"], 4) if current_summary["opening_count"] > 0 else 0.0,
             "standard": 5,
             "diff": 0  # Will calculate after
         }
@@ -802,4 +802,3 @@ def write_daily_report_excel(batches, report_date=None, file_path=None, tenant_i
 
     wb.save(file_path)
     return file_path
-
