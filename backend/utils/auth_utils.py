@@ -1,4 +1,3 @@
-
 from database import get_db
 from crud import subscription as crud_subscription
 from utils.tenancy import get_tenant_id
@@ -173,35 +172,6 @@ def require_group(allowed_groups: List[str]):
         return user
     return dependency
 
-
-def require_super_admin(user: Dict[str, any] = Depends(get_current_user)) -> Dict[str, any]:
-    """
-    FastAPI dependency to check if the current user is a super admin.
-    Super admins can manage subscription plans and other system-wide operations.
-    """
-    user_groups = user.get("cognito:groups", [])
-    if "SuperAdmin" not in user_groups:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User is not authorized. SuperAdmin role required.",
-        )
-    return user
-
-
-def require_tenant_admin(user: Dict[str, any] = Depends(get_current_user)) -> Dict[str, any]:
-    """
-    FastAPI dependency to check if the current user is a tenant admin.
-    Tenant admins can manage their tenant's configuration and operations.
-    """
-    user_groups = user.get("cognito:groups", [])
-    if "Admin" not in user_groups:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User is not authorized. Admin role required.",
-        )
-    return user
-
-
 def get_user_identifier(user: Dict[str, any]) -> str:
     """
     Return a readable identifier for the user dict returned by Cognito JWT payload.
@@ -244,9 +214,3 @@ def check_subscription_status(db: Session = Depends(get_db), tenant_id: str = De
         )
     
     return True
-
-def subscription_check(user: Dict[str, any] = Depends(get_current_user), is_valid: bool = Depends(check_subscription_status)):
-    """
-    Combined dependency that checks both authentication and subscription status.
-    """
-    return user
