@@ -20,6 +20,7 @@ from crud.inventory_item_usage_history import (
     revert_inventory_item_usage
 )
 from database import get_db
+from models.app_config import AppConfig
 from models.egg_room_reports import EggRoomReport
 from models.inventory_items import InventoryItem as InventoryItemModel
 from models.inventory_item_usage_history import InventoryItemUsageHistory as InventoryItemUsageHistoryModel
@@ -119,19 +120,43 @@ def get_stock_levels_report(
 
 @router.get("/reports/low-stock", response_model=List[InventoryItem], tags=["Inventory Reports"])
 def get_low_stock_report(db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
-    """Generate a report of items that are below their reorder level."""
+    """Generate a report of items that are below their reorder level or fallback thresholds."""
+    
+    # Fetch dynamic fallback thresholds from AppConfig
+    feed_threshold_config = db.query(AppConfig).filter(AppConfig.name == 'lowKgThreshold', AppConfig.tenant_id == tenant_id).first()
+    medicine_threshold_config = db.query(AppConfig).filter(AppConfig.name == 'medicineLowKgThreshold', AppConfig.tenant_id == tenant_id).first()
+    
+    feed_threshold = float(feed_threshold_config.value) if feed_threshold_config and feed_threshold_config.value else 0.0
+    medicine_threshold = float(medicine_threshold_config.value) if medicine_threshold_config and medicine_threshold_config.value else 0.0
+
     items = db.query(InventoryItemModel).filter(
-        InventoryItemModel.tenant_id == tenant_id,
-        InventoryItemModel.reorder_level.isnot(None),
-        InventoryItemModel.current_stock < InventoryItemModel.reorder_level
+        InventoryItemModel.tenant_id == tenant_id
     ).all()
     
     latest_egg_stock = _get_latest_egg_report_stock(db, tenant_id)
+    low_stock_items = []
+    
     for item in items:
         if item.name in EGG_INVENTORY_NAMES:
             item.current_stock = latest_egg_stock.get(item.name, item.current_stock)
+            
+        current_stock = float(item.current_stock or 0)
+        reorder_level = float(item.reorder_level or 0)
+        
+        is_low = False
+        if reorder_level > 0:
+            if current_stock < reorder_level:
+                is_low = True
+        else:
+            if item.category == "Feed" and current_stock < feed_threshold:
+                is_low = True
+            elif item.category == "Medicine" and current_stock < medicine_threshold:
+                is_low = True
+                
+        if is_low:
+            low_stock_items.append(item)
 
-    return items
+    return low_stock_items
 
 @router.get("/reports/inventory-value", response_model=InventoryValue, tags=["Inventory Reports"])
 def get_inventory_value_report(db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
@@ -486,4 +511,3 @@ def delete_inventory_item(
     crud_inventory_items.delete_inventory_item(db=db, item_id=item_id, tenant_id=tenant_id, user=user)
     logger.info(f"Inventory item '{db_item.name}' (ID: {item_id}) deleted by user {get_user_identifier(user)} for tenant {tenant_id}")
     return {"message": "Inventory item deleted successfully"}
-
