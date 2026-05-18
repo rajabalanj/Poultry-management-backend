@@ -17,6 +17,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.openapi.utils import get_openapi
 from database import Base, engine
+from fastapi import FastAPI, Depends
+# Import your new dependency
+from utils.dependencies import require_active_subscription_for_writes
 
 # Import all routers to register their endpoints
 import routers.reports as reports
@@ -88,7 +91,11 @@ Base.metadata.create_all(bind=engine)
 
 
 # Initialize FastAPI application
-app = FastAPI()
+app = FastAPI(
+    title="Poultry Management API",
+    # This applies the check to all routes automatically
+    dependencies=[Depends(require_active_subscription_for_writes)] 
+)
 
 #app.mount("/", StaticFiles(directory="dist", html=True), name="static")
 

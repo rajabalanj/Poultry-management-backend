@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, Numeric, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Text, Numeric, UniqueConstraint, Boolean
 from sqlalchemy.orm import relationship
 from database import Base # Assuming Base is imported from your database setup
 from models.audit_mixin import TimestampMixin
@@ -17,6 +17,7 @@ class InventoryItem(Base, TimestampMixin):
     default_wastage_percentage = Column(Numeric(5, 2), default=0.0, nullable=False, server_default='0')
     reorder_level = Column(Numeric(10, 3), nullable=True) # For general alerts
     description = Column(Text, nullable=True)
+    is_sellable = Column(Boolean, default=False, nullable=False)
 
     # Relationships
     purchase_order_items = relationship("PurchaseOrderItem", back_populates="inventory_item")

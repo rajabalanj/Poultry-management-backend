@@ -12,6 +12,7 @@ class InventoryItemBase(BaseModel):
     # current_stock and average_cost typically not set on create, managed by system
     reorder_level: Optional[Decimal] = None
     description: Optional[str] = None
+    is_sellable: bool = False
 
 class InventoryItemCreate(InventoryItemBase):
     pass
@@ -25,6 +26,7 @@ class InventoryItemUpdate(BaseModel):
     # current_stock and average_cost are system-managed, not directly updated via this schema
     reorder_level: Optional[Decimal] = None
     description: Optional[str] = None
+    is_sellable: Optional[bool] = None
 
 class InventoryItem(InventoryItemBase):
     id: int

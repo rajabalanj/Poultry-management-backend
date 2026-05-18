@@ -14,6 +14,29 @@ A comprehensive management system for poultry operations, designed to streamline
 - **Composition Management**: Create and manage feed compositions
 - **Operational Expense Tracking**: Monitor and categorize operational expenses
 
+## Key Domain Formulas
+
+### Batch Logic
+- **Active Status**: A batch is considered active if the `closing_date` is not set or is in the future. It becomes inactive if the closing date is today or in the past.
+- **Batch Type**: The system automatically classifies the flock based on age:
+  - **Chick**: Less than 8 weeks
+  - **Grower**: 8 to 17 weeks (inclusive)
+  - **Layer**: More than 17 weeks
+
+### Daily Batch Metrics
+- **Total Eggs**: The sum of `table_eggs`, `jumbo`, and `cr` (cracked/rejects) collected for the day.
+- **Closing Count**: The bird count at the end of the day, calculated as: `opening_count` + `birds_added` - (`mortality` + `culls`).
+- **Hen Day (HD)**: The production efficiency ratio, calculated as `total_eggs` divided by `closing_count`.
+- **Standard Hen Day %**: The expected production percentage derived from the breed standard (Bovans White) based on the flock's current week of life.
+- **Standard Feed Intake**: The recommended daily feed per bird (in grams) derived from the breed standard based on age.
+- **Actual Feed Consumption**: The total feed consumed by the batch for the day, calculated by aggregating the weight of all composition items categorized as 'Feed' used on that date.
+- **Batch Type**: Determined by the daily age of the flock (Chick: < 8 weeks, Grower: 8-17 weeks, Layer: > 17 weeks).
+
+### Egg Room Metrics
+- **Table Egg Closing Balance**: `Opening Balance` + `Received from Sheds` - `Transferred Out` - `Damaged` - `Sent to Jumbo Grading` + `Returned from Jumbo Grading`.
+- **Jumbo Egg Closing Balance**: `Opening Balance` + `Received from Sheds` - `Transferred Out` - `Wasted` + `Received from Table Grading` - `Returned to Table Grading`.
+- **Grade C Egg Closing Balance**: `Opening Balance` + `Received from Sheds` + `Damaged from Table Eggs` - `Transferred Out` - `Given to Labour` - `Wasted`.
+
 ## Technology Stack
 
 - **Backend**: FastAPI, SQLAlchemy, PostgreSQL

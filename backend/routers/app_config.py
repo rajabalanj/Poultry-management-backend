@@ -4,7 +4,7 @@ from typing import List, Optional
 import logging
 
 from database import get_db
-from schemas.app_config import AppConfigCreate, AppConfigUpdate, AppConfigOut, FinancialConfig
+from schemas.app_config import AppConfigCreate, AppConfigUpdate, AppConfigOut, FinancialConfig, AppConfigKey
 from crud import app_config as crud_app_config
 from crud import egg_room_reports as crud_egg_room_reports
 from models.app_config import AppConfig as AppConfigModel
@@ -20,8 +20,8 @@ def create_config(config: AppConfigCreate, db: Session = Depends(get_db), user: 
 
 
 @router.get("/configurations", response_model=List[AppConfigOut])
-def get_configs(name: Optional[str] = None, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
-    configs = crud_app_config.get_config(db, tenant_id, name=name)
+def get_configs(name: Optional[AppConfigKey] = None, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
+    configs = crud_app_config.get_config(db, tenant_id, name=name.value if name else None)
     # Always return a list, even if empty
     return [configs] if name and configs else configs or []
 
@@ -63,33 +63,33 @@ def update_standard_performance_config(config: AppConfigUpdate, db: Session = De
     return crud_app_config.create_config(db, create_obj, tenant_id, user_id)
 
 @router.get("/configurations/{name}", response_model=AppConfigOut)
-def get_config_by_name(name: str, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
-    config = crud_app_config.get_config(db, tenant_id, name=name)
+def get_config_by_name(name: AppConfigKey, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
+    config = crud_app_config.get_config(db, tenant_id, name=name.value)
     if not config:
         raise HTTPException(status_code=404, detail="Configuration not found")
     return config
 
 @router.patch("/configurations/{name}", response_model=AppConfigOut)
-def update_config(name: str, config: AppConfigUpdate, db: Session = Depends(get_db), user: dict = Depends(require_group(["admin"])), tenant_id: str = Depends(get_tenant_id)):
+def update_config(name: AppConfigKey, config: AppConfigUpdate, db: Session = Depends(get_db), user: dict = Depends(require_group(["admin"])), tenant_id: str = Depends(get_tenant_id)):
     user_id = get_user_identifier(user)
     
     # First, try to get the existing configuration
-    existing_config = crud_app_config.get_config(db, tenant_id, name=name)
+    existing_config = crud_app_config.get_config(db, tenant_id, name=name.value)
     
     if existing_config:
         # If it exists, update it
-        updated = crud_app_config.update_config_by_name(db, name, config, tenant_id, user_id)
+        updated = crud_app_config.update_config_by_name(db, name.value, config, tenant_id, user_id)
         if not updated:
             raise HTTPException(status_code=404, detail="Configuration not found during update")
         
-        if name in ['table_opening', 'jumbo_opening', 'grade_c_opening']:
+        if name.value in ['table_opening', 'jumbo_opening', 'grade_c_opening']:
             crud_egg_room_reports.recalculate_inventory_from_start(db, tenant_id, user_id)
             
         return updated
     else:
         # If it does not exist, create it
         new_config_data = config.model_dump()
-        new_config_data['name'] = name
+        new_config_data['name'] = name.value
         
         if 'value' not in new_config_data or new_config_data['value'] is None:
             raise HTTPException(status_code=422, detail="Field 'value' is required for creating a new configuration.")
@@ -97,7 +97,7 @@ def update_config(name: str, config: AppConfigUpdate, db: Session = Depends(get_
         new_config = AppConfigCreate(**new_config_data)
         created = crud_app_config.create_config(db, new_config, tenant_id, user_id)
         
-        if name in ['table_opening', 'jumbo_opening', 'grade_c_opening']:
+        if name.value in ['table_opening', 'jumbo_opening', 'grade_c_opening']:
             crud_egg_room_reports.recalculate_inventory_from_start(db, tenant_id, user_id)
             
         return created

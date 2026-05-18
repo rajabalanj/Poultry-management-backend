@@ -185,8 +185,8 @@ def create_sales_order(
             if available_stock < item_data.quantity:
                 raise HTTPException(status_code=400, detail=f"Insufficient stock for item '{db_inventory_item.name}'. Available: {available_stock}, Requested: {item_data.quantity}")
         else:
-            if db_inventory_item.category != 'Supplies':
-                raise HTTPException(status_code=400, detail=f"Item '{db_inventory_item.name}' cannot be sold. Only items in 'Supplies' category can be sold.")
+            if not db_inventory_item.is_sellable:
+                raise HTTPException(status_code=400, detail=f"Item '{db_inventory_item.name}' cannot be sold.")
             if db_inventory_item.current_stock is not None and db_inventory_item.current_stock < item_data.quantity:
                 raise HTTPException(status_code=400, detail=f"Insufficient stock for item '{db_inventory_item.name}'. Available: {db_inventory_item.current_stock}, Requested: {item_data.quantity}")
         # --- End stock validation logic --- 
@@ -883,8 +883,8 @@ def add_item_to_sales_order(
         if available_stock < item_request.quantity:
             raise HTTPException(status_code=400, detail=f"Insufficient stock for item '{db_inventory_item.name}'. Available: {available_stock}, Requested: {item_request.quantity}")
     else:
-        if db_inventory_item.category != 'Supplies':
-            raise HTTPException(status_code=400, detail=f"Item '{db_inventory_item.name}' cannot be sold. Only items in 'Supplies' category can be sold.")
+        if not db_inventory_item.is_sellable:
+            raise HTTPException(status_code=400, detail=f"Item '{db_inventory_item.name}' cannot be sold.")
         if db_inventory_item.current_stock < item_request.quantity:
             raise HTTPException(status_code=400, detail=f"Insufficient stock for item '{db_inventory_item.name}'. Available: {db_inventory_item.current_stock}, Requested: {item_request.quantity}")
 
@@ -1118,8 +1118,8 @@ def update_sales_order_item(
                         EggRoomReportModel.tenant_id == tenant_id
                     ).update({EggRoomReportModel.grade_c_transfer: func.coalesce(EggRoomReportModel.grade_c_transfer, 0) + int(new_quantity)}, synchronize_session=False)
         else:
-            if new_inv_item.category != 'Supplies':
-                raise HTTPException(status_code=400, detail=f"Item '{new_inv_item.name}' cannot be sold. Only items in 'Supplies' category can be sold.")
+            if not new_inv_item.is_sellable:
+                raise HTTPException(status_code=400, detail=f"Item '{new_inv_item.name}' cannot be sold.")
             logger.info(f"[ITEM CHANGE] New item '{new_inv_item.name}' is not an egg. Checking inventory stock.")
             if (new_inv_item.current_stock or 0) < new_quantity:
                 raise HTTPException(status_code=400, detail=f"Insufficient stock for new item '{new_inv_item.name}'. Available: {new_inv_item.current_stock}, Requested: {new_quantity}")
