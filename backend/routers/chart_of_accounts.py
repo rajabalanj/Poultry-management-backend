@@ -14,7 +14,7 @@ router = APIRouter(
     tags=["Chart of Accounts"],
 )
 
-@router.post("/", response_model=ChartOfAccounts, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=ChartOfAccounts, status_code=status.HTTP_201_CREATED)
 def create_account(
     account: ChartOfAccountsCreate,
     db: Session = Depends(get_db),
@@ -40,7 +40,7 @@ def create_account(
     db.refresh(db_account)
     return db_account
 
-@router.get("/", response_model=List[ChartOfAccounts])
+@router.get("", response_model=List[ChartOfAccounts])
 def get_accounts(
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_tenant_id),

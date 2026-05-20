@@ -73,7 +73,7 @@ def _adjust_payment_journal_entry(db: Session, payment: PaymentModel, tenant_id:
     except Exception as e:
         logger.error(f"Failed to adjust journal entry for PAYMENT-{payment.id}: {e}")
 
-@router.post("/", response_model=Payment, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=Payment, status_code=status.HTTP_201_CREATED)
 def create_payment(
     payment: PaymentCreate,
     db: Session = Depends(get_db),

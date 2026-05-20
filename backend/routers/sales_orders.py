@@ -150,7 +150,7 @@ def _adjust_so_journal_entries(db: Session, so: SalesOrderModel, tenant_id: str,
     except Exception as e:
         logger.error(f"Failed to adjust journal entries for SO-{so.so_number}: {e}")
 
-@router.post("/", response_model=SalesOrderSchema, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=SalesOrderSchema, status_code=status.HTTP_201_CREATED)
 def create_sales_order(
     so: SalesOrderCreate,
     db: Session = Depends(get_db),
@@ -676,7 +676,7 @@ def export_detailed_sales_order_report(
         raise HTTPException(status_code=400, detail="Invalid format specified.")
 
 
-@router.get("/", response_model=List[SalesOrderSchema])
+@router.get("", response_model=List[SalesOrderSchema])
 def read_sales_orders(
     skip: int = 0,
     limit: int = 100,

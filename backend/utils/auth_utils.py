@@ -214,3 +214,16 @@ def check_subscription_status(db: Session = Depends(get_db), tenant_id: str = De
         )
     
     return True
+
+def restrict_tenants(restricted_tenant_ids: List[str]):
+    """
+    FastAPI dependency to brute-force block specific tenants from a router or endpoint.
+    """
+    def dependency(tenant_id: str = Depends(get_tenant_id)):
+        if tenant_id in restricted_tenant_ids:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Your tenant is restricted from accessing this module.",
+            )
+        return tenant_id
+    return dependency

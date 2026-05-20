@@ -193,7 +193,7 @@ def get_report(report_date: str, db: Session = Depends(get_db), tenant_id: str =
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
 
-@router.post("/", response_model=EggRoomReportResponse)
+@router.post("", response_model=EggRoomReportResponse)
 def create_report(report: EggRoomReportCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user), tenant_id: str = Depends(get_tenant_id)):
     try:
         requested_date = report.report_date  # Already a date object from Pydantic
@@ -436,7 +436,7 @@ def _calculate_egg_room_summary(reports: list[EggRoomReport]):
     return summary
 
 
-@router.get("/")
+@router.get("")
 def get_reports(start_date: str, end_date: str, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
     try:
         requested_start_date = datetime.strptime(start_date, "%Y-%m-%d").date()

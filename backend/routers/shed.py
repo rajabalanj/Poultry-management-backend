@@ -11,7 +11,7 @@ from utils.auth_utils import get_current_user
 
 router = APIRouter(prefix="/sheds", tags=["Sheds"])
 
-@router.post("/", response_model=Shed, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=Shed, status_code=status.HTTP_201_CREATED)
 def create_shed(
     shed: ShedCreate,
     db: Session = Depends(get_db),
@@ -26,7 +26,7 @@ def create_shed(
     new_shed = crud_shed.create_shed(db=db, shed=shed, tenant_id=tenant_id, user=user)
     return new_shed
 
-@router.get("/", response_model=List[Shed])
+@router.get("", response_model=List[Shed])
 def read_sheds(
     skip: int = 0,
     limit: int = 100,

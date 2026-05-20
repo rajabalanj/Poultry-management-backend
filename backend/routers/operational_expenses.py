@@ -24,7 +24,7 @@ router = APIRouter(
 
 logger = logging.getLogger("operational_expenses")
 
-@router.post("/", response_model=schemas.OperationalExpense)
+@router.post("", response_model=schemas.OperationalExpense)
 def create_operational_expense(expense: schemas.OperationalExpenseCreate, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id), user: dict = Depends(get_current_user)):
     user_id = get_user_identifier(user)
     db_expense = crud.create_operational_expense(db=db, expense=expense, tenant_id=tenant_id, user_id=user_id)
@@ -79,7 +79,7 @@ def create_operational_expense(expense: schemas.OperationalExpenseCreate, db: Se
 
     return db_expense
 
-@router.get("/", response_model=List[schemas.OperationalExpense])
+@router.get("", response_model=List[schemas.OperationalExpense])
 def read_operational_expenses(start_date: date, end_date: date, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
     return crud.get_operational_expenses_by_date_range(db=db, start_date=start_date, end_date=end_date, tenant_id=tenant_id)
 

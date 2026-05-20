@@ -37,7 +37,7 @@ from schemas.sales_payments import SalesPayment, SalesPaymentCreate, SalesPaymen
 router = APIRouter(prefix="/sales-payments", tags=["Sales Payments"])
 logger = logging.getLogger("sales_payments")
 
-@router.post("/", response_model=SalesPayment, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=SalesPayment, status_code=status.HTTP_201_CREATED)
 def create_sales_payment(
     payment: SalesPaymentCreate,
     db: Session = Depends(get_db),

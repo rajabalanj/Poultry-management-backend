@@ -58,7 +58,7 @@ def _get_latest_egg_report_stock(db: Session, tenant_id: str) -> dict:
         }
     return {}
 
-@router.get("/", response_model=List[InventoryItem])
+@router.get("", response_model=List[InventoryItem])
 def read_inventory_items(
     skip: int = 0,
     limit: int = 100,
@@ -82,7 +82,7 @@ def read_inventory_items(
             
     return items
 
-@router.post("/", response_model=InventoryItem, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=InventoryItem, status_code=status.HTTP_201_CREATED)
 def create_inventory_item(
     item: InventoryItemCreate,
     db: Session = Depends(get_db),

@@ -11,7 +11,7 @@ router = APIRouter(
 )
 
 # Endpoint to get all performance data with pagination
-@router.get("/", response_model=PaginatedBovansPerformanceResponse) # <--- IMPORTANT CHANGE HERE
+@router.get("", response_model=PaginatedBovansPerformanceResponse) # <--- IMPORTANT CHANGE HERE
 async def get_all_bovans_performance(
     skip: int = Query(0, ge=0),
     limit: int = Query(10, ge=1, le=100),

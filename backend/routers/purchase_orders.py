@@ -1,5 +1,3 @@
-# backend/routers/purchase_orders.py
-
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload # <-- import selectinload
@@ -131,7 +129,7 @@ def get_purchase_order(
 
     db_po.payments = [p for p in db_po.payments if p.deleted_at is None]
     return db_po
-@router.post("/", response_model=PurchaseOrderSchema, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=PurchaseOrderSchema, status_code=status.HTTP_201_CREATED)
 def create_purchase_order(
     po: PurchaseOrderCreate,
     db: Session = Depends(get_db),
@@ -282,7 +280,7 @@ def create_purchase_order(
     logger.info(f"Purchase Order (ID: {db_po.id}) created for Vendor ID {db_po.vendor_id} by user {get_user_identifier(user)} for tenant {tenant_id}")
     return db_po
 
-@router.get("/", response_model=List[PurchaseOrderSchema])
+@router.get("", response_model=List[PurchaseOrderSchema])
 def read_purchase_orders(
     skip: int = 0,
     limit: int = 100,

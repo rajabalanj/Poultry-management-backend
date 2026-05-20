@@ -97,7 +97,6 @@ app = FastAPI(
     dependencies=[Depends(require_active_subscription_for_writes)] 
 )
 
-#app.mount("/", StaticFiles(directory="dist", html=True), name="static")
 
 # Configure CORS (Cross-Origin Resource Sharing)
 # This allows the frontend application to make requests to this API

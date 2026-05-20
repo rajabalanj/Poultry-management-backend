@@ -22,7 +22,7 @@ def read_subscription_status(
         raise HTTPException(status_code=404, detail="No subscription found for this tenant.")
     return db_subscription
 
-@router.get("/", response_model=List[Subscription], dependencies=[Depends(require_group(["super_admin"]))])
+@router.get("", response_model=List[Subscription], dependencies=[Depends(require_group(["super_admin"]))])
 def read_all_subscriptions(
     skip: int = 0,
     limit: int = 100,
@@ -31,7 +31,7 @@ def read_all_subscriptions(
     """Retrieve all subscriptions. Super admin only."""
     return crud_subscription.get_all_subscriptions(db=db, skip=skip, limit=limit)
 
-@router.post("/", response_model=Subscription, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_group(["super_admin"]))])
+@router.post("", response_model=Subscription, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_group(["super_admin"]))])
 def create_subscription(
     subscription: SubscriptionCreate,
     db: Session = Depends(get_db)

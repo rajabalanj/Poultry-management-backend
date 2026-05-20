@@ -10,7 +10,7 @@ from utils.auth_utils import get_current_user
 
 router = APIRouter()
 
-@router.post("/inventory-item-variants/", response_model=InventoryItemVariant, tags=["Inventory Item Variants"])
+@router.post("/inventory-item-variants", response_model=InventoryItemVariant, tags=["Inventory Item Variants"])
 def create_inventory_item_variant(variant: InventoryItemVariantCreate, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id), user: dict = Depends(get_current_user)):
     return crud.create_inventory_item_variant(db=db, variant=variant, tenant_id=tenant_id)
 

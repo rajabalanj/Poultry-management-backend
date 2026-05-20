@@ -2,6 +2,7 @@
 import logging
 from datetime import date, datetime, timedelta
 from typing import List
+import os
 
 # Third-party imports
 import pytz
@@ -21,21 +22,29 @@ from models.daily_batch import DailyBatch as DailyBatchModel
 from models.shed import Shed
 from schemas.audit_log import AuditLogCreate
 from schemas.batch import BatchCreate, Batch as BatchSchema, BatchResponse
-from utils.auth_utils import get_current_user, get_user_identifier, require_group
+from utils.auth_utils import get_current_user, get_user_identifier, require_group, restrict_tenants
 from utils.tenancy import get_tenant_id
 from utils import sqlalchemy_to_dict, calculate_age_progression
 
 # --- Logging Configuration ---
 logger = logging.getLogger(__name__)
 
+# --- Brute Force Tenant Restrictions ---
+# Read from .env, fallback to a hardcoded list if not found.
+# Example .env entry: RESTRICTED_BATCH_TENANTS=branch_1,branch_2
+restricted_tenants_env = os.getenv("RESTRICTED_BATCH_TENANTS", "AnnamalaiyarAgroTest")
+RESTRICTED_TENANTS = [t.strip() for t in restricted_tenants_env.split(",") if t.strip()]
 
 router = APIRouter(
     prefix="/batches",
     tags=["Batches"],
-    dependencies=[Depends(get_current_user)]
+    dependencies=[
+        Depends(get_current_user),
+        Depends(restrict_tenants(RESTRICTED_TENANTS))
+    ]
 )
 
-@router.post("/", response_model=BatchSchema)
+@router.post("", response_model=BatchSchema)
 def create_batch(
     batch: BatchCreate, 
     db: Session = Depends(get_db),
@@ -150,7 +159,7 @@ def create_batch(
         logger.exception("Error creating batch: %s", e)
         raise HTTPException(status_code=500, detail="An internal error occurred while creating the batch.")
 
-@router.get("/all/", response_model=List[BatchResponse])
+@router.get("/all", response_model=List[BatchResponse])
 def get_all_batches(
     skip: int = 0,
     limit: int = 100,
@@ -202,7 +211,7 @@ def get_all_batches(
         
     return result
 
-@router.get("/")
+@router.get("")
 def read_batches(batch_date: date, skip: int = 0, limit: int = 100, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
     logger.info("Fetching batches with skip=%d, limit=%d, batch_date=%s", skip, limit, batch_date)
     batches = crud_batch.get_all_batches(db, skip=skip, limit=limit, batch_date=batch_date, tenant_id=tenant_id)
@@ -664,4 +673,3 @@ def close_batch(
     db.commit()
     
     return {"message": f"Batch '{batch.batch_no}' closed successfully on {closing_date}."}
-

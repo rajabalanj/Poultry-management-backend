@@ -13,7 +13,7 @@ router = APIRouter(
     tags=["Journal Entries"],
 )
 
-@router.post("/", response_model=JournalEntry, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=JournalEntry, status_code=status.HTTP_201_CREATED)
 def create_journal_entry(
     entry: JournalEntryCreate,
     db: Session = Depends(get_db),
@@ -33,7 +33,7 @@ def create_journal_entry(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred.")
 
 
-@router.get("/", response_model=List[JournalEntry])
+@router.get("", response_model=List[JournalEntry])
 def get_journal_entries(
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,

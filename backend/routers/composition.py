@@ -12,13 +12,13 @@ from utils.tenancy import get_tenant_id
 router = APIRouter()
 
 
-@router.post("/compositions/", response_model=Composition)
+@router.post("/compositions", response_model=Composition)
 def create_composition(composition: CompositionCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user), tenant_id: str = Depends(get_tenant_id)):
     # Pass the user identifier to the CRUD function so it can populate audit fields
     return crud_composition.create_composition(db, composition, tenant_id, user_id=get_user_identifier(user))
 
 
-@router.get("/compositions/", response_model=List[Composition])
+@router.get("/compositions", response_model=List[Composition])
 def read_compositions(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant_id)):
     return crud_composition.get_compositions(db, skip=skip, limit=limit, tenant_id=tenant_id)
 

@@ -11,14 +11,14 @@ router = APIRouter(
     tags=["Financial Settings"],
 )
 
-@router.get("/", response_model=FinancialSettings)
+@router.get("", response_model=FinancialSettings)
 def get_settings(
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_tenant_id)
 ):
     return crud_settings.get_financial_settings(db, tenant_id)
 
-@router.patch("/", response_model=FinancialSettings)
+@router.patch("", response_model=FinancialSettings)
 def update_settings(
     settings: FinancialSettingsUpdate,
     db: Session = Depends(get_db),

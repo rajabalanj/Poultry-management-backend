@@ -260,8 +260,7 @@ def upload_weekly_report_excel(
         logger.exception(f"Unhandled error during weekly report upload: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to process file: {e}")
 
-@router.post("/daily-batch/upload-excel/")
-
+@router.post("/daily-batch/upload-excel")
 def upload_daily_batch_excel(file: UploadFile = File(...), db: Session = Depends(get_db), user: dict = Depends(get_current_user), tenant_id: str = Depends(get_tenant_id)):
     """
     Upload and process an Excel file for daily batch data.
@@ -620,7 +619,7 @@ def update_daily_batch(
         "message": "Daily batch updated. Note: Dependent reports like the Egg Room Report will be updated in the background and may take a moment to reflect this change."
     }
 
-@router.get("/daily-batch/", response_model=List[dict])
+@router.get("/daily-batch", response_model=List[dict])
 def create_or_get_daily_batches(
     batch_date: date = Query(..., description="Date for which to fetch daily batches"),
     db: Session = Depends(get_db),
@@ -807,4 +806,3 @@ def create_or_get_daily_batches(
     result_list.sort(key=lambda x: x.get('batch_no', float('inf')))
 
     return result_list
-

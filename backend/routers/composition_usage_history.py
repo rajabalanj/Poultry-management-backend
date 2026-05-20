@@ -170,7 +170,7 @@ def revert_composition_usage_endpoint(
         raise HTTPException(status_code=404, detail=message)
     return {"message": message}
 
-@router.get("/usage-by-date/", response_model=CompositionUsageByDate)
+@router.get("/usage-by-date", response_model=CompositionUsageByDate)
 def get_usage_by_date_endpoint(
     usage_date: date,
     batch_id: Optional[int] = None,

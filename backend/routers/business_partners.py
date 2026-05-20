@@ -19,7 +19,7 @@ from utils.tenancy import get_tenant_id
 router = APIRouter(prefix="/business-partners", tags=["Business Partners"])
 logger = logging.getLogger("business_partners")
 
-@router.post("/", response_model=BusinessPartner, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=BusinessPartner, status_code=status.HTTP_201_CREATED)
 def create_business_partner(
     partner: BusinessPartnerCreate,
     db: Session = Depends(get_db),
@@ -37,7 +37,7 @@ def create_business_partner(
     logger.info(f"Business partner '{db_partner.name}' created by user {get_user_identifier(user)} for tenant {tenant_id}")
     return db_partner
 
-@router.get("/", response_model=List[BusinessPartner])
+@router.get("", response_model=List[BusinessPartner])
 def read_business_partners(
     skip: int = 0,
     limit: int = 100,
