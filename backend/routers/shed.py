@@ -1,3 +1,4 @@
+import os
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
@@ -7,9 +8,21 @@ from models.shed import Shed as ShedModel
 from schemas.shed import Shed, ShedCreate, ShedUpdate
 from crud import shed as crud_shed
 from utils.tenancy import get_tenant_id
-from utils.auth_utils import get_current_user
+from utils.auth_utils import get_current_user, restrict_tenants
 
-router = APIRouter(prefix="/sheds", tags=["Sheds"])
+# --- Brute Force Tenant Restrictions ---
+# Read from .env, fallback to a hardcoded list if not found.
+restricted_tenants_env = os.getenv("RESTRICTED_BATCH_TENANTS")
+RESTRICTED_TENANTS = [t.strip() for t in restricted_tenants_env.split(",") if t.strip()]
+
+router = APIRouter(
+    prefix="/sheds", 
+    tags=["Sheds"],
+    dependencies=[
+        Depends(get_current_user),
+        Depends(restrict_tenants(RESTRICTED_TENANTS))
+    ]
+)
 
 @router.post("", response_model=Shed, status_code=status.HTTP_201_CREATED)
 def create_shed(

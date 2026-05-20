@@ -29,10 +29,8 @@ from utils import sqlalchemy_to_dict, calculate_age_progression
 # --- Logging Configuration ---
 logger = logging.getLogger(__name__)
 
-# --- Brute Force Tenant Restrictions ---
-# Read from .env, fallback to a hardcoded list if not found.
-# Example .env entry: RESTRICTED_BATCH_TENANTS=branch_1,branch_2
-restricted_tenants_env = os.getenv("RESTRICTED_BATCH_TENANTS", "AnnamalaiyarAgroTest")
+# --- Router Configuration ---
+restricted_tenants_env = os.getenv("RESTRICTED_BATCH_TENANTS")
 RESTRICTED_TENANTS = [t.strip() for t in restricted_tenants_env.split(",") if t.strip()]
 
 router = APIRouter(
