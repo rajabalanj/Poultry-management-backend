@@ -1,3 +1,4 @@
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from models.inventory_item_audit import InventoryItemAudit
 from typing import Optional, List
@@ -9,13 +10,13 @@ def get_stock_at_date(db: Session, inventory_item_id: int, tenant_id: str, targe
     """
     Get the stock of an inventory item at the end of a specific date.
     """
-    end_of_day = datetime.combine(target_date, time.max, tzinfo=pytz.timezone('Asia/Kolkata'))
+    end_of_day = datetime.combine(target_date, time.max)
 
     last_audit = db.query(InventoryItemAudit).filter(
         InventoryItemAudit.inventory_item_id == inventory_item_id,
         InventoryItemAudit.tenant_id == tenant_id,
         InventoryItemAudit.timestamp <= end_of_day
-    ).order_by(InventoryItemAudit.timestamp.desc()).first()
+    ).order_by(InventoryItemAudit.id.desc()).first()
 
     if last_audit:
         return last_audit.new_quantity
@@ -25,7 +26,7 @@ def get_stock_at_date(db: Session, inventory_item_id: int, tenant_id: str, targe
         InventoryItemAudit.inventory_item_id == inventory_item_id,
         InventoryItemAudit.tenant_id == tenant_id,
         InventoryItemAudit.timestamp > end_of_day
-    ).order_by(InventoryItemAudit.timestamp.asc()).first()
+    ).order_by(InventoryItemAudit.id.asc()).first()
 
     if first_audit_after:
         return first_audit_after.old_quantity
@@ -49,3 +50,36 @@ def get_daily_stock_report(db: Session, inventory_item_id: int, tenant_id: str, 
         
     return report
 
+
+def get_latest_stock(db: Session, inventory_item_id: int, tenant_id: str) -> Optional[Decimal]:
+    """Get the latest stock for an inventory item from the audit trail."""
+    latest_audit = db.query(InventoryItemAudit).filter(
+        InventoryItemAudit.inventory_item_id == inventory_item_id,
+        InventoryItemAudit.tenant_id == tenant_id
+    ).order_by(InventoryItemAudit.id.desc()).first()
+
+    if latest_audit:
+        return latest_audit.new_quantity
+    return None
+
+
+def get_latest_stock_for_items(db: Session, inventory_item_ids: list[int], tenant_id: str) -> dict:
+    """Get the latest stock values for multiple inventory items from the audit trail."""
+    if not inventory_item_ids:
+        return {}
+
+    subquery = db.query(
+        InventoryItemAudit.inventory_item_id,
+        func.max(InventoryItemAudit.id).label("latest_audit_id")
+    ).filter(
+        InventoryItemAudit.inventory_item_id.in_(inventory_item_ids),
+        InventoryItemAudit.tenant_id == tenant_id
+    ).group_by(InventoryItemAudit.inventory_item_id).subquery()
+
+    latest_audits = db.query(InventoryItemAudit).join(
+        subquery,
+        (InventoryItemAudit.inventory_item_id == subquery.c.inventory_item_id) &
+        (InventoryItemAudit.id == subquery.c.latest_audit_id)
+    ).all()
+
+    return {audit.inventory_item_id: audit.new_quantity for audit in latest_audits}

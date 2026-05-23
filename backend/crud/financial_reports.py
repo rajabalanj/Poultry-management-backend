@@ -13,7 +13,7 @@ from decimal import Decimal
 from typing import Optional
 from crud import app_config as crud_app_config
 from crud.egg_room_reports import get_reports_by_date_range
-from models import purchase_order_items, sales_order_items, inventory_items
+from models import purchase_order_items, sales_order_items, inventory_items, inventory_item_audit
 
 
 def get_profit_and_loss(db: Session, start_date: date, end_date: date, tenant_id: str) -> ProfitAndLoss:
@@ -492,73 +492,66 @@ def get_inventory_ledger(db: Session, item_id: int, start_date: date, end_date: 
             closing_quantity_on_hand=closing_quantity
         )
 
-    # Calculate opening quantity for non-egg items
-    purchases_before = db.query(func.sum(purchase_order_items.PurchaseOrderItem.quantity)).join(purchase_orders.PurchaseOrder).filter(
-        purchase_orders.PurchaseOrder.tenant_id == tenant_id,
-        purchase_orders.PurchaseOrder.order_date < start_date,
-        purchase_orders.PurchaseOrder.deleted_at.is_(None),
-        purchase_order_items.PurchaseOrderItem.inventory_item_id == item_id
-    ).scalar() or Decimal('0.0')
+    # Calculate opening quantity for non-egg items using audit table
+    last_audit_before = db.query(inventory_item_audit.InventoryItemAudit).filter(
+        inventory_item_audit.InventoryItemAudit.tenant_id == tenant_id,
+        inventory_item_audit.InventoryItemAudit.inventory_item_id == item_id,
+        inventory_item_audit.InventoryItemAudit.timestamp < datetime.combine(start_date, datetime.min.time())
+    ).order_by(inventory_item_audit.InventoryItemAudit.id.desc()).first()
 
-    sales_before = db.query(func.sum(sales_order_items.SalesOrderItem.quantity)).join(sales_orders.SalesOrder).filter(
-        sales_orders.SalesOrder.tenant_id == tenant_id,
-        sales_orders.SalesOrder.order_date < start_date,
-        sales_orders.SalesOrder.deleted_at.is_(None),
-        sales_order_items.SalesOrderItem.inventory_item_id == item_id
-    ).scalar() or Decimal('0.0')
+    opening_quantity = last_audit_before.new_quantity if last_audit_before else Decimal('0.0')
 
-    opening_quantity = purchases_before - sales_before
-
-    # Get transactions within the date range
-    purchase_items = db.query(purchase_order_items.PurchaseOrderItem).join(purchase_orders.PurchaseOrder).filter(
-        purchase_orders.PurchaseOrder.tenant_id == tenant_id,
-        purchase_orders.PurchaseOrder.order_date >= start_date,
-        purchase_orders.PurchaseOrder.order_date <= end_date,
-        purchase_orders.PurchaseOrder.deleted_at.is_(None),
-        purchase_order_items.PurchaseOrderItem.inventory_item_id == item_id
-    ).all()
-
-    sales_items = db.query(sales_order_items.SalesOrderItem).join(sales_orders.SalesOrder).filter(
-        sales_orders.SalesOrder.tenant_id == tenant_id,
-        sales_orders.SalesOrder.order_date >= start_date,
-        sales_orders.SalesOrder.order_date <= end_date,
-        sales_orders.SalesOrder.deleted_at.is_(None),
-        sales_order_items.SalesOrderItem.inventory_item_id == item_id
-    ).all()
+    # Get transactions within the date range from audit table
+    audits_in_range = db.query(inventory_item_audit.InventoryItemAudit).filter(
+        inventory_item_audit.InventoryItemAudit.tenant_id == tenant_id,
+        inventory_item_audit.InventoryItemAudit.inventory_item_id == item_id,
+        inventory_item_audit.InventoryItemAudit.timestamp >= datetime.combine(start_date, datetime.min.time()),
+        inventory_item_audit.InventoryItemAudit.timestamp <= datetime.combine(end_date, datetime.max.time())
+    ).order_by(inventory_item_audit.InventoryItemAudit.id.asc()).all()
 
     transactions = []
-    for pi in purchase_items:
-        transactions.append({
-            "date": pi.purchase_order.order_date,
-            "type": "purchase",
-            "reference": f"PO-{pi.purchase_order.po_number}",
-            "quantity_received": Decimal(str(pi.quantity)),
-            "unit_cost": Decimal(str(pi.price_per_unit)),
-            "total_cost": Decimal(str(pi.quantity)) * Decimal(str(pi.price_per_unit)),
-            "quantity_sold": Decimal('0.0')
-        })
+    for audit in audits_in_range:
+        # Determine reference based on change_type and note
+        reference = f"{audit.change_type.upper()}"
+        if audit.note:
+            # Extract PO or reference number from note if available
+            if "PO #" in audit.note:
+                po_num = audit.note.split("PO #")[1].split(" ")[0]
+                reference = f"PO-{po_num}"
+            elif "SO #" in audit.note:
+                so_num = audit.note.split("SO #")[1].split(" ")[0]
+                reference = f"SO-{so_num}"
+        
+        # Determine if it's a receipt or usage based on change_amount sign
+        if audit.change_amount > 0:
+            transactions.append({
+                "date": audit.timestamp.date(),
+                "type": "purchase",
+                "reference": reference,
+                "quantity_received": Decimal(str(audit.change_amount)),
+                "unit_cost": Decimal(str(item.average_cost)),
+                "total_cost": Decimal(str(audit.change_amount)) * Decimal(str(item.average_cost)),
+                "quantity_sold": Decimal('0.0'),
+                "quantity_on_hand": audit.new_quantity,
+                "note": audit.note
+            })
+        else:
+            transactions.append({
+                "date": audit.timestamp.date(),
+                "type": "usage",
+                "reference": reference,
+                "quantity_received": Decimal('0.0'),
+                "unit_cost": Decimal(str(item.average_cost)),
+                "total_cost": Decimal('0.0'),
+                "quantity_sold": abs(Decimal(str(audit.change_amount))),
+                "quantity_on_hand": audit.new_quantity,
+                "note": audit.note
+            })
 
-    for si in sales_items:
-        transactions.append({
-            "date": si.sales_order.order_date,
-            "type": "sale",
-            "reference": f"SO-{si.sales_order.so_number}",
-            "quantity_received": Decimal('0.0'),
-            "unit_cost": Decimal('0.0'),
-            "total_cost": Decimal('0.0'),
-            "quantity_sold": Decimal(str(si.quantity))
-        })
-
-    transactions.sort(key=lambda x: x['date'])
-
-    quantity_on_hand = opening_quantity
+    closing_quantity = opening_quantity
     entries = []
     for t in transactions:
-        if t['type'] == 'purchase':
-            quantity_on_hand += t['quantity_received']
-        else:
-            quantity_on_hand -= t['quantity_sold']
-        
+        closing_quantity = t.get('quantity_on_hand')
         entries.append(InventoryLedgerEntry(
             date=t['date'],
             reference=t['reference'],
@@ -566,7 +559,7 @@ def get_inventory_ledger(db: Session, item_id: int, start_date: date, end_date: 
             unit_cost=t.get('unit_cost'),
             total_cost=t.get('total_cost'),
             quantity_sold=t.get('quantity_sold'),
-            quantity_on_hand=quantity_on_hand
+            quantity_on_hand=closing_quantity
         ))
 
     paginated_entries = entries[skip:skip+limit] if limit > 0 else entries[skip:]
@@ -576,5 +569,5 @@ def get_inventory_ledger(db: Session, item_id: int, start_date: date, end_date: 
         item_id=item_id,
         opening_quantity=opening_quantity,
         entries=paginated_entries,
-        closing_quantity_on_hand=quantity_on_hand
+        closing_quantity_on_hand=closing_quantity
     )

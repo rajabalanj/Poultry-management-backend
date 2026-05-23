@@ -23,7 +23,7 @@ def get_inventory_item_audits(
     if end_date:
         query = query.filter(InventoryItemAudit.timestamp <= end_date)
         
-    return query.all()
+    return query.order_by(InventoryItemAudit.id.asc()).all()
 
 
 def create_inventory_item_audit(

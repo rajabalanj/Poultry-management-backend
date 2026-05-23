@@ -74,11 +74,15 @@ def read_inventory_items(
 
     # Get the latest egg stock data
     latest_egg_stock = _get_latest_egg_report_stock(db, tenant_id)
+    non_egg_item_ids = [item.id for item in items if item.name not in EGG_INVENTORY_NAMES]
+    latest_audit_stock = crud_inventory_item_stock.get_latest_stock_for_items(db, non_egg_item_ids, tenant_id)
 
-    # Override stock for egg items
+    # Override stock for egg items, and use audit stock for non-egg items when available
     for item in items:
         if item.name in EGG_INVENTORY_NAMES:
             item.current_stock = latest_egg_stock.get(item.name, item.current_stock)
+        else:
+            item.current_stock = latest_audit_stock.get(item.id, item.current_stock)
             
     return items
 
@@ -112,9 +116,14 @@ def get_stock_levels_report(
     items = query.all()
 
     latest_egg_stock = _get_latest_egg_report_stock(db, tenant_id)
+    non_egg_item_ids = [item.id for item in items if item.name not in EGG_INVENTORY_NAMES]
+    latest_audit_stock = crud_inventory_item_stock.get_latest_stock_for_items(db, non_egg_item_ids, tenant_id)
+
     for item in items:
         if item.name in EGG_INVENTORY_NAMES:
             item.current_stock = latest_egg_stock.get(item.name, item.current_stock)
+        else:
+            item.current_stock = latest_audit_stock.get(item.id, item.current_stock)
             
     return items
 
@@ -134,11 +143,15 @@ def get_low_stock_report(db: Session = Depends(get_db), tenant_id: str = Depends
     ).all()
     
     latest_egg_stock = _get_latest_egg_report_stock(db, tenant_id)
+    non_egg_item_ids = [item.id for item in items if item.name not in EGG_INVENTORY_NAMES]
+    latest_audit_stock = crud_inventory_item_stock.get_latest_stock_for_items(db, non_egg_item_ids, tenant_id)
     low_stock_items = []
     
     for item in items:
         if item.name in EGG_INVENTORY_NAMES:
             item.current_stock = latest_egg_stock.get(item.name, item.current_stock)
+        else:
+            item.current_stock = latest_audit_stock.get(item.id, item.current_stock)
             
         current_stock = float(item.current_stock or 0)
         reorder_level = float(item.reorder_level or 0)
@@ -163,11 +176,16 @@ def get_inventory_value_report(db: Session = Depends(get_db), tenant_id: str = D
     """Calculate the total monetary value of the current inventory."""
     # We need to handle egg inventory separately if its cost is managed differently
     # For now, we assume average_cost is accurate for all items
-    total_value = db.query(func.sum(InventoryItemModel.current_stock * InventoryItemModel.average_cost)).filter(
-        InventoryItemModel.tenant_id == tenant_id
-    ).scalar()
-    
-    return {"total_inventory_value": Decimal(str(total_value or 0))}
+    items = db.query(InventoryItemModel).filter(InventoryItemModel.tenant_id == tenant_id).all()
+    item_ids = [item.id for item in items]
+    latest_audit_stock = crud_inventory_item_stock.get_latest_stock_for_items(db, item_ids, tenant_id)
+
+    total_value = Decimal('0')
+    for item in items:
+        current_stock = latest_audit_stock.get(item.id, item.current_stock or Decimal('0'))
+        total_value += Decimal(str(current_stock or 0)) * Decimal(str(item.average_cost or 0))
+
+    return {"total_inventory_value": total_value}
 
 @router.get("/usage-history", response_model=PaginatedInventoryItemUsageHistoryResponse)
 def get_all_inventory_item_usage_history(
@@ -275,7 +293,7 @@ def get_daily_stock_report_for_item(
     
     # Add unit to each DailyStock item in the report
     for item in report_data:
-        item.unit = db_item.unit
+        item['unit'] = db_item.unit
     
     return report_data
 
