@@ -44,8 +44,11 @@ def use_composition_endpoint(
         raise HTTPException(status_code=404, detail=f"Active batch with batch number '{data.batch_no}' not found.")
     batch_id = batch.id
 
-    # Call use_composition and pass changed_by (user from token)
-    usage = use_composition(db, data.compositionId, batch_id, data.times, used_at_dt, changed_by=get_user_identifier(user), tenant_id=tenant_id)
+    try:
+        # Call use_composition and pass changed_by (user from token)
+        usage = use_composition(db, data.compositionId, batch_id, data.times, used_at_dt, changed_by=get_user_identifier(user), tenant_id=tenant_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     
     # Now, 'usage' object should have its ID populated
     if usage and hasattr(usage, 'id'):

@@ -109,6 +109,11 @@ def use_composition(db: Session, composition_id: int, batch_id: int, times: int,
                 logger.error(f"Error converting IIC quantity for subtraction: {e}")
                 raise
 
+            if item.current_stock < quantity_to_reduce_in_items_unit:
+                raise ValueError(
+                    f"Insufficient stock for inventory item '{item.name}'. Available: {item.current_stock} {item.unit}, Required: {quantity_to_reduce_in_items_unit} {item.unit}"
+                )
+
             item.current_stock -= quantity_to_reduce_in_items_unit
             db.add(item)
             db.flush()
