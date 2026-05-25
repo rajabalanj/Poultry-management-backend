@@ -26,7 +26,7 @@ def use_inventory_item(
     item = db.query(InventoryItem).filter(
         InventoryItem.id == inventory_item_id,
         InventoryItem.tenant_id == tenant_id
-    ).first()
+    ).with_for_update().first()
     if not item:
         raise ValueError("Inventory item not found")
 
@@ -222,7 +222,7 @@ def revert_inventory_item_usage(db: Session, usage_id: int, tenant_id: str, chan
     item = db.query(InventoryItem).filter(
         InventoryItem.id == usage.inventory_item_id,
         InventoryItem.tenant_id == tenant_id
-    ).first()
+    ).with_for_update().first()
     if not item:
         return False, "Inventory item not found for usage revert."
 

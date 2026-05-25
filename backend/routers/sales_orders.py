@@ -1385,8 +1385,22 @@ def delete_sales_order(
     for item in db_so.items:
         inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).with_for_update().first()
         if inv:
-            inv.current_stock = (inv.current_stock or 0) + item.quantity
-            db.add(inv)
+            if inv.name not in EGG_ITEM_NAMES:
+                old_stock = inv.current_stock or 0
+                inv.current_stock = old_stock + item.quantity
+                db.add(inv)
+                
+                audit = InventoryItemAudit(
+                    inventory_item_id=inv.id,
+                    change_type="sale_reversal",
+                    change_amount=item.quantity,
+                    old_quantity=old_stock,
+                    new_quantity=inv.current_stock,
+                    changed_by=get_user_identifier(user),
+                    note=f"SO #{so_id} deleted",
+                    tenant_id=tenant_id
+                )
+                db.add(audit)
             
     # --- Reverse Journal Entries on Delete ---
     db_so.total_amount = Decimal('0.0')

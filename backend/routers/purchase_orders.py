@@ -488,52 +488,6 @@ def update_purchase_order(
     
     old_values = sqlalchemy_to_dict(db_po)
 
-    # Handle inventory changes when PO is marked as received/paid
-    new_status = getattr(po_update, 'status', None)
-    # Marking as PAID (received): increase inventory
-    if new_status == PurchaseOrderStatus.PAID and db_po.status != PurchaseOrderStatus.PAID:
-        for item in db_po.items:
-            inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).with_for_update().first()
-            if inv is None:
-                raise HTTPException(status_code=400, detail=f"Inventory item {item.inventory_item_id} not found")
-
-            # Calculate new average cost
-            new_quantity = item.quantity
-            purchase_price = item.price_per_unit
-            current_stock = inv.current_stock or 0
-            current_avg_cost = inv.average_cost or 0
-
-            if current_stock + new_quantity > 0:
-                new_avg_cost = ((current_stock * current_avg_cost) + (new_quantity * purchase_price)) / (current_stock + new_quantity)
-                inv.average_cost = new_avg_cost
-
-            old_stock = inv.current_stock or 0
-            inv.current_stock = (inv.current_stock or 0) + item.quantity
-            db.add(inv)
-
-            # Create audit record for inventory increase from PO being marked PAID
-            audit = InventoryItemAudit(
-                inventory_item_id=inv.id,
-                change_type="purchase",
-                change_amount=new_quantity,
-                old_quantity=old_stock,
-                new_quantity=inv.current_stock,
-                changed_by=get_user_identifier(user),
-                note=f"Marked PAID - Received from PO #{po_id}",
-                tenant_id=tenant_id
-            )
-            db.add(audit)
-
-        logger.info(f"PO (ID: {po_id}) marked as 'Paid/Received'. Inventory increased.")
-    # If previously PAID and status is changing away, rollback the inventory increase
-    elif db_po.status == PurchaseOrderStatus.PAID and new_status != PurchaseOrderStatus.PAID:
-        for item in db_po.items:
-            inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).with_for_update().first()
-            if inv:
-                inv.current_stock = (inv.current_stock or 0) - item.quantity
-                db.add(inv)
-        logger.info(f"PO (ID: {po_id}) un-marked as 'Paid'. Inventory adjusted.")
-
 
     po_data = po_update.model_dump(exclude_unset=True)
     # Prevent direct update of total_amount
@@ -601,8 +555,21 @@ def delete_purchase_order(
     for item in db_po.items:
         inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == item.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).with_for_update().first()
         if inv:
-            inv.current_stock = (inv.current_stock or 0) - item.quantity
+            old_stock = inv.current_stock or 0
+            inv.current_stock = old_stock - item.quantity
             db.add(inv)
+            
+            audit = InventoryItemAudit(
+                inventory_item_id=inv.id,
+                change_type="purchase_reversal",
+                change_amount=-item.quantity,
+                old_quantity=old_stock,
+                new_quantity=inv.current_stock,
+                changed_by=get_user_identifier(user),
+                note=f"PO #{po_id} deleted",
+                tenant_id=tenant_id
+            )
+            db.add(audit)
 
     old_values = sqlalchemy_to_dict(db_po)
     db_po.deleted_at = datetime.now(pytz.timezone('Asia/Kolkata'))
@@ -904,8 +871,21 @@ def remove_item_from_purchase_order(
     db_po.updated_by = get_user_identifier(user)
     inv = db.query(InventoryItemModel).filter(InventoryItemModel.id == db_po_item.inventory_item_id, InventoryItemModel.tenant_id == tenant_id).with_for_update().first()
     if inv:
-        inv.current_stock = (inv.current_stock or 0) - db_po_item.quantity
+        old_stock = inv.current_stock or 0
+        inv.current_stock = old_stock - db_po_item.quantity
         db.add(inv)
+        
+        audit = InventoryItemAudit(
+            inventory_item_id=inv.id,
+            change_type="purchase_reversal",
+            change_amount=-db_po_item.quantity,
+            old_quantity=old_stock,
+            new_quantity=inv.current_stock,
+            changed_by=get_user_identifier(user),
+            note=f"Item removed from PO #{po_id}",
+            tenant_id=tenant_id
+        )
+        db.add(audit)
 
     db.delete(db_po_item)
 

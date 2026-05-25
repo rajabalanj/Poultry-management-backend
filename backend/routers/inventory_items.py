@@ -425,7 +425,10 @@ def adjust_inventory_item_stock(
 
     change_amount is positive to increase stock, negative to decrease.
     """
-    db_item = crud_inventory_items.get_inventory_item(db=db, item_id=item_id, tenant_id=tenant_id)
+    db_item = db.query(InventoryItemModel).filter(
+        InventoryItemModel.id == item_id, 
+        InventoryItemModel.tenant_id == tenant_id
+    ).with_for_update().first()
     if db_item is None:
         raise HTTPException(status_code=404, detail="Inventory item not found")
 

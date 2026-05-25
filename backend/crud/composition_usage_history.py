@@ -62,7 +62,7 @@ def use_composition(db: Session, composition_id: int, batch_id: int, times: int,
     items_in_comp = db.query(InventoryItemInComposition).filter(InventoryItemInComposition.composition_id == composition_id, InventoryItemInComposition.tenant_id == tenant_id).all()
     
     for iic in items_in_comp:
-        item = db.query(InventoryItem).filter(InventoryItem.id == iic.inventory_item_id, InventoryItem.tenant_id == tenant_id).first()
+        item = db.query(InventoryItem).filter(InventoryItem.id == iic.inventory_item_id, InventoryItem.tenant_id == tenant_id).with_for_update().first()
         if item:
             # Start of wastage logic
             wastage_percentage = iic.wastage_percentage  # Level 1: Specific item in composition
@@ -209,7 +209,7 @@ def revert_composition_usage(db: Session, usage_id: int, tenant_id: str, changed
     batch_no = batch_obj.batch_no if batch_obj else None
 
     for usage_item in usage_to_revert.items:
-        item = db.query(InventoryItem).filter(InventoryItem.id == usage_item.inventory_item_id, InventoryItem.tenant_id == tenant_id).first()
+        item = db.query(InventoryItem).filter(InventoryItem.id == usage_item.inventory_item_id, InventoryItem.tenant_id == tenant_id).with_for_update().first()
         if item:
             old_item_quantity = item.current_stock
             old_item_unit = item.unit
