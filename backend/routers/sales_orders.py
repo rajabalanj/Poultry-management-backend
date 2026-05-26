@@ -265,7 +265,7 @@ def create_sales_order(
                 old_quantity=old_stock,
                 new_quantity=inv.current_stock,
                 changed_by=get_user_identifier(user),
-                note=f"Sold via SO #{db_so.id}",
+                note=f"Sold via SO #{db_so.so_number}",
                 tenant_id=tenant_id
             )
             db.add(audit)
@@ -953,7 +953,7 @@ def add_item_to_sales_order(
             inventory_item_id=inv.id, change_type="sale",
             change_amount=item_request.quantity, old_quantity=old_stock,
             new_quantity=inv.current_stock, changed_by=get_user_identifier(user),
-            note=f"Added to SO #{so_id}", tenant_id=tenant_id
+            note=f"Added to SO #{db_so.so_number}", tenant_id=tenant_id
         )
         db.add(audit)
 
@@ -1061,7 +1061,7 @@ def update_sales_order_item(
                     inventory_item_id=old_inv_item.id, change_type="return",
                     change_amount=item_to_update.quantity, old_quantity=old_stock,
                     new_quantity=old_inv_item.current_stock, changed_by=get_user_identifier(user),
-                    note=f"Item changed on SO #{so_id}", tenant_id=tenant_id
+                    note=f"Item changed on SO #{db_so.so_number}", tenant_id=tenant_id
                 )
                 db.add(audit)
 
@@ -1131,7 +1131,7 @@ def update_sales_order_item(
                 inventory_item_id=new_inv_item.id, change_type="sale",
                 change_amount=new_quantity, old_quantity=old_stock,
                 new_quantity=new_inv_item.current_stock, changed_by=get_user_identifier(user),
-                note=f"Item changed on SO #{so_id}", tenant_id=tenant_id
+                note=f"Item changed on SO #{db_so.so_number}", tenant_id=tenant_id
             )
             db.add(audit)
         
@@ -1193,7 +1193,7 @@ def update_sales_order_item(
                     inventory_item_id=inv.id, change_type="sale_adjustment",
                     change_amount=-delta, old_quantity=old_stock,
                     new_quantity=inv_with_lock.current_stock, changed_by=get_user_identifier(user),
-                    note=f"Quantity updated on SO #{so_id}", tenant_id=tenant_id
+                note=f"Quantity updated on SO #{db_so.so_number}", tenant_id=tenant_id
                 )
                 db.add(audit)
 
@@ -1301,7 +1301,7 @@ def delete_sales_order_item(
                 old_quantity=old_stock,
                 new_quantity=inv.current_stock,
                 changed_by=get_user_identifier(user),
-                note=f"Item deleted from SO #{so_id} (Item ID: {item_id})",
+                note=f"Item deleted from SO #{db_so.so_number} (Item ID: {item_id})",
                 tenant_id=tenant_id
             )
             db.add(audit)
@@ -1397,7 +1397,7 @@ def delete_sales_order(
                     old_quantity=old_stock,
                     new_quantity=inv.current_stock,
                     changed_by=get_user_identifier(user),
-                    note=f"SO #{so_id} deleted",
+                    note=f"SO #{db_so.so_number} deleted",
                     tenant_id=tenant_id
                 )
                 db.add(audit)

@@ -223,7 +223,7 @@ def create_purchase_order(
             old_quantity=old_stock,
             new_quantity=inv.current_stock,
             changed_by=get_user_identifier(user),
-            note=f"Received from PO #{db_po.id}",
+            note=f"Received from PO #{db_po.po_number}",
             tenant_id=tenant_id
         )
         db.add(audit)
@@ -566,7 +566,7 @@ def delete_purchase_order(
                 old_quantity=old_stock,
                 new_quantity=inv.current_stock,
                 changed_by=get_user_identifier(user),
-                note=f"PO #{po_id} deleted",
+                note=f"PO #{db_po.po_number} deleted",
                 tenant_id=tenant_id
             )
             db.add(audit)
@@ -678,7 +678,7 @@ def add_item_to_purchase_order(
         old_quantity=old_stock,
         new_quantity=inv.current_stock,
         changed_by=get_user_identifier(user),
-        note=f"Added via PO #{po_id}",
+        note=f"Added via PO #{db_po.po_number}",
         tenant_id=tenant_id
     )
     db.add(audit)
@@ -752,7 +752,7 @@ def update_item_in_purchase_order(
                 inventory_item_id=old_inv_item.id, change_type="purchase_reversal",
                 change_amount=-item_to_update.quantity, old_quantity=old_stock,
                 new_quantity=old_inv_item.current_stock, changed_by=get_user_identifier(user),
-                note=f"Item changed on PO #{po_id}", tenant_id=tenant_id
+                note=f"Item changed on PO #{db_po.po_number}", tenant_id=tenant_id
             )
             db.add(audit)
 
@@ -778,7 +778,7 @@ def update_item_in_purchase_order(
             inventory_item_id=new_inv_item.id, change_type="purchase",
             change_amount=new_quantity, old_quantity=current_stock_new_item,
             new_quantity=new_inv_item.current_stock, changed_by=get_user_identifier(user),
-            note=f"Item changed on PO #{po_id}", tenant_id=tenant_id
+            note=f"Item changed on PO #{db_po.po_number}", tenant_id=tenant_id
         )
         db.add(audit)
         
@@ -812,7 +812,7 @@ def update_item_in_purchase_order(
                 inventory_item_id=inv.id, change_type="purchase_adjustment",
                 change_amount=delta, old_quantity=old_stock,
                 new_quantity=inv.current_stock, changed_by=get_user_identifier(user),
-                note=f"Quantity updated on PO #{po_id}", tenant_id=tenant_id
+                note=f"Quantity updated on PO #{db_po.po_number}", tenant_id=tenant_id
             )
             db.add(audit)
 
@@ -882,7 +882,7 @@ def remove_item_from_purchase_order(
             old_quantity=old_stock,
             new_quantity=inv.current_stock,
             changed_by=get_user_identifier(user),
-            note=f"Item removed from PO #{po_id}",
+            note=f"Item removed from PO #{db_po.po_number}",
             tenant_id=tenant_id
         )
         db.add(audit)
