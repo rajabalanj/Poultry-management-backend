@@ -237,25 +237,21 @@ def get_general_ledger(db: Session, start_date: date, end_date: date, tenant_id:
         
         ref_id = None
         if ref_doc.startswith("PO-"):
-            t_type = "Purchase"
+            t_type = "Purchase Payment" if "-PAY-" in ref_doc else "Purchase"
             parts = ref_doc.split("-")
             if len(parts) > 1 and parts[1].isdigit():
                 ref_id = po_map.get(int(parts[1]))
         elif ref_doc.startswith("SO-"):
-            t_type = "Sale"
+            t_type = "Sales Payment" if "-PAY-" in ref_doc else "Sale"
             parts = ref_doc.split("-")
             if len(parts) > 1 and parts[1].isdigit():
                 ref_id = so_map.get(int(parts[1]))
         elif ref_doc.startswith("INV-USAGE-"):
             t_type = "Direct Inventory Usage"
-            parts = ref_doc.split("-")
-            if len(parts) > 2 and parts[-1].isdigit():
-                ref_id = parts[-1]
-        elif ref_doc.startswith("USAGE-"):
+            ref_id = ref_doc.replace("INV-USAGE-", "")
+        elif ref_doc.startswith("COMP-USAGE-") or ref_doc.startswith("USAGE-"):
             t_type = "Composition Usage"
-            parts = ref_doc.split("-")
-            if len(parts) > 1 and parts[-1].isdigit():
-                ref_id = parts[-1]
+            ref_id = ref_doc.replace("COMP-USAGE-", "").replace("USAGE-", "")
         elif ref_doc.startswith("EXP-"):
             t_type = "Expense"
             parts = ref_doc.split("-")

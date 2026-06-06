@@ -23,7 +23,7 @@ from schemas.audit_log import AuditLogCreate
 from schemas.daily_batch import DailyBatchCreate, DailyBatchUpdate
 from utils import sqlalchemy_to_dict
 from utils.age_utils import calculate_age_progression
-from utils.auth_utils import get_current_user, get_user_identifier, restrict_tenants
+from utils.auth_utils import get_current_user, get_user_identifier, check_feature_restriction
 from utils.tenancy import get_tenant_id
 from crud.audit_log import create_audit_log
 from tasks.eod_tasks import propagate_egg_room_updates
@@ -31,14 +31,10 @@ from tasks.eod_tasks import propagate_egg_room_updates
 logger = logging.getLogger(__name__)
 
 # --- Brute Force Tenant Restrictions ---
-# Read from .env, fallback to a hardcoded list if not found.
-restricted_tenants_env = os.getenv("RESTRICTED_BATCH_TENANTS")
-RESTRICTED_TENANTS = [t.strip() for t in restricted_tenants_env.split(",") if t.strip()]
-
 router = APIRouter(
     dependencies=[
         Depends(get_current_user),
-        Depends(restrict_tenants(RESTRICTED_TENANTS))
+        Depends(check_feature_restriction("BATCH_MANAGEMENT"))
     ]
 )
 

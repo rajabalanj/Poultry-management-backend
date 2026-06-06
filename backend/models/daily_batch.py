@@ -345,45 +345,35 @@ class DailyBatch(Base, TimestampMixin):
         for usage in usages:
             for item_in_comp in usage.items:
                 if item_in_comp.item_category == 'Feed':
-                    total_feed_kg += Decimal(str(item_in_comp.weight)) * Decimal(usage.times)
+                    # Calculate net feed after wastage is lost
+                    base_feed = Decimal(str(item_in_comp.weight)) * Decimal(usage.times)
+                    wastage_multiplier = Decimal('1') - (Decimal(str(item_in_comp.wastage_percentage or 0)) / Decimal('100'))
+                    total_feed_kg += base_feed * wastage_multiplier
 
         return float(total_feed_kg * 1000)
 
     @feed_in_grams.expression
     def feed_in_grams(cls):
-        # Import the CompositionUsageItem model
         from models.composition_usage_item import CompositionUsageItem
+        from sqlalchemy import select
 
-        # Create a subquery to calculate the feed in grams
-        from sqlalchemy import select, and_
-
-        # Subquery to get the total feed in kg for each batch/date combination
-        subquery = select(
-            CompositionUsageHistory.batch_id,
-            func.date(CompositionUsageHistory.used_at).label('batch_date'),
-            func.sum(
-                case(
-                    (CompositionUsageItem.item_category == 'Feed', CompositionUsageItem.weight * CompositionUsageHistory.times),
-                    else_=0
+        return func.coalesce(
+            select(
+                func.sum(
+                    case(
+                        (CompositionUsageItem.item_category == 'Feed',
+                         CompositionUsageItem.weight * CompositionUsageHistory.times * 1000 * (1 - func.coalesce(CompositionUsageItem.wastage_percentage, 0) / 100)),
+                        else_=0
+                    )
                 )
-            ).label('total_feed_kg')
-        ).join(
-            CompositionUsageHistory.items
-        ).group_by(
-            CompositionUsageHistory.batch_id,
-            func.date(CompositionUsageHistory.used_at)
-        ).subquery()
-
-        # Join with DailyBatch and convert to grams
-        return case(
-            (
-                and_(
-                    cls.batch_id == subquery.c.batch_id,
-                    cls.batch_date == subquery.c.batch_date
-                ),
-                subquery.c.total_feed_kg * 1000
-            ),
-            else_=0
+            ).select_from(CompositionUsageHistory).join(
+                CompositionUsageItem,
+                CompositionUsageHistory.id == CompositionUsageItem.usage_history_id
+            ).where(
+                CompositionUsageHistory.batch_id == cls.batch_id,
+                func.date(CompositionUsageHistory.used_at) == cls.batch_date
+            ).correlate(cls).scalar_subquery(),
+            0
         )
 
 

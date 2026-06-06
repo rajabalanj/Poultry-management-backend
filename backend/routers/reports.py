@@ -195,21 +195,41 @@ def _calculate_cumulative_report(db: Session, batch_id: int, current_week: int, 
     
     # Section 1: Feed data
     standard_cum_feed = 0.0
-    if standard_data and hasattr(standard_data, "feed_intake_cum_kg") and standard_data.feed_intake_cum_kg is not None:
-        standard_cum_feed = float(standard_data.feed_intake_cum_kg)
-    elif standard_data and hasattr(standard_data, "feed_intake_cum_g") and standard_data.feed_intake_cum_g is not None:
-        standard_cum_feed = float(standard_data.feed_intake_cum_g) / 1000
+    if standard_data:
+        if hasattr(standard_data, "feed_intake_cum_kg") and standard_data.feed_intake_cum_kg is not None:
+            standard_cum_feed = float(standard_data.feed_intake_cum_kg)
+        elif hasattr(standard_data, "cumulative_feed_kg") and standard_data.cumulative_feed_kg is not None:
+            standard_cum_feed = float(standard_data.cumulative_feed_kg)
+        elif hasattr(standard_data, "feed_intake_cum_g") and standard_data.feed_intake_cum_g is not None:
+            standard_cum_feed = float(standard_data.feed_intake_cum_g) / 1000
 
     standard_eggs_cum = 0.0
-    if standard_data and hasattr(standard_data, "eggs_per_bird_cum") and standard_data.eggs_per_bird_cum is not None:
-        standard_eggs_cum = float(standard_data.eggs_per_bird_cum)
+    if standard_data:
+        if hasattr(standard_data, "eggs_per_bird_cum") and standard_data.eggs_per_bird_cum is not None:
+            standard_eggs_cum = float(standard_data.eggs_per_bird_cum)
+        elif hasattr(standard_data, "cumulative_eggs") and standard_data.cumulative_eggs is not None:
+            standard_eggs_cum = float(standard_data.cumulative_eggs)
 
     standard_weekly_feed = 0.0
-    if standard_data and hasattr(standard_data, "feed_intake_per_day_g") and standard_data.feed_intake_per_day_g is not None:
-        standard_weekly_feed = round((float(standard_data.feed_intake_per_day_g) * 7 / 1000), 4)
+    if standard_data:
+        if hasattr(standard_data, "feed_intake_per_day_g") and standard_data.feed_intake_per_day_g is not None:
+            standard_weekly_feed = round((float(standard_data.feed_intake_per_day_g) * 7 / 1000), 4)
+        elif hasattr(standard_data, "daily_feed_intake_g") and standard_data.daily_feed_intake_g is not None:
+            standard_weekly_feed = round((float(standard_data.daily_feed_intake_g) * 7 / 1000), 4)
 
-    standard_livability = float(standard_data.livability_percent) if standard_data and hasattr(standard_data, "livability_percent") and standard_data.livability_percent is not None else 0.0
-    standard_feed_per_day = float(standard_data.feed_intake_per_day_g) if standard_data and hasattr(standard_data, "feed_intake_per_day_g") and standard_data.feed_intake_per_day_g is not None else 0.0
+    standard_livability = 0.0
+    if standard_data:
+        if hasattr(standard_data, "livability_percent") and standard_data.livability_percent is not None:
+            standard_livability = float(standard_data.livability_percent)
+        elif hasattr(standard_data, "livability") and standard_data.livability is not None:
+            standard_livability = float(standard_data.livability)
+
+    standard_feed_per_day = 0.0
+    if standard_data:
+        if hasattr(standard_data, "feed_intake_per_day_g") and standard_data.feed_intake_per_day_g is not None:
+            standard_feed_per_day = float(standard_data.feed_intake_per_day_g)
+        elif hasattr(standard_data, "daily_feed_intake_g") and standard_data.daily_feed_intake_g is not None:
+            standard_feed_per_day = float(standard_data.daily_feed_intake_g)
 
     section1 = {
         "cum_feed": {
@@ -252,7 +272,7 @@ def _calculate_cumulative_report(db: Session, batch_id: int, current_week: int, 
             "diff": 0  # Will calculate after
         },
         "feed_grams": {
-            "actual": round((current_summary["actual_feed_consumed"] * 1000) / hen_housing, 2) if hen_housing > 0 else 0,
+            "actual": round((current_summary["actual_feed_consumed"] * 1000) / (hen_housing * 7), 2) if hen_housing > 0 else 0,
             "standard": standard_feed_per_day,
             "diff": 0  # Will calculate after
         }
@@ -496,8 +516,20 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
         daily_batches = query.order_by(DailyBatch.batch_date.asc()).all()
         summary_data = _calculate_summary(daily_batches, start_date_obj, end_date_obj, is_single_batch=True)
 
+        if summary_data:
+            total_actual_feed_consumed = sum(record.feed_in_kg for record in daily_batches if record.feed_in_kg is not None)
+            total_standard_feed_consumption = sum(record.standard_feed_in_kg * record.opening_count for record in daily_batches if record.standard_feed_in_kg is not None and record.opening_count is not None)
+            
+            summary_data["actual_feed_consumed"] = total_actual_feed_consumed
+            summary_data["standard_feed_consumption"] = total_standard_feed_consumption
+
         # For a single batch, the details are the daily records
         for batch in daily_batches:
+            actual_feed_consumed = batch.feed_in_kg
+            standard_feed_consumption = None
+            if batch.standard_feed_in_kg is not None and batch.opening_count is not None:
+                standard_feed_consumption = batch.standard_feed_in_kg * batch.opening_count
+
             detailed_result.append({
                 "batch_id": batch.batch_id,
                 "batch_no": batch.batch_no,
@@ -515,6 +547,8 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
                 "batch_type": batch.batch_type,
                 "hd": batch.hd,
                 "standard_hen_day_percentage": batch.standard_hen_day_percentage if batch.standard_hen_day_percentage is not None else None,
+                "actual_feed_consumed": actual_feed_consumed,
+                "standard_feed_consumption": standard_feed_consumption,
                 "is_active": batch_obj.is_active,
                 "birds_added": batch.birds_added,
             })
@@ -624,6 +658,9 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
                     continue
 
             total_birds_added = sum(r.birds_added or 0 for r in rows)
+
+            actual_feed_consumed = sum(r.feed_in_kg for r in rows if r.feed_in_kg is not None)
+            standard_feed_consumption = sum(r.standard_feed_in_kg * r.opening_count for r in rows if r.standard_feed_in_kg is not None and r.opening_count is not None)
             
             detailed_result.append({
                 "batch_id": batch_id,
@@ -639,6 +676,8 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
                 "total_eggs": total_eggs,
                 "hd": round(avg_hd, 4),
                 "standard_hen_day_percentage": round(avg_std_hd, 4),
+                "actual_feed_consumed": actual_feed_consumed,
+                "standard_feed_consumption": standard_feed_consumption,
                 "highest_age": round(highest_age, 1),
                 "batch_type": last.batch_type,
                 "is_active": first.batch.is_active,
@@ -662,6 +701,8 @@ def get_snapshot(start_date: str, end_date: str, batch_id: Optional[int] = None,
                 "total_eggs": sum(r['total_eggs'] for r in detailed_result),
                 "hd": round(avg_hd, 4),
                 "standard_hen_day_percentage": round(avg_std_hd, 4),
+                "actual_feed_consumed": sum(r['actual_feed_consumed'] for r in detailed_result if r.get('actual_feed_consumed') is not None),
+                "standard_feed_consumption": sum(r['standard_feed_consumption'] for r in detailed_result if r.get('standard_feed_consumption') is not None),
                 "highest_age": max(r['highest_age'] for r in detailed_result),
                 "birds_added": sum(r['birds_added'] for r in detailed_result),
             }

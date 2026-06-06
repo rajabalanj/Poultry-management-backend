@@ -215,15 +215,22 @@ def check_subscription_status(db: Session = Depends(get_db), tenant_id: str = De
     
     return True
 
-def restrict_tenants(restricted_tenant_ids: List[str]):
+def check_feature_restriction(feature_name: str):
     """
-    FastAPI dependency to brute-force block specific tenants from a router or endpoint.
+    FastAPI dependency to check if a specific feature is restricted for the tenant in the DB.
     """
-    def dependency(tenant_id: str = Depends(get_tenant_id)):
-        if tenant_id in restricted_tenant_ids:
+    def dependency(tenant_id: str = Depends(get_tenant_id), db: Session = Depends(get_db)):
+        from models.tenant_feature import TenantFeature
+        restriction = db.query(TenantFeature).filter(
+            TenantFeature.tenant_id == tenant_id,
+            TenantFeature.feature_name == feature_name,
+            TenantFeature.is_restricted == True
+        ).first()
+
+        if restriction:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Your tenant is restricted from accessing this module.",
+                detail=f"Your tenant is restricted from using the {feature_name} feature.",
             )
         return tenant_id
     return dependency

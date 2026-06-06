@@ -45,8 +45,19 @@ def use_composition_endpoint(
     batch_id = batch.id
 
     try:
-        # Call use_composition and pass changed_by (user from token)
-        usage = use_composition(db, data.compositionId, batch_id, data.times, used_at_dt, changed_by=get_user_identifier(user), tenant_id=tenant_id)
+        # Extract usage-time wastage percentage if provided
+        usage_wastage = getattr(data, 'wastage_percentage', None)
+        # Call use_composition and pass changed_by (user from token) and optional wastage
+        usage = use_composition(
+            db, 
+            data.compositionId, 
+            batch_id, 
+            data.times, 
+            used_at_dt, 
+            changed_by=get_user_identifier(user), 
+            tenant_id=tenant_id,
+            wastage_percentage=usage_wastage
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     
@@ -66,8 +77,10 @@ def use_composition_endpoint(
                     inv_item = db.query(InventoryItem).filter(InventoryItem.id == usage_item.inventory_item_id).first()
                     if inv_item:
                         # Calculate cost: weight * times * average_cost
-                        quantity_used = Decimal(usage_item.weight) * Decimal(usage.times)
-                        cost = quantity_used * (inv_item.average_cost or Decimal(0))
+                        base_quantity = Decimal(usage_item.weight) * Decimal(usage.times)
+                        
+                        # Deduct exact cost of gross inventory pulled
+                        cost = base_quantity * (inv_item.average_cost or Decimal(0))
                         total_cost += cost
                 
                 if total_cost > 0:
@@ -91,8 +104,8 @@ def use_composition_endpoint(
                     
                     journal_entry = JournalEntryCreate(
                         date=used_at_dt.date() if isinstance(used_at_dt, datetime) else used_at_dt,
-                        description=f"COGS for Composition Usage #{usage.id} ({usage.composition_name})",
-                        reference_document=f"USAGE-{usage.id}",
+                        description=f"COGS for Composition '{usage.composition_name}' on Batch '{data.batch_no}'",
+                        reference_document=f"COMP-USAGE-{data.batch_no}",
                         items=journal_items
                     )
                     journal_entry_crud.create_journal_entry(db=db, entry=journal_entry, tenant_id=tenant_id)

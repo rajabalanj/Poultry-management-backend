@@ -18,10 +18,16 @@ def get_inventory_item_audits(
         InventoryItemAudit.tenant_id == tenant_id
     )
     
+    ist_tz = pytz.timezone('Asia/Kolkata')
+    
     if start_date:
-        query = query.filter(InventoryItemAudit.timestamp >= start_date)
+        start_datetime = datetime.combine(start_date, datetime.min.time())
+        start_datetime = ist_tz.localize(start_datetime)
+        query = query.filter(InventoryItemAudit.timestamp >= start_datetime)
     if end_date:
-        query = query.filter(InventoryItemAudit.timestamp <= end_date)
+        end_datetime = datetime.combine(end_date, datetime.max.time())
+        end_datetime = ist_tz.localize(end_datetime)
+        query = query.filter(InventoryItemAudit.timestamp <= end_datetime)
         
     return query.order_by(InventoryItemAudit.id.asc()).all()
 

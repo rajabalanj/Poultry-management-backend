@@ -11,7 +11,7 @@ class GeneralLedgerEntry(BaseModel):
     party: str
     reference_document: Optional[str] = None
     transaction_id: Optional[int] = None  # ID of the payment (SP or PP)
-    reference_id: Optional[int] = None      # ID of the SO or PO
+    reference_id: Optional[str] = None      # ID of the SO or PO, or usage reference like B-0100
     details: str
     debit: Decimal = Decimal('0.0')
     credit: Decimal = Decimal('0.0')

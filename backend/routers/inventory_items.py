@@ -19,6 +19,10 @@ from crud.inventory_item_usage_history import (
     get_inventory_item_usage_by_date,
     revert_inventory_item_usage
 )
+from crud.financial_settings import get_financial_settings
+from crud import journal_entry as journal_entry_crud
+from schemas.journal_entry import JournalEntryCreate
+from schemas.journal_item import JournalItemCreate
 from database import get_db
 from models.app_config import AppConfig
 from models.egg_room_reports import EggRoomReport
@@ -36,7 +40,7 @@ from schemas.inventory_item_usage_history import (
 from schemas.inventory_items import InventoryItem, InventoryItemCreate, InventoryItemUpdate
 from schemas.inventory_item_stock import DailyStock, DailyStockReport
 from schemas.reports import InventoryValue
-from utils.auth_utils import get_current_user, get_user_identifier
+from utils.auth_utils import get_current_user, get_user_identifier, check_feature_restriction
 from utils.tenancy import get_tenant_id
 from pydantic import BaseModel
 
@@ -240,7 +244,8 @@ def use_inventory_item_endpoint(
     data: InventoryItemUsageHistoryCreate,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
-    tenant_id: str = Depends(get_tenant_id)
+    tenant_id: str = Depends(get_tenant_id),
+    _: str = Depends(check_feature_restriction("INVENTORY_USAGE"))
 ):
     used_at = data.usedAt or datetime.now()
     batch = db.query(BatchModel).filter(
@@ -463,6 +468,44 @@ def adjust_inventory_item_stock(
             changed_by=get_user_identifier(user),
             note=request.note
         )
+
+        # --- Journal Entry for Inventory Adjustment ---
+        try:
+            settings = get_financial_settings(db, tenant_id)
+            if settings.default_inventory_account_id and settings.default_cogs_account_id:
+                # Determine the financial value of the adjustment
+                item_cost = request.unit_cost if request.unit_cost is not None else (db_item.average_cost or Decimal('0'))
+                adjustment_value = (abs(change_amt) * item_cost).quantize(Decimal('0.01'))
+                
+                if adjustment_value > 0:
+                    if change_amt > 0:
+                        # Stock increased (Found/Corrected): Debit Inventory, Credit COGS (or Shrinkage)
+                        journal_items = [
+                            JournalItemCreate(account_id=settings.default_inventory_account_id, debit=adjustment_value, credit=Decimal('0.0')),
+                            JournalItemCreate(account_id=settings.default_cogs_account_id, debit=Decimal('0.0'), credit=adjustment_value)
+                        ]
+                        desc = f"Inventory Adjustment (Increase) for {db_item.name}"
+                    else:
+                        # Stock decreased (Lost/Expired/Shrinkage): Debit COGS (or Shrinkage), Credit Inventory
+                        journal_items = [
+                            JournalItemCreate(account_id=settings.default_cogs_account_id, debit=adjustment_value, credit=Decimal('0.0')),
+                            JournalItemCreate(account_id=settings.default_inventory_account_id, debit=Decimal('0.0'), credit=adjustment_value)
+                        ]
+                        desc = f"Inventory Adjustment (Decrease) for {db_item.name}"
+                        
+                    journal_entry_schema = JournalEntryCreate(
+                        date=datetime.now().date(),
+                        description=desc,
+                        reference_document=f"INV-ADJ-{item_id}",
+                        items=journal_items
+                    )
+                    journal_entry_crud.create_journal_entry(db=db, entry=journal_entry_schema, tenant_id=tenant_id)
+                    logger.info(f"Journal entry created for inventory adjustment of item {item_id} with value {adjustment_value}")
+            else:
+                logger.warning(f"Financial accounts missing for inventory adjustment on item {item_id}")
+        except Exception as e:
+            logger.error(f"Failed to create journal entry for inventory adjustment on item {item_id}: {e}")
+        # --- End Journal Entry ---
 
         logger.info(f"Inventory item (ID: {item_id}) adjusted by {get_user_identifier(user)}: {change_amt} for tenant {tenant_id}")
         return db_item

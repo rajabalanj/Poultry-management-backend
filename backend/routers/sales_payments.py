@@ -21,6 +21,7 @@ from crud import journal_entry as journal_entry_crud
 from schemas.journal_entry import JournalEntryCreate
 from schemas.journal_item import JournalItemCreate
 from crud.financial_settings import get_financial_settings
+from models.journal_entry import JournalEntry as JournalEntryModel
 
 try:
     from utils.s3_utils import generate_presigned_download_url, upload_generated_receipt_to_s3, stream_s3_object
@@ -36,6 +37,43 @@ from schemas.sales_payments import SalesPayment, SalesPaymentCreate, SalesPaymen
 
 router = APIRouter(prefix="/sales-payments", tags=["Sales Payments"])
 logger = logging.getLogger("sales_payments")
+
+def _adjust_sales_payment_journal_entry(db: Session, payment: SalesPaymentModel, tenant_id: str, reason: str):
+    """Reverses the latest journal entry for a sales payment and creates a new one."""
+    try:
+        settings = get_financial_settings(db, tenant_id)
+        if not settings.default_cash_account_id or not settings.default_accounts_receivable_account_id:
+            logger.warning(f"Cannot adjust journal entry for Sales Payment {payment.id}: Default accounts not set.")
+            return
+
+        ref_doc = f"SO-{payment.sales_order.so_number}-PAY-{payment.id}"
+
+        # Find and reverse the original entry. (Handling legacy entries which shared the SO document ref)
+        original_entry = db.query(JournalEntryModel).filter(
+            (JournalEntryModel.reference_document == ref_doc) | 
+            ((JournalEntryModel.reference_document == f"SO-{payment.sales_order.so_number}") & 
+             (JournalEntryModel.description.like(f"Payment for Sales Order SO-{payment.sales_order.so_number}%"))),
+            ~JournalEntryModel.description.startswith('Reversal'),
+            JournalEntryModel.tenant_id == tenant_id
+        ).order_by(JournalEntryModel.id.desc()).first()
+
+        if original_entry:
+            reversing_items = [JournalItemCreate(account_id=item.account_id, debit=item.credit, credit=item.debit) for item in original_entry.items]
+            reversing_entry_schema = JournalEntryCreate(date=payment.payment_date, description=f"Reversal for {reason} on SO-{payment.sales_order.so_number}", reference_document=ref_doc, items=reversing_items)
+            journal_entry_crud.create_journal_entry(db=db, entry=reversing_entry_schema, tenant_id=tenant_id)
+
+        # Create new correct entry
+        new_amount = payment.amount_paid.quantize(Decimal('0.01'))
+        if new_amount > 0:
+            new_items = [
+                JournalItemCreate(account_id=settings.default_cash_account_id, debit=new_amount, credit=Decimal('0.0')),
+                JournalItemCreate(account_id=settings.default_accounts_receivable_account_id, debit=Decimal('0.0'), credit=new_amount)
+            ]
+            new_entry_schema = JournalEntryCreate(date=payment.payment_date, description=f"Payment for Sales Order SO-{payment.sales_order.so_number}", reference_document=ref_doc, items=new_items)
+            journal_entry_crud.create_journal_entry(db=db, entry=new_entry_schema, tenant_id=tenant_id)
+        logger.info(f"Adjusted journal entry for sales payment {payment.id} due to {reason}.")
+    except Exception as e:
+        logger.error(f"Failed to adjust journal entry for sales payment {payment.id}: {e}")
 
 @router.post("", response_model=SalesPayment, status_code=status.HTTP_201_CREATED)
 def create_sales_payment(
@@ -132,7 +170,7 @@ def create_sales_payment(
             journal_entry_schema = JournalEntryCreate(
                 date=db_payment.payment_date,
                 description=f"Payment for Sales Order SO-{db_so.so_number}",
-                reference_document=f"SO-{db_so.so_number}",
+                reference_document=f"SO-{db_so.so_number}-PAY-{db_payment.id}",
                 items=journal_items
             )
             journal_entry_crud.create_journal_entry(db=db, entry=journal_entry_schema, tenant_id=tenant_id)
@@ -197,6 +235,11 @@ def update_sales_payment(
     )
     create_audit_log(db=db, log_entry=log_entry)
     db.commit()
+
+    # --- Adjust Journal Entry ---
+    _adjust_sales_payment_journal_entry(db, db_payment, tenant_id, "payment update")
+    # --- End Journal Entry Adjustment ---
+
     db.refresh(db_payment)
 
     # Re-evaluate SO payment status if amount changed
@@ -234,6 +277,11 @@ def delete_sales_payment(
 
     db_so = db_payment.sales_order
     
+    # --- Reverse Journal Entry on Delete ---
+    db_payment.amount_paid = Decimal('0.0')
+    _adjust_sales_payment_journal_entry(db, db_payment, tenant_id, "payment deletion")
+    # --- End Journal Entry Reversal ---
+
     old_values = sqlalchemy_to_dict(db_payment)
     db_payment.deleted_at = datetime.now(pytz.timezone('Asia/Kolkata'))
     db_payment.deleted_by = get_user_identifier(user)

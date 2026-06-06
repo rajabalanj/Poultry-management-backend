@@ -22,7 +22,7 @@ from models.daily_batch import DailyBatch as DailyBatchModel
 from models.shed import Shed
 from schemas.audit_log import AuditLogCreate
 from schemas.batch import BatchCreate, Batch as BatchSchema, BatchResponse
-from utils.auth_utils import get_current_user, get_user_identifier, require_group, restrict_tenants
+from utils.auth_utils import get_current_user, get_user_identifier, require_group, check_feature_restriction
 from utils.tenancy import get_tenant_id
 from utils import sqlalchemy_to_dict, calculate_age_progression
 
@@ -30,15 +30,12 @@ from utils import sqlalchemy_to_dict, calculate_age_progression
 logger = logging.getLogger(__name__)
 
 # --- Router Configuration ---
-restricted_tenants_env = os.getenv("RESTRICTED_BATCH_TENANTS")
-RESTRICTED_TENANTS = [t.strip() for t in restricted_tenants_env.split(",") if t.strip()]
-
 router = APIRouter(
     prefix="/batches",
     tags=["Batches"],
     dependencies=[
         Depends(get_current_user),
-        Depends(restrict_tenants(RESTRICTED_TENANTS))
+        Depends(check_feature_restriction("BATCH_MANAGEMENT"))
     ]
 )
 
@@ -534,6 +531,16 @@ def move_shed(
         DailyBatchModel.batch_date >= payload.move_date
     ).update({"shed_id": payload.new_shed_id})
 
+    log_entry = AuditLogCreate(
+        table_name='batch',
+        record_id=str(batch_id),
+        changed_by=get_user_identifier(user),
+        action='MOVE_SHED',
+        old_values={"shed_id": assignment_to_end.shed_id},
+        new_values={"shed_id": payload.new_shed_id, "move_date": payload.move_date.isoformat()}
+    )
+    create_audit_log(db=db, log_entry=log_entry)
+
     db.commit()
 
     return {"message": f"Batch '{batch.batch_no}' successfully moved to shed '{new_shed.shed_no}' from {payload.move_date}."}
@@ -598,6 +605,26 @@ def swap_sheds(
     db.query(DailyBatchModel).filter(DailyBatchModel.batch_id == payload.batch_id_1, DailyBatchModel.batch_date >= payload.swap_date).update({"shed_id": shed2_id})
     db.query(DailyBatchModel).filter(DailyBatchModel.batch_id == payload.batch_id_2, DailyBatchModel.batch_date >= payload.swap_date).update({"shed_id": shed1_id})
 
+    log_entry1 = AuditLogCreate(
+        table_name='batch',
+        record_id=str(payload.batch_id_1),
+        changed_by=user_identifier,
+        action='SWAP_SHEDS',
+        old_values={"shed_id": shed1_id},
+        new_values={"shed_id": shed2_id, "swap_date": payload.swap_date.isoformat()}
+    )
+    create_audit_log(db=db, log_entry=log_entry1)
+
+    log_entry2 = AuditLogCreate(
+        table_name='batch',
+        record_id=str(payload.batch_id_2),
+        changed_by=user_identifier,
+        action='SWAP_SHEDS',
+        old_values={"shed_id": shed2_id},
+        new_values={"shed_id": shed1_id, "swap_date": payload.swap_date.isoformat()}
+    )
+    create_audit_log(db=db, log_entry=log_entry2)
+
     db.commit()
 
     return {"message": f"Successfully swapped sheds for batches '{batch1.batch_no}' and '{batch2.batch_no}' from {payload.swap_date}."}
@@ -644,6 +671,8 @@ def close_batch(
     if closing_date < batch_start_date:
         raise HTTPException(status_code=400, detail=f"Closing date cannot be before the batch start date of {batch_start_date}.")
 
+    old_values = sqlalchemy_to_dict(batch)
+
     # Delete future daily_batch entries if closing retroactively
     db.query(DailyBatchModel).filter(
         DailyBatchModel.batch_id == batch_id,
@@ -668,6 +697,18 @@ def close_batch(
         db.add(current_assignment)
 
     db.add(batch)
+
+    new_values = sqlalchemy_to_dict(batch)
+    log_entry = AuditLogCreate(
+        table_name='batch',
+        record_id=str(batch_id),
+        changed_by=get_user_identifier(user),
+        action='UPDATE',
+        old_values=old_values,
+        new_values=new_values
+    )
+    create_audit_log(db=db, log_entry=log_entry)
+
     db.commit()
     
     return {"message": f"Batch '{batch.batch_no}' closed successfully on {closing_date}."}

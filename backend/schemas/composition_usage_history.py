@@ -8,6 +8,7 @@ class CompositionUsageItem(BaseModel):
     item_name: str
     item_category: str
     weight: Decimal
+    wastage_percentage: Optional[Decimal] = None
 
     class Config:
         from_attributes = True
@@ -20,6 +21,7 @@ class CompositionUsageHistory(BaseModel):
     batch_id: int
     times: int
     used_at: datetime
+    wastage_percentage: Optional[Decimal] = None
     items: List[CompositionUsageItem]
 
     class Config:
@@ -40,6 +42,7 @@ class CompositionUsageCreate(BaseModel):
     batch_no: str
     times: int
     usedAt: Optional[datetime] = None
+    wastage_percentage: Optional[Decimal] = None
 
 
 class PaginatedCompositionUsageHistoryResponse(BaseModel):

@@ -30,5 +30,6 @@ from models.bv300_layer_performance import BV300LayerPerformance
 from models.bv300_rearing_performance import BV300RearingPerformance
 from models.subscription import Subscription
 from models.egg_price import EggPrice
+from models.tenant_feature import TenantFeature
 
-__all__ = ['AppConfig', 'Batch', 'BovansWhiteLayerPerformance', 'CompositionUsageHistory', 'CompositionUsageItem', 'Composition', 'DailyBatch', 'EggRoomReport', 'Payment', 'PurchaseOrder', 'PurchaseOrderItem', 'InventoryItem', 'SalesOrderItem', 'SalesOrder', 'SalesPayment', 'BusinessPartner', 'InventoryItemAudit', 'InventoryItemInComposition', 'InventoryItemUsageHistory', 'OperationalExpense', 'AuditLog', 'Shed', 'BatchShedAssignment', 'InventoryItemVariant', 'ChartOfAccounts', 'JournalEntry', 'JournalItem', 'FinancialSettings', 'BV300LayerPerformance', 'BV300RearingPerformance', 'Subscription', 'EggPrice']
+__all__ = ['AppConfig', 'Batch', 'BovansWhiteLayerPerformance', 'CompositionUsageHistory', 'CompositionUsageItem', 'Composition', 'DailyBatch', 'EggRoomReport', 'Payment', 'PurchaseOrder', 'PurchaseOrderItem', 'InventoryItem', 'SalesOrderItem', 'SalesOrder', 'SalesPayment', 'BusinessPartner', 'InventoryItemAudit', 'InventoryItemInComposition', 'InventoryItemUsageHistory', 'OperationalExpense', 'AuditLog', 'Shed', 'BatchShedAssignment', 'InventoryItemVariant', 'ChartOfAccounts', 'JournalEntry', 'JournalItem', 'FinancialSettings', 'BV300LayerPerformance', 'BV300RearingPerformance', 'Subscription', 'EggPrice', 'TenantFeature']

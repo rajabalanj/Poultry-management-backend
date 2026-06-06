@@ -4,11 +4,16 @@ from models import journal_item as journal_item_model
 from schemas.journal_entry import JournalEntryCreate
 from typing import Optional
 from datetime import date
+from crud.financial_settings import get_financial_settings
 
 def create_journal_entry(db: Session, entry: JournalEntryCreate, tenant_id: str):
     """
     Creates a new journal entry and its corresponding items.
     """
+    settings = get_financial_settings(db, tenant_id)
+
+    if settings.last_closed_date and entry.date <= settings.last_closed_date:
+        raise ValueError(f"Cannot create or modify transactions on or before the closed date: {settings.last_closed_date}")
     # Create the parent JournalEntry object
     db_entry = journal_entry_model.JournalEntry(
         date=entry.date,

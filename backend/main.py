@@ -47,6 +47,7 @@ import routers.journal_entry as journal_entry
 import routers.financial_settings as financial_settings
 import routers.subscription as subscription_router
 import routers.egg_price as egg_price_router
+import routers.tenant_feature as tenant_feature_router
 
 import logging
 import os
@@ -177,6 +178,7 @@ app.include_router(journal_entry.router)
 app.include_router(financial_settings.router)
 app.include_router(subscription_router.router)
 app.include_router(egg_price_router.router)
+app.include_router(tenant_feature_router.router)
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():

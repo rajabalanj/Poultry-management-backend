@@ -113,10 +113,13 @@ def use_inventory_item(
                     )
                 ]
 
+                batch_obj = db.query(Batch).filter(Batch.id == batch_id).first()
+                batch_no = batch_obj.batch_no if batch_obj else str(batch_id)
+
                 journal_entry = JournalEntryCreate(
                     date=used_at.date() if isinstance(used_at, datetime) else used_at,
-                    description=f"COGS for Direct Inventory Usage #{usage.id} ({item.name})",
-                    reference_document=f"INV-USAGE-{usage.id}",
+                    description=f"COGS for Direct Inventory Usage '{item.name}' on Batch '{batch_no}'",
+                    reference_document=f"INV-USAGE-{batch_no}",
                     items=journal_items
                 )
                 journal_entry_crud.create_journal_entry(db=db, entry=journal_entry, tenant_id=tenant_id)

@@ -15,16 +15,19 @@ class EggRoomReport(Base, TimestampMixin):
     table_transfer = Column(Integer, default=0)
     table_damage = Column(Integer, default=0)
     table_out = Column(Integer, default=0)
+    table_untrayed = Column(Integer, default=0)
 
     grade_c_shed_received = Column(Integer, default=0)
     grade_c_transfer = Column(Integer, default=0)
     grade_c_labour = Column(Integer, default=0)
     grade_c_waste = Column(Integer, default=0)
+    grade_c_untrayed = Column(Integer, default=0)
 
     jumbo_received = Column(Integer, default=0)
     jumbo_transfer = Column(Integer, default=0)
     jumbo_waste = Column(Integer, default=0)
     jumbo_out = Column(Integer, default=0)
+    jumbo_untrayed = Column(Integer, default=0)
 
     # Opening balances (actual columns for performance)
     table_opening = Column(Integer, default=0)
@@ -33,27 +36,27 @@ class EggRoomReport(Base, TimestampMixin):
 
     @hybrid_property
     def table_closing(self):
-        return (self.table_opening or 0) + (self.table_received or 0) - (self.table_transfer or 0) - (self.table_damage or 0) - (self.table_out or 0) + (self.jumbo_out or 0)
+        return (self.table_opening or 0) + (self.table_received or 0) - (self.table_transfer or 0) - (self.table_damage or 0) - (self.table_out or 0) + (self.jumbo_out or 0) + (self.table_untrayed or 0)
 
     @table_closing.expression
     def table_closing(cls):
-        return func.coalesce(cls.table_opening, 0) + func.coalesce(cls.table_received, 0) - func.coalesce(cls.table_transfer, 0) - func.coalesce(cls.table_damage, 0) - func.coalesce(cls.table_out, 0) + func.coalesce(cls.jumbo_out, 0)
+        return func.coalesce(cls.table_opening, 0) + func.coalesce(cls.table_received, 0) - func.coalesce(cls.table_transfer, 0) - func.coalesce(cls.table_damage, 0) - func.coalesce(cls.table_out, 0) + func.coalesce(cls.jumbo_out, 0) + func.coalesce(cls.table_untrayed, 0)
 
     @hybrid_property
     def jumbo_closing(self):
-        return (self.jumbo_opening or 0) + (self.jumbo_received or 0) - (self.jumbo_transfer or 0) - (self.jumbo_waste or 0) + (self.table_out or 0) - (self.jumbo_out or 0)
+        return (self.jumbo_opening or 0) + (self.jumbo_received or 0) - (self.jumbo_transfer or 0) - (self.jumbo_waste or 0) + (self.table_out or 0) - (self.jumbo_out or 0) + (self.jumbo_untrayed or 0)
 
     @jumbo_closing.expression
     def jumbo_closing(cls):
-        return func.coalesce(cls.jumbo_opening, 0) + func.coalesce(cls.jumbo_received, 0) - func.coalesce(cls.jumbo_transfer, 0) - func.coalesce(cls.jumbo_waste, 0) + func.coalesce(cls.table_out, 0) - func.coalesce(cls.jumbo_out, 0)
+        return func.coalesce(cls.jumbo_opening, 0) + func.coalesce(cls.jumbo_received, 0) - func.coalesce(cls.jumbo_transfer, 0) - func.coalesce(cls.jumbo_waste, 0) + func.coalesce(cls.table_out, 0) - func.coalesce(cls.jumbo_out, 0) + func.coalesce(cls.jumbo_untrayed, 0)
 
     @hybrid_property
     def grade_c_closing(self):
-        return (self.grade_c_opening or 0) + (self.grade_c_shed_received or 0) + (self.table_damage or 0) - (self.grade_c_transfer or 0) - (self.grade_c_labour or 0) - (self.grade_c_waste or 0)
+        return (self.grade_c_opening or 0) + (self.grade_c_shed_received or 0) + (self.table_damage or 0) - (self.grade_c_transfer or 0) - (self.grade_c_labour or 0) - (self.grade_c_waste or 0) + (self.grade_c_untrayed or 0)
     
     @grade_c_closing.expression
     def grade_c_closing(cls):
-        return func.coalesce(cls.grade_c_opening, 0) + func.coalesce(cls.grade_c_shed_received, 0) + func.coalesce(cls.table_damage, 0) - func.coalesce(cls.grade_c_transfer, 0) - func.coalesce(cls.grade_c_labour, 0) - func.coalesce(cls.grade_c_waste, 0)
+        return func.coalesce(cls.grade_c_opening, 0) + func.coalesce(cls.grade_c_shed_received, 0) + func.coalesce(cls.table_damage, 0) - func.coalesce(cls.grade_c_transfer, 0) - func.coalesce(cls.grade_c_labour, 0) - func.coalesce(cls.grade_c_waste, 0) + func.coalesce(cls.grade_c_untrayed, 0)
 
     # Synonyms for aliased columns
     table_in = synonym("jumbo_out")

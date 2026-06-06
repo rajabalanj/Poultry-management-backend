@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, DateTime, ForeignKey, String
+from sqlalchemy import Column, Integer, DateTime, ForeignKey, String, Numeric
 from sqlalchemy.orm import relationship
 from database import Base
 from datetime import datetime
@@ -15,5 +15,6 @@ class CompositionUsageHistory(Base):
     batch_id = Column(Integer, ForeignKey("batch.id"), nullable=False)  # New column for batch_id
     batch = relationship("Batch")  # Establish a relationship with the Batch model
     tenant_id = Column(String, index=True)
+    wastage_percentage = Column(Numeric(5, 2), nullable=True)
 
     items = relationship("CompositionUsageItem", back_populates="usage_history", cascade="all, delete-orphan")

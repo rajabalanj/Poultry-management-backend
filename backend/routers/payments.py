@@ -43,16 +43,18 @@ def _adjust_payment_journal_entry(db: Session, payment: PaymentModel, tenant_id:
             logger.warning(f"Cannot adjust journal entry for PAYMENT-{payment.id}: Default accounts not set.")
             return
 
-        # Find and reverse the original entry
+        ref_doc = f"PO-{payment.purchase_order.po_number}-PAY-{payment.id}"
+
+        # Find and reverse the original entry (handling legacy format as a fallback)
         original_entry = db.query(JournalEntryModel).filter(
-            JournalEntryModel.reference_document == f"PAYMENT-{payment.id}",
+            (JournalEntryModel.reference_document == ref_doc) | (JournalEntryModel.reference_document == f"PAYMENT-{payment.id}"),
             ~JournalEntryModel.description.startswith('Reversal'),
             JournalEntryModel.tenant_id == tenant_id
         ).order_by(JournalEntryModel.id.desc()).first()
 
         if original_entry:
             reversing_items = [JournalItemCreate(account_id=item.account_id, debit=item.credit, credit=item.debit) for item in original_entry.items]
-            reversing_entry_schema = JournalEntryCreate(date=payment.payment_date, description=f"Reversal for {reason} on PAYMENT-{payment.id}", reference_document=f"PAYMENT-{payment.id}", items=reversing_items)
+            reversing_entry_schema = JournalEntryCreate(date=payment.payment_date, description=f"Reversal for {reason} on PO-{payment.purchase_order.po_number}", reference_document=ref_doc, items=reversing_items)
             journal_entry_crud.create_journal_entry(db=db, entry=reversing_entry_schema, tenant_id=tenant_id)
 
         # Create new correct entry
@@ -65,7 +67,7 @@ def _adjust_payment_journal_entry(db: Session, payment: PaymentModel, tenant_id:
             new_entry_schema = JournalEntryCreate(
                 date=payment.payment_date,
                 description=f"Payment for Purchase Order PO-{payment.purchase_order.po_number}",
-                reference_document=f"PAYMENT-{payment.id}",
+                reference_document=ref_doc,
                 items=new_items
             )
             journal_entry_crud.create_journal_entry(db=db, entry=new_entry_schema, tenant_id=tenant_id)
@@ -145,7 +147,7 @@ def create_payment(
             journal_entry_schema = JournalEntryCreate(
                 date=db_payment.payment_date,
                 description=f"Payment for Purchase Order PO-{db_po.po_number}",
-                reference_document=f"PAYMENT-{db_payment.id}",
+                reference_document=f"PO-{db_po.po_number}-PAY-{db_payment.id}",
                 items=journal_items
             )
             journal_entry_crud.create_journal_entry(db=db, entry=journal_entry_schema, tenant_id=tenant_id)

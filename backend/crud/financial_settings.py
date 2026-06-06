@@ -53,6 +53,7 @@ def get_financial_settings(db: Session, tenant_id: str) -> FinancialSettings:
         op_exp_acc = get_or_create_account(db, tenant_id, "Operational Expense", "6000", "Expense")
         ap_acc = get_or_create_account(db, tenant_id, "Accounts Payable", "2000", "Liability")
         ar_acc = get_or_create_account(db, tenant_id, "Accounts Receivable", "1100", "Asset")
+        ret_earn_acc = get_or_create_account(db, tenant_id, "Retained Earnings", "3100", "Equity")
 
         settings = FinancialSettings(
             tenant_id=tenant_id,
@@ -63,6 +64,7 @@ def get_financial_settings(db: Session, tenant_id: str) -> FinancialSettings:
             default_operational_expense_account_id=op_exp_acc.id,
             default_accounts_payable_account_id=ap_acc.id,
             default_accounts_receivable_account_id=ar_acc.id,
+            retained_earnings_account_id=ret_earn_acc.id,
             is_initialized=True
         )
         db.add(settings)
@@ -78,6 +80,11 @@ def get_financial_settings(db: Session, tenant_id: str) -> FinancialSettings:
         if not settings.default_accounts_receivable_account_id:
             ar_acc = get_or_create_account(db, tenant_id, "Accounts Receivable", "1100", "Asset")
             settings.default_accounts_receivable_account_id = ar_acc.id
+            updated = True
+            
+        if not settings.retained_earnings_account_id:
+            ret_earn_acc = get_or_create_account(db, tenant_id, "Retained Earnings", "3100", "Equity")
+            settings.retained_earnings_account_id = ret_earn_acc.id
             updated = True
         
         # Ensure other fields are present too (robustness against partial data)
@@ -112,15 +119,17 @@ def get_financial_settings(db: Session, tenant_id: str) -> FinancialSettings:
 def update_financial_settings(db: Session, settings_update: FinancialSettingsUpdate, tenant_id: str, user_id: str) -> FinancialSettings:
     settings = get_financial_settings(db, tenant_id)
     
-    # Prevent updates after initialization
-    if settings.is_initialized:
-        raise ValueError(
-            "Financial settings are locked after initialization. "
-            "Default accounts cannot be changed after the first setup to ensure data integrity and accurate financial reports."
-        )
-    
     update_data = settings_update.model_dump(exclude_unset=True)
 
+    # Prevent updates to default accounts after initialization
+    locked_fields_attempted = [k for k in update_data.keys() if k.startswith('default_')]
+    if settings.is_initialized and locked_fields_attempted:
+        raise ValueError(
+            "Financial settings are locked after initialization. "
+            "Default accounts cannot be changed after the first setup to ensure data integrity. "
+            "Only Retained Earnings can be configured later."
+        )
+    
     # Define expected account types for validation
     expected_types = {
         'default_cash_account_id': 'Asset',
@@ -129,7 +138,8 @@ def update_financial_settings(db: Session, settings_update: FinancialSettingsUpd
         'default_cogs_account_id': 'Expense',
         'default_operational_expense_account_id': 'Expense',
         'default_accounts_payable_account_id': 'Liability',
-        'default_accounts_receivable_account_id': 'Asset'
+        'default_accounts_receivable_account_id': 'Asset',
+        'retained_earnings_account_id': 'Equity'
     }
     
     # Validate that accounts belong to the tenant if they are being updated

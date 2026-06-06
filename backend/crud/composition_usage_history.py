@@ -6,6 +6,7 @@ from models.inventory_item_in_composition import InventoryItemInComposition
 from models.inventory_items import InventoryItem
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Optional
 from models.inventory_item_audit import InventoryItemAudit
 from models.batch import Batch
 from models.composition_usage_item import CompositionUsageItem
@@ -43,7 +44,7 @@ def _convert_quantity(quantity: Decimal, from_unit: str, to_unit: str) -> Decima
         raise ValueError(f"Unsupported 'to' unit for conversion: {to_unit}")
 
 
-def use_composition(db: Session, composition_id: int, batch_id: int, times: int, used_at: datetime, tenant_id: str, changed_by: str = None):
+def use_composition(db: Session, composition_id: int, batch_id: int, times: int, used_at: datetime, tenant_id: str, changed_by: str = None, wastage_percentage: Optional[Decimal] = None):
     composition_obj = db.query(Composition).filter(Composition.id == composition_id, Composition.tenant_id == tenant_id).first()
     if not composition_obj:
         raise ValueError("Composition not found")
@@ -65,20 +66,23 @@ def use_composition(db: Session, composition_id: int, batch_id: int, times: int,
         item = db.query(InventoryItem).filter(InventoryItem.id == iic.inventory_item_id, InventoryItem.tenant_id == tenant_id).with_for_update().first()
         if item:
             # Start of wastage logic
-            wastage_percentage = iic.wastage_percentage  # Level 1: Specific item in composition
+            applied_wastage = wastage_percentage  # Level 0: Usage-time override
 
-            if wastage_percentage is None:
+            if applied_wastage is None:
+                applied_wastage = iic.wastage_percentage  # Level 1: Specific item in composition
+
+            if applied_wastage is None:
                 if item.default_wastage_percentage is not None:
-                    wastage_percentage = item.default_wastage_percentage  # Level 2: Item default
+                    applied_wastage = item.default_wastage_percentage  # Level 2: Item default
 
-            if wastage_percentage is None:
+            if applied_wastage is None:
                 if composition_obj.wastage_percentage is not None:
-                    wastage_percentage = composition_obj.wastage_percentage  # Level 3: Composition default
+                    applied_wastage = composition_obj.wastage_percentage  # Level 3: Composition default
 
-            if wastage_percentage is None:
-                wastage_percentage = Decimal('0')  # Fallback to 0 if not set anywhere
+            if applied_wastage is None:
+                applied_wastage = Decimal('0')  # Fallback to 0 if not set anywhere
             else:
-                wastage_percentage = Decimal(str(wastage_percentage))
+                applied_wastage = Decimal(str(applied_wastage))
             # End of wastage logic
             
             usage_item = CompositionUsageItem(
@@ -87,7 +91,7 @@ def use_composition(db: Session, composition_id: int, batch_id: int, times: int,
                 item_name=item.name,
                 item_category=item.category,
                 weight=iic.weight,
-                wastage_percentage=wastage_percentage
+                wastage_percentage=applied_wastage
             )
             usage.items.append(usage_item)
 
@@ -97,7 +101,8 @@ def use_composition(db: Session, composition_id: int, batch_id: int, times: int,
 
             total_iic_quantity_kg = Decimal(str(iic.weight)) * Decimal(str(times))
             
-            total_quantity_to_reduce_kg = total_iic_quantity_kg * (Decimal('1') + wastage_percentage / Decimal('100'))
+            # Deduct exactly the recipe weight (Gross). Wastage will be subtracted from the birds' intake instead.
+            total_quantity_to_reduce_kg = total_iic_quantity_kg
             
             try:
                 quantity_to_reduce_in_items_unit = _convert_quantity(
@@ -131,7 +136,7 @@ def use_composition(db: Session, composition_id: int, batch_id: int, times: int,
                 old_quantity=old_quantity_for_audit_kg,
                 new_quantity=new_quantity_for_audit_kg,
                 changed_by=changed_by,
-                note=f"Used in composition '{composition_obj.name}' for batch '{batch_no}' ({times} times). Wastage: {wastage_percentage}%.",
+                note=f"Used in composition '{composition_obj.name}' for batch '{batch_no}' ({times} times). Wastage: {applied_wastage}%.",
                 tenant_id=tenant_id
             )
             db.add(audit)
