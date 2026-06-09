@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from typing import Optional
-from datetime import datetime
+from datetime import date
 
 class FinancialSettingsBase(BaseModel):
     default_cash_account_id: Optional[int] = None
@@ -10,6 +10,8 @@ class FinancialSettingsBase(BaseModel):
     default_operational_expense_account_id: Optional[int] = None
     default_accounts_payable_account_id: Optional[int] = None
     default_accounts_receivable_account_id: Optional[int] = None
+    retained_earnings_account_id: Optional[int] = None
+    last_closed_date: Optional[date] = None
     
 
 class FinancialSettingsCreate(FinancialSettingsBase):

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, Date
 from sqlalchemy.orm import relationship
 from database import Base
 from models.audit_mixin import AuditMixin
@@ -26,3 +26,7 @@ class FinancialSettings(Base, AuditMixin):
     default_operational_expense_account = relationship("ChartOfAccounts", foreign_keys=[default_operational_expense_account_id])
     default_accounts_payable_account = relationship("ChartOfAccounts", foreign_keys=[default_accounts_payable_account_id])
     default_accounts_receivable_account = relationship("ChartOfAccounts", foreign_keys=[default_accounts_receivable_account_id])
+
+    # Retained Earnings
+    retained_earnings_account_id = Column(Integer, ForeignKey("chart_of_accounts.id"), nullable=True)
+    last_closed_date = Column(Date, nullable=True)  # ISO format date string
