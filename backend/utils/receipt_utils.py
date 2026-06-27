@@ -73,6 +73,7 @@ def generate_sales_order_receipt(db: Session, so_id: int) -> str:
     # 1. Fetch the sales order with all related data
     so = db.query(SalesOrderModel).options(
         selectinload(SalesOrderModel.items).selectinload(SalesOrderItemModel.inventory_item),
+        selectinload(SalesOrderModel.items).selectinload(SalesOrderItemModel.composition),
         selectinload(SalesOrderModel.customer),
         selectinload(SalesOrderModel.payments)
     ).filter(SalesOrderModel.id == so_id).first()
@@ -122,7 +123,12 @@ def generate_sales_order_receipt(db: Session, so_id: int) -> str:
 
     pdf.set_font("DejaVu Sans", size=10)
     for item in so.items:
-        item_name = item.inventory_item.name if item.inventory_item else "Unknown Item"
+        if item.inventory_item:
+            item_name = item.inventory_item.name
+        elif item.composition:
+            item_name = item.composition.name
+        else:
+            item_name = "Unknown Item"
         if item.variant_name:
             item_name += f" ({item.variant_name})"
             
