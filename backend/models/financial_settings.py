@@ -17,6 +17,7 @@ class FinancialSettings(Base, AuditMixin):
     default_operational_expense_account_id = Column(Integer, ForeignKey("chart_of_accounts.id"), nullable=True)
     default_accounts_payable_account_id = Column(Integer, ForeignKey("chart_of_accounts.id"), nullable=True)
     default_accounts_receivable_account_id = Column(Integer, ForeignKey("chart_of_accounts.id"), nullable=True)
+    default_feed_variance_account_id = Column(Integer, ForeignKey("chart_of_accounts.id"), nullable=True)
 
     # Relationships
     default_cash_account = relationship("ChartOfAccounts", foreign_keys=[default_cash_account_id])
@@ -26,6 +27,7 @@ class FinancialSettings(Base, AuditMixin):
     default_operational_expense_account = relationship("ChartOfAccounts", foreign_keys=[default_operational_expense_account_id])
     default_accounts_payable_account = relationship("ChartOfAccounts", foreign_keys=[default_accounts_payable_account_id])
     default_accounts_receivable_account = relationship("ChartOfAccounts", foreign_keys=[default_accounts_receivable_account_id])
+    default_feed_variance_account = relationship("ChartOfAccounts", foreign_keys=[default_feed_variance_account_id])
 
     # Retained Earnings
     retained_earnings_account_id = Column(Integer, ForeignKey("chart_of_accounts.id"), nullable=True)

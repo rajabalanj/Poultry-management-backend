@@ -84,32 +84,77 @@ def use_composition_endpoint(
                         total_cost += cost
                 
                 if total_cost > 0:
-                    # Round total_cost to 2 decimal places to match journal entry requirements
-                    total_cost = total_cost.quantize(Decimal('0.01'))
-                    
-                    # 3. Create Journal Entry
-                    # Debit COGS (Expense), Credit Inventory (Asset)
-                    journal_items = [
-                        JournalItemCreate(
-                            account_id=settings.default_cogs_account_id,
-                            debit=total_cost,
-                            credit=Decimal('0.0')
-                        ),
+                    rounded_actual = total_cost.quantize(Decimal('0.01'))
+                    actual_times = Decimal(str(usage.times))
+
+                    # 3. Create Journal Entry items list
+                    journal_items = []
+
+                    # If feed variance account is set and times is not exactly 1.0, split the cost
+                    if settings.default_feed_variance_account_id and actual_times != Decimal('1.0') and actual_times > 0:
+                        standard_cost = total_cost / actual_times
+                        rounded_standard = standard_cost.quantize(Decimal('0.01'))
+                        rounded_variance = rounded_actual - rounded_standard
+
+                        # Standard cost goes to COGS
+                        journal_items.append(
+                            JournalItemCreate(
+                                account_id=settings.default_cogs_account_id,
+                                debit=rounded_standard,
+                                credit=Decimal('0.0')
+                            )
+                        )
+
+                        # Variance goes to Feed Variance account
+                        if rounded_variance > 0:
+                            # Excess: Debit Feed Variance
+                            journal_items.append(
+                                JournalItemCreate(
+                                    account_id=settings.default_feed_variance_account_id,
+                                    debit=rounded_variance,
+                                    credit=Decimal('0.0')
+                                )
+                            )
+                        elif rounded_variance < 0:
+                            # Deficit: Credit Feed Variance
+                            journal_items.append(
+                                JournalItemCreate(
+                                    account_id=settings.default_feed_variance_account_id,
+                                    debit=Decimal('0.0'),
+                                    credit=abs(rounded_variance)
+                                )
+                            )
+                    else:
+                        # Fallback: post the entire actual cost to COGS
+                        journal_items.append(
+                            JournalItemCreate(
+                                account_id=settings.default_cogs_account_id,
+                                debit=rounded_actual,
+                                credit=Decimal('0.0')
+                            )
+                        )
+
+                    # Credit Inventory (Asset) for the actual cost
+                    journal_items.append(
                         JournalItemCreate(
                             account_id=settings.default_inventory_account_id,
                             debit=Decimal('0.0'),
-                            credit=total_cost
+                            credit=rounded_actual
                         )
-                    ]
+                    )
                     
+                    variance_desc = ""
+                    if usage.feed_variance_weight is not None and usage.feed_variance_weight != Decimal('0.0'):
+                        variance_desc = f". Variance Weight: {usage.feed_variance_weight:+.3f} kg"
+
                     journal_entry = JournalEntryCreate(
                         date=used_at_dt.date() if isinstance(used_at_dt, datetime) else used_at_dt,
-                        description=f"COGS for Composition '{usage.composition_name}' on Batch '{data.batch_no}'",
+                        description=f"COGS for Composition '{usage.composition_name}' on Batch '{data.batch_no}'{variance_desc}",
                         reference_document=f"COMP-USAGE-{data.batch_no}",
                         items=journal_items
                     )
                     journal_entry_crud.create_journal_entry(db=db, entry=journal_entry, tenant_id=tenant_id)
-                    logger.info(f"Created COGS Journal Entry for Usage {usage.id}: {total_cost}")
+                    logger.info(f"Created COGS Journal Entry for Usage {usage.id}: {rounded_actual} (standard: {rounded_standard if 'rounded_standard' in locals() else rounded_actual}, variance: {rounded_variance if 'rounded_variance' in locals() else 0.0})")
         except Exception as e:
             logger.error(f"Failed to create COGS journal entry for usage {usage.id}: {e}")
         # --- End Journal Entry ---

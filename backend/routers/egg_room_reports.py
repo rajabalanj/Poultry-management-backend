@@ -10,10 +10,17 @@ from models.egg_room_reports import EggRoomReport
 from models.daily_batch import DailyBatch
 from models.app_config import AppConfig  # Import AppConfig
 from datetime import datetime, date  # Import date for comparison
-from utils.auth_utils import get_current_user, get_user_identifier
+from utils.auth_utils import get_current_user, get_user_identifier, check_feature_restriction
 from utils.tenancy import get_tenant_id
 
-router = APIRouter(prefix="/egg-room-report", tags=["egg_room_reports"])
+router = APIRouter(
+    prefix="/egg-room-report",
+    tags=["egg_room_reports"],
+    dependencies=[
+        Depends(get_current_user),
+        Depends(check_feature_restriction("BATCH_MANAGEMENT"))
+    ]
+)
 logger = logging.getLogger("egg_room_reports")
 
 

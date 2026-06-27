@@ -3,7 +3,8 @@ from typing import Optional
 from decimal import Decimal
 
 class SalesOrderItemBase(BaseModel):
-    inventory_item_id: int
+    inventory_item_id: Optional[int] = None
+    composition_id: Optional[int] = None
     quantity: Decimal
     price_per_unit: Decimal
     variant_id: Optional[int] = None
@@ -19,6 +20,7 @@ class SalesOrderItemCreate(SalesOrderItemBase):
 
 class SalesOrderItemUpdate(BaseModel):
     inventory_item_id: Optional[int] = None
+    composition_id: Optional[int] = None
     quantity: Optional[Decimal] = None
     price_per_unit: Optional[Decimal] = None
     variant_id: Optional[int] = None

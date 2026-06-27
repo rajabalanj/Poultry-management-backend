@@ -19,9 +19,10 @@ class CompositionUsageHistory(BaseModel):
     composition_id: int
     composition_name: str
     batch_id: int
-    times: int
+    times: Decimal
     used_at: datetime
     wastage_percentage: Optional[Decimal] = None
+    feed_variance_weight: Optional[Decimal] = None
     items: List[CompositionUsageItem]
 
     class Config:
@@ -40,7 +41,7 @@ class CompositionUsageByDate(BaseModel):
 class CompositionUsageCreate(BaseModel):
     compositionId: int
     batch_no: str
-    times: int
+    times: Decimal
     usedAt: Optional[datetime] = None
     wastage_percentage: Optional[Decimal] = None
 

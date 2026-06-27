@@ -6,7 +6,7 @@ from utils.formatting import format_indian_currency, amount_to_words
 
 class OperationalExpenseBase(BaseModel):
     expense_date: date
-    expense_type: str
+    account_id: Optional[int] = None
     amount: Decimal
 
 class OperationalExpenseCreate(OperationalExpenseBase):
@@ -14,12 +14,13 @@ class OperationalExpenseCreate(OperationalExpenseBase):
 
 class OperationalExpenseUpdate(BaseModel):
     expense_date: Optional[date] = None
-    expense_type: Optional[str] = None
+    account_id: Optional[int] = None
     amount: Optional[Decimal] = None
 
 class OperationalExpense(OperationalExpenseBase):
     id: int
     tenant_id: str
+    account_id: int
     created_at: datetime
     updated_at: Optional[datetime] = None
     created_by: Optional[str] = None

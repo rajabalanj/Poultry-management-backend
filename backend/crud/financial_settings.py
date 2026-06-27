@@ -54,6 +54,7 @@ def get_financial_settings(db: Session, tenant_id: str) -> FinancialSettings:
         ap_acc = get_or_create_account(db, tenant_id, "Accounts Payable", "2000", "Liability")
         ar_acc = get_or_create_account(db, tenant_id, "Accounts Receivable", "1100", "Asset")
         ret_earn_acc = get_or_create_account(db, tenant_id, "Retained Earnings", "3100", "Equity")
+        feed_var_acc = get_or_create_account(db, tenant_id, "Feed Variance", "5010", "Expense")
 
         settings = FinancialSettings(
             tenant_id=tenant_id,
@@ -64,6 +65,7 @@ def get_financial_settings(db: Session, tenant_id: str) -> FinancialSettings:
             default_operational_expense_account_id=op_exp_acc.id,
             default_accounts_payable_account_id=ap_acc.id,
             default_accounts_receivable_account_id=ar_acc.id,
+            default_feed_variance_account_id=feed_var_acc.id,
             retained_earnings_account_id=ret_earn_acc.id,
             is_initialized=True
         )
@@ -108,6 +110,10 @@ def get_financial_settings(db: Session, tenant_id: str) -> FinancialSettings:
             op_exp_acc = get_or_create_account(db, tenant_id, "Operational Expense", "6000", "Expense")
             settings.default_operational_expense_account_id = op_exp_acc.id
             updated = True
+        if not settings.default_feed_variance_account_id:
+            feed_var_acc = get_or_create_account(db, tenant_id, "Feed Variance", "5010", "Expense")
+            settings.default_feed_variance_account_id = feed_var_acc.id
+            updated = True
 
         if updated:
             settings.is_initialized = True
@@ -139,6 +145,7 @@ def update_financial_settings(db: Session, settings_update: FinancialSettingsUpd
         'default_operational_expense_account_id': 'Expense',
         'default_accounts_payable_account_id': 'Liability',
         'default_accounts_receivable_account_id': 'Asset',
+        'default_feed_variance_account_id': 'Expense',
         'retained_earnings_account_id': 'Equity'
     }
     

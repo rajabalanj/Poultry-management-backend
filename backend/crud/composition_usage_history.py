@@ -44,7 +44,7 @@ def _convert_quantity(quantity: Decimal, from_unit: str, to_unit: str) -> Decima
         raise ValueError(f"Unsupported 'to' unit for conversion: {to_unit}")
 
 
-def use_composition(db: Session, composition_id: int, batch_id: int, times: int, used_at: datetime, tenant_id: str, changed_by: str = None, wastage_percentage: Optional[Decimal] = None):
+def use_composition(db: Session, composition_id: int, batch_id: int, times: Decimal, used_at: datetime, tenant_id: str, changed_by: str = None, wastage_percentage: Optional[Decimal] = None):
     composition_obj = db.query(Composition).filter(Composition.id == composition_id, Composition.tenant_id == tenant_id).first()
     if not composition_obj:
         raise ValueError("Composition not found")
@@ -62,6 +62,7 @@ def use_composition(db: Session, composition_id: int, batch_id: int, times: int,
 
     items_in_comp = db.query(InventoryItemInComposition).filter(InventoryItemInComposition.composition_id == composition_id, InventoryItemInComposition.tenant_id == tenant_id).all()
     
+    standard_feed_weight = Decimal('0.0')
     for iic in items_in_comp:
         item = db.query(InventoryItem).filter(InventoryItem.id == iic.inventory_item_id, InventoryItem.tenant_id == tenant_id).with_for_update().first()
         if item:
@@ -94,6 +95,9 @@ def use_composition(db: Session, composition_id: int, batch_id: int, times: int,
                 wastage_percentage=applied_wastage
             )
             usage.items.append(usage_item)
+
+            if item.category == 'Feed':
+                standard_feed_weight += Decimal(str(iic.weight))
 
             old_item_quantity = item.current_stock
             old_item_unit = item.unit
@@ -141,12 +145,13 @@ def use_composition(db: Session, composition_id: int, batch_id: int, times: int,
             )
             db.add(audit)
     
+    usage.feed_variance_weight = standard_feed_weight * (times - Decimal('1.0'))
     db.commit()
     db.refresh(usage)
 
     return usage
 
-def create_composition_usage_history(db: Session, composition_id: int, times: int, used_at: datetime, tenant_id: str, batch_id: int = None):
+def create_composition_usage_history(db: Session, composition_id: int, times: Decimal, used_at: datetime, tenant_id: str, batch_id: int = None):
     composition_obj = db.query(Composition).filter(Composition.id == composition_id, Composition.tenant_id == tenant_id).first()
     if not composition_obj:
         raise ValueError("Composition not found")
@@ -163,9 +168,12 @@ def create_composition_usage_history(db: Session, composition_id: int, times: in
     db.flush() # Flush to get usage.id
 
     items_in_comp = db.query(InventoryItemInComposition).filter(InventoryItemInComposition.composition_id == composition_id, InventoryItemInComposition.tenant_id == tenant_id).all()
+    standard_feed_weight = Decimal('0.0')
     for iic in items_in_comp:
         item = db.query(InventoryItem).filter(InventoryItem.id == iic.inventory_item_id, InventoryItem.tenant_id == tenant_id).first()
         if item:
+            if item.category == 'Feed':
+                standard_feed_weight += Decimal(str(iic.weight))
             usage_item = CompositionUsageItem(
                 usage_history_id=usage.id,
                 inventory_item_id=iic.inventory_item_id,
@@ -175,6 +183,7 @@ def create_composition_usage_history(db: Session, composition_id: int, times: in
             )
             db.add(usage_item)
 
+    usage.feed_variance_weight = standard_feed_weight * (times - Decimal('1.0'))
     db.commit()
     db.refresh(usage)
     return usage

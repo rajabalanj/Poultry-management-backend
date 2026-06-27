@@ -25,6 +25,7 @@ def get_sales_order_report(
         .options(
             joinedload(SalesOrder.customer),
             joinedload(SalesOrder.items).joinedload(SalesOrderItem.inventory_item),
+            joinedload(SalesOrder.items).joinedload(SalesOrderItem.composition),
         )
         .filter(SalesOrder.tenant_id == tenant_id)
     )
@@ -50,16 +51,23 @@ def get_sales_order_report(
 
     report_data = []
     for so in sales_orders:
-        items_data = [
-            SalesOrderItemReport(
-                inventory_item_name=item.inventory_item.name,
-                quantity=item.quantity,
-                price_per_unit=item.price_per_unit,
-                line_total=item.line_total,
-                variant_name=item.variant_name,
+        items_data = []
+        for item in so.items:
+            if item.inventory_item:
+                item_name = item.inventory_item.name
+            elif item.composition:
+                item_name = item.composition.name
+            else:
+                item_name = "Unknown Item"
+            items_data.append(
+                SalesOrderItemReport(
+                    inventory_item_name=item_name,
+                    quantity=item.quantity,
+                    price_per_unit=item.price_per_unit,
+                    line_total=item.line_total,
+                    variant_name=item.variant_name,
+                )
             )
-            for item in so.items
-        ]
 
         report_data.append(
             SalesOrderReport(

@@ -10,6 +10,7 @@ class FinancialSettingsBase(BaseModel):
     default_operational_expense_account_id: Optional[int] = None
     default_accounts_payable_account_id: Optional[int] = None
     default_accounts_receivable_account_id: Optional[int] = None
+    default_feed_variance_account_id: Optional[int] = None
     retained_earnings_account_id: Optional[int] = None
     last_closed_date: Optional[date] = None
     

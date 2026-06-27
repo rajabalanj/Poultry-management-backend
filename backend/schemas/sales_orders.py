@@ -10,7 +10,8 @@ from utils.formatting import format_indian_currency, amount_to_words
 
 class SalesOrderItem(BaseModel):
     id: int
-    inventory_item_id: int
+    inventory_item_id: Optional[int] = None
+    composition_id: Optional[int] = None
     quantity: Decimal
     price_per_unit: Decimal
     line_total: Decimal

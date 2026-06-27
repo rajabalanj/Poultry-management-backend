@@ -11,9 +11,8 @@ class OperationalExpense(Base, AuditMixin):
     id = Column(Integer, primary_key=True, index=True)
     tenant_id = Column(String, index=True)
     expense_date = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(pytz.timezone('Asia/Kolkata')).date())
-    expense_type = Column(String, nullable=False)
+    account_id = Column(Integer, ForeignKey("chart_of_accounts.id"), nullable=False)
     amount = Column(Numeric(10, 2), nullable=False)
 
-    __table_args__ = (
-        UniqueConstraint('tenant_id', 'expense_date', 'expense_type', name='_tenant_date_expense_uc'),
-    )
+    # Relationships
+    account = relationship("ChartOfAccounts")
