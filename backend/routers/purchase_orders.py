@@ -129,6 +129,7 @@ def get_purchase_order(
 
     db_po.payments = [p for p in db_po.payments if p.deleted_at is None]
     return db_po
+    
 @router.post("", response_model=PurchaseOrderSchema, status_code=status.HTTP_201_CREATED)
 def create_purchase_order(
     po: PurchaseOrderCreate,
@@ -288,6 +289,7 @@ def read_purchase_orders(
     status: Optional[PurchaseOrderStatus] = None,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
+    po_number: Optional[int] = None,
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_tenant_id)
 ):
@@ -303,6 +305,8 @@ def read_purchase_orders(
         query = query.filter(PurchaseOrderModel.order_date >= start_date)
     if end_date:
         query = query.filter(PurchaseOrderModel.order_date <= end_date)
+    if po_number is not None:
+        query = query.filter(PurchaseOrderModel.po_number == po_number)
 
     # Eagerly load items and payments for the response model
     purchase_orders = query.order_by(PurchaseOrderModel.order_date.desc(), PurchaseOrderModel.id.desc()).options(

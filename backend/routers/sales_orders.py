@@ -900,6 +900,7 @@ def read_sales_orders(
     status: Optional[SalesOrderFilterStatus] = None,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
+    so_number: Optional[int] = None,
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_tenant_id)
 ):
@@ -918,6 +919,8 @@ def read_sales_orders(
         query = query.filter(SalesOrderModel.order_date >= start_date)
     if end_date:
         query = query.filter(SalesOrderModel.order_date <= end_date)
+    if so_number is not None:
+        query = query.filter(SalesOrderModel.so_number == so_number)
 
     sales_orders = query.order_by(SalesOrderModel.order_date.desc(), SalesOrderModel.id.desc()).options(
         selectinload(SalesOrderModel.items),
